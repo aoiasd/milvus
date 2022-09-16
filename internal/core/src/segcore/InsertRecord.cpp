@@ -14,7 +14,7 @@
 
 namespace milvus::segcore {
 
-InsertRecord::InsertRecord(const Schema& schema, int64_t size_per_chunk)
+InsertRecord::InsertRecord(const Schema& schema, int64_t size_per_chunk, bool is_sealed)
     : row_ids_(size_per_chunk), timestamps_(size_per_chunk) {
     std::optional<FieldId> pk_field_id = schema.get_primary_field_id();
 
@@ -24,12 +24,21 @@ InsertRecord::InsertRecord(const Schema& schema, int64_t size_per_chunk)
         if (pk2offset_ == nullptr && pk_field_id.has_value() && pk_field_id.value() == field_id) {
             switch (field_meta.get_data_type()) {
                 case DataType::INT64: {
-                    pk2offset_ = std::make_unique<OffsetHashMap<int64_t>>();
+                    if (is_sealed)
+                        pk2offset_ = std::make_unique<OffsetOrderedArray<int64_t>>();
+                    else
+                        pk2offset_ = std::make_unique<OffsetHashMap<int64_t>>();
                     break;
                 }
                 case DataType::VARCHAR: {
-                    pk2offset_ = std::make_unique<OffsetHashMap<std::string>>();
+                    if (is_sealed)
+                        pk2offset_ = std::make_unique<OffsetOrderedArray<std::string>>();
+                    else
+                        pk2offset_ = std::make_unique<OffsetHashMap<std::string>>();
                     break;
+                }
+                default: {
+                    PanicInfo("unsupported pk type");
                 }
             }
         }

@@ -142,6 +142,7 @@ SegmentSealedImpl::LoadScalarIndex(const LoadIndexInfo& info) {
                 for (int i = 0; i < row_count; ++i) {
                     insert_record_.insert_pk(int64_index->Reverse_Lookup(i), i);
                 }
+                insert_record_.seal_pks();
                 break;
             }
             case DataType::VARCHAR: {
@@ -149,6 +150,7 @@ SegmentSealedImpl::LoadScalarIndex(const LoadIndexInfo& info) {
                 for (int i = 0; i < row_count; ++i) {
                     insert_record_.insert_pk(string_index->Reverse_Lookup(i), i);
                 }
+                insert_record_.seal_pks();
                 break;
             }
             default: {
@@ -232,6 +234,7 @@ SegmentSealedImpl::LoadFieldData(const LoadFieldDataInfo& info) {
             for (int i = 0; i < size; ++i) {
                 insert_record_.insert_pk(pks[i], i);
             }
+            insert_record_.seal_pks();
         }
 
         set_bit(field_data_ready_bitset_, field_id, true);
@@ -433,7 +436,7 @@ SegmentSealedImpl::check_search(const query::Plan* plan) const {
 
 SegmentSealedImpl::SegmentSealedImpl(SchemaPtr schema, int64_t segment_id)
     : schema_(schema),
-      insert_record_(*schema, MAX_ROW_COUNT),
+      insert_record_(*schema, MAX_ROW_COUNT, true),
       field_data_ready_bitset_(schema->size()),
       index_ready_bitset_(schema->size()),
       scalar_indexings_(schema->size()),

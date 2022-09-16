@@ -12,9 +12,11 @@
 #include <gtest/gtest.h>
 #include <random>
 #include <string>
+#include <iostream>
 
 #include "segcore/SegmentGrowingImpl.h"
 #include "test_utils/DataGen.h"
+#include "test_utils/Timer.h"
 
 using namespace milvus;
 
@@ -88,28 +90,92 @@ TEST(OffsetMap, int64_t){
     ASSERT_EQ(offset[0].get(), int64_t(3));
 }
 
-TEST(InsertRecordTest, int64_t){
+TEST(InsertRecordTest, growing_int64_t) {
     using namespace milvus::segcore;
     auto schema = std::make_shared<Schema>();
     schema->AddDebugField("fakevec", DataType::VECTOR_FLOAT, 16, knowhere::metric::L2);
     auto i64_fid = schema->AddDebugField("age", DataType::INT64);
     schema->set_primary_field_id(i64_fid);
-
     auto record = milvus::segcore::InsertRecord(*schema, int64_t(32));
-    record.insert_pk(PkType(int64_t(12)), int64_t(3));
-    std::vector<SegOffset> offset = record.search_pk(PkType(int64_t(12)), int64_t(10));
-    ASSERT_EQ(offset[0].get(), int64_t(3));
+    int n=10000000;
+    Timer timer;
+
+    for (int i = 1; i <= n; i++)
+        record.insert_pk(PkType(int64_t(i)), int64_t(i));
+    std::cout << "insert pks: " << timer.get_step_seconds() << " seconds" << std::endl;
+
+    for (int i = 1; i <= n; i++){
+        std::vector<SegOffset> offset = record.search_pk(PkType(int64_t(i)), int64_t(n+1));
+        ASSERT_EQ(offset[0].get(), int64_t(i));
+    }
+    std::cout << "search pk2offset: " << timer.get_step_seconds() << " seconds" << std::endl;
 }
 
-TEST(InsertRecordTest, string){
+TEST(InsertRecordTest, growing_string) {
     using namespace milvus::segcore;
     auto schema = std::make_shared<Schema>();
     schema->AddDebugField("fakevec", DataType::VECTOR_FLOAT, 16, knowhere::metric::L2);
     auto i64_fid = schema->AddDebugField("name", DataType::VARCHAR);
     schema->set_primary_field_id(i64_fid);
-
     auto record = milvus::segcore::InsertRecord(*schema, int64_t(32));
-    record.insert_pk(PkType(std::string("test")), int64_t(3));
-    std::vector<SegOffset> offset = record.search_pk(PkType(std::string("test")), int64_t(10));
-    ASSERT_EQ(offset[0].get(), int64_t(3));
+    int n = 10000000;
+    Timer timer;
+
+    for (int i = 1; i <= n; i++)
+        record.insert_pk(PkType(std::to_string(i)), int64_t(i));
+    std::cout << "insert pks: " << timer.get_step_seconds() << " seconds" << std::endl;
+
+    for (int i = 1; i <= n; i++){
+        std::vector<SegOffset> offset = record.search_pk(std::to_string(i), int64_t(n+1));
+        ASSERT_EQ(offset[0].get(), int64_t(i));
+    }
+    std::cout << "search pk2offset: " << timer.get_step_seconds() << " seconds" << std::endl;
+}
+
+TEST(InsertRecordTest, sealed_int64_t) {
+    using namespace milvus::segcore;
+    auto schema = std::make_shared<Schema>();
+    schema->AddDebugField("fakevec", DataType::VECTOR_FLOAT, 16, knowhere::metric::L2);
+    auto i64_fid = schema->AddDebugField("age", DataType::INT64);
+    schema->set_primary_field_id(i64_fid);
+    auto record = milvus::segcore::InsertRecord(*schema, int64_t(32), true);
+    int n = 10000000;
+    Timer timer;
+
+    for (int i = n; i >= 1; i--)
+        record.insert_pk(PkType(int64_t(i)), int64_t(i));
+    std::cout << "insert pks: " << timer.get_step_seconds() << " seconds" << std::endl;
+
+    record.seal_pks();
+    std::cout << "sort pks: " << timer.get_step_seconds() << " seconds" << std::endl;
+
+    for (int i = 1;i <= n; i++){
+        std::vector<SegOffset> offset = record.search_pk(PkType(int64_t(i)), int64_t(n+1));
+        ASSERT_EQ(offset[0].get(), int64_t(i));
+    }
+    std::cout << "search pk2offset: " << timer.get_step_seconds() << " seconds" << std::endl;
+}
+
+TEST(InsertRecordTest, sealed_string) {
+    using namespace milvus::segcore;
+    auto schema = std::make_shared<Schema>();
+    schema->AddDebugField("fakevec", DataType::VECTOR_FLOAT, 16, knowhere::metric::L2);
+    auto i64_fid = schema->AddDebugField("name", DataType::VARCHAR);
+    schema->set_primary_field_id(i64_fid);
+    auto record = milvus::segcore::InsertRecord(*schema, int64_t(32), true);
+    int n = 10000000;
+    Timer timer;
+
+    for (int i = 1; i <= n; i++)
+        record.insert_pk(PkType(std::to_string(i)), int64_t(i));
+    std::cout << "insert pks: " << timer.get_step_seconds() << " seconds" << std::endl;
+
+    record.seal_pks();
+    std::cout << "sort pks: " << timer.get_step_seconds() << " seconds" << std::endl;
+
+    for (int i = 1; i <= n; i++){
+        std::vector<SegOffset> offset = record.search_pk(std::to_string(i), int64_t(n+1));
+        ASSERT_EQ(offset[0].get(), int64_t(i));
+    }
+    std::cout << "search pk2offset: " << timer.get_step_seconds() << " seconds" << std::endl;
 }
