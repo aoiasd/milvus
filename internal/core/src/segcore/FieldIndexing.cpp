@@ -75,8 +75,9 @@ VectorFieldIndexing::get_search_params(int top_K) const {
     return base_params;
 }
 
+template <bool is_sealed>
 void
-IndexingRecord::UpdateResourceAck(int64_t chunk_ack, const InsertRecord& record) {
+IndexingRecord::UpdateResourceAck(int64_t chunk_ack, const InsertRecord<is_sealed>& record) {
     if (resource_ack_ >= chunk_ack) {
         return;
     }

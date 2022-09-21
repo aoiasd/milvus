@@ -110,7 +110,7 @@ class OffsetOrderedArray : public OffsetMap {
         }
         return r;
     }
-
+    
  public:
     std::vector<SegOffset>
     find_with_timestamp(const PkType pk, Timestamp timestamp, const ConcurrentVector<Timestamp>& timestamps) const {
@@ -119,9 +119,8 @@ class OffsetOrderedArray : public OffsetMap {
         for (int offset_id = find(pk_); offset_id < array_.size(); offset_id++) {
             if (offset_id < 0 || array_[offset_id].first != pk_)
                 break;
-            if (timestamps[array_[offset_id].second] <= timestamp) {
+            if (timestamps[array_[offset_id].second] <= timestamp)
                 res_offsets.push_back(SegOffset(array_[offset_id].second));
-            }
         }
         return res_offsets;
     }
@@ -133,9 +132,8 @@ class OffsetOrderedArray : public OffsetMap {
         for (int offset_id = find(pk_); offset_id < array_.size(); offset_id++) {
             if (offset_id < 0 || array_[offset_id].first != pk_)
                 break;
-            if (array_[offset_id].second <= barrier) {
+            if (array_[offset_id].second <= barrier) 
                 res_offsets.push_back(SegOffset(array_[offset_id].second));
-            }
         }
         return res_offsets;
     }
@@ -159,6 +157,7 @@ class OffsetOrderedArray : public OffsetMap {
     std::vector<std::pair<T, int64_t>> array_;
 };
 
+template <bool is_sealed = false>
 struct InsertRecord {
     ConcurrentVector<Timestamp> timestamps_;
     ConcurrentVector<idx_t> row_ids_;
@@ -173,7 +172,7 @@ struct InsertRecord {
     // pks to row offset
     std::unique_ptr<OffsetMap> pk2offset_;
 
-    explicit InsertRecord(const Schema& schema, int64_t size_per_chunk, bool is_sealed = false);
+    explicit InsertRecord(const Schema& schema, int64_t size_per_chunk);
 
     std::vector<SegOffset>
     search_pk(const PkType pk, Timestamp timestamp) const {

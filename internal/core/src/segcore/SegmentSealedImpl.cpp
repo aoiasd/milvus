@@ -436,7 +436,7 @@ SegmentSealedImpl::check_search(const query::Plan* plan) const {
 
 SegmentSealedImpl::SegmentSealedImpl(SchemaPtr schema, int64_t segment_id)
     : schema_(schema),
-      insert_record_(*schema, MAX_ROW_COUNT, true),
+      insert_record_(*schema, MAX_ROW_COUNT),
       field_data_ready_bitset_(schema->size()),
       index_ready_bitset_(schema->size()),
       scalar_indexings_(schema->size()),

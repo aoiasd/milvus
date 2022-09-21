@@ -48,11 +48,12 @@ CreateDataArrayFrom(const void* data_raw, int64_t count, const FieldMeta& field_
 std::unique_ptr<DataArray>
 MergeDataArray(std::vector<std::pair<milvus::SearchResult*, int64_t>>& result_offsets, const FieldMeta& field_meta);
 
+template <bool is_sealed>
 std::shared_ptr<DeletedRecord::TmpBitmap>
 get_deleted_bitmap(int64_t del_barrier,
                    int64_t insert_barrier,
                    DeletedRecord& delete_record,
-                   const InsertRecord& insert_record,
+                   const InsertRecord<is_sealed>& insert_record,
                    Timestamp query_timestamp);
 
 std::unique_ptr<DataArray>

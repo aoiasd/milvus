@@ -374,11 +374,12 @@ ReverseDataFromIndex(const knowhere::Index* index,
 // assert old delete record pks = [2, 4, 3, 8, 5], old delete record ts = [100, 100, 150, 200, 400, 500, 500, 500]
 // if delete_barrier = 3, query time = 180, then insert records with pks in [2, 4, 3] will be deleted
 // then the old bitmap = [0, 1, 1, 0, 1, 0, 0, 0]
+template <bool is_sealed>
 std::shared_ptr<DeletedRecord::TmpBitmap>
 get_deleted_bitmap(int64_t del_barrier,
                    int64_t insert_barrier,
                    DeletedRecord& delete_record,
-                   const InsertRecord& insert_record,
+                   const InsertRecord<is_sealed>& insert_record,
                    Timestamp query_timestamp) {
     // if insert_barrier and del_barrier have not changed, use cache data directly
     bool hit_cache = false;

@@ -14,7 +14,8 @@
 
 namespace milvus::segcore {
 
-InsertRecord::InsertRecord(const Schema& schema, int64_t size_per_chunk, bool is_sealed)
+template<bool is_sealed>
+InsertRecord<is_sealed>::InsertRecord(const Schema& schema, int64_t size_per_chunk)
     : row_ids_(size_per_chunk), timestamps_(size_per_chunk) {
     std::optional<FieldId> pk_field_id = schema.get_primary_field_id();
 

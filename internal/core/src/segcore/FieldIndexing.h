@@ -138,8 +138,9 @@ class IndexingRecord {
     }
 
     // concurrent, reentrant
+    template <bool is_sealed>
     void
-    UpdateResourceAck(int64_t chunk_ack, const InsertRecord& record);
+    UpdateResourceAck(int64_t chunk_ack, const InsertRecord<is_sealed>& record);
 
     // concurrent
     int64_t
