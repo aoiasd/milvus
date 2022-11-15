@@ -29,7 +29,7 @@ import (
 type Pipeline struct {
 	nodes []*nodeCtx
 
-	inputChannel *chan Msg
+	inputChannel chan Msg
 
 	closeCh chan struct{} // notify work to exit
 	closeWg sync.WaitGroup
@@ -42,7 +42,7 @@ func (p *Pipeline) AddNode(node Node, queueLen int) {
 	nodeCtx := nodeCtx{
 		node:         node,
 		inputChannel: make(chan Msg, queueLen),
-		closeCh:      &p.closeCh,
+		closeCh:      p.closeCh,
 		closeWg:      &p.closeWg,
 	}
 
@@ -53,7 +53,7 @@ func (p *Pipeline) AddNode(node Node, queueLen int) {
 	if len(p.nodes) != 0 {
 		p.nodes[len(p.nodes)-1].next = &nodeCtx
 	} else {
-		p.inputChannel = &nodeCtx.inputChannel
+		p.inputChannel = nodeCtx.inputChannel
 	}
 
 	p.nodes = append(p.nodes, &nodeCtx)

@@ -40,7 +40,7 @@ type nodeCtx struct {
 	next    *nodeCtx
 	checker *timerecord.GroupChecker
 
-	closeCh *chan struct{} // notify work to exit
+	closeCh chan struct{} // notify work to exit
 	closeWg *sync.WaitGroup
 }
 
@@ -59,7 +59,7 @@ func (c *nodeCtx) work() {
 
 	for {
 		select {
-		case <-*c.closeCh:
+		case <-c.closeCh:
 			c.close()
 			log.Debug("flow graph node closed", zap.String("nodeName", c.node.Name()))
 			return
@@ -87,7 +87,7 @@ func (c *nodeCtx) close() {
 }
 
 func (c *nodeCtx) Close() {
-	close(*c.closeCh)
+	close(c.closeCh)
 }
 
 type BaseNode struct {
