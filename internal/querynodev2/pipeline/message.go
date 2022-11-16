@@ -17,36 +17,26 @@
 package querynodev2
 
 import (
-	"time"
+	"errors"
 
+	"github.com/milvus-io/milvus-proto/go-api/commonpb"
 	"github.com/milvus-io/milvus/internal/mq/msgstream"
-	"github.com/milvus-io/milvus/internal/proto/querypb"
-	"github.com/milvus-io/milvus/internal/util/typeutil"
 )
 
-const (
-	// TODO: better to be configured
-	nodeCtxTtInterval  = 2 * time.Minute
-	enableTtChecker    = true
-	loadTypeCollection = querypb.LoadType_LoadCollection
-	loadTypePartition  = querypb.LoadType_LoadPartition
-)
+type workNodeMsg struct {
+	insertMsgs []*InsertMsg
+	deleteMsgs []*DeleteMsg
+	timeRange  TimeRange
+}
 
-type (
-	// UniqueID is an identifier that is guaranteed to be unique among all the collections, partitions and segments
-	UniqueID = typeutil.UniqueID
-	// Channel is the virtual channel
-	Channel = string
-	// Timestamp is timestamp
-	Timestamp = typeutil.Timestamp
-
-	loadType = querypb.LoadType
-
-	InsertMsg = msgstream.InsertMsg
-	DeleteMsg = msgstream.DeleteMsg
-)
-
-type TimeRange struct {
-	timestampMin Timestamp
-	timestampMax Timestamp
+func (msg *workNodeMsg) append(taskMsg msgstream.TsMsg) error {
+	switch taskMsg.Type() {
+	case commonpb.MsgType_Insert:
+		msg.insertMsgs = append(msg.insertMsgs, taskMsg.(*InsertMsg))
+	case commonpb.MsgType_Delete:
+		msg.deleteMsgs = append(msg.deleteMsgs, taskMsg.(*DeleteMsg))
+	default:
+		return errors.New("add message of invalid type")
+	}
+	return nil
 }

@@ -23,9 +23,14 @@ import (
 	"github.com/milvus-io/milvus-proto/go-api/schemapb"
 	"github.com/milvus-io/milvus/internal/proto/internalpb"
 	"github.com/milvus-io/milvus/internal/proto/querypb"
+	"github.com/milvus-io/milvus/internal/proto/segcorepb"
+	"github.com/milvus-io/milvus/internal/storage"
+	"github.com/milvus-io/milvus/internal/util/typeutil"
 )
 
 type SegmentType = commonpb.SegmentState
+type UniqueID = typeutil.UniqueID
+type Timestamp = typeutil.Timestamp
 
 type Manager interface {
 	// Collection related
@@ -67,6 +72,22 @@ type Loader interface {
 
 type Segment struct {
 }
+
+// For growing segment only
+func (s *Segment) ID() UniqueID
+func (s *Segment) PreInsert(numOfRecords int) (int64, error)
+func (s *Segment) Insert(offset int64, entityIDs []int64, timestamps []Timestamp, record *segcorepb.InsertRecord) error
+func (s *Segment) PreDelete(numOfRecords int) int64
+func (s *Segment) Delete(offset int64, entityIDs []storage.PrimaryKey, timestamps []typeutil.Timestamp) error
+
+func NewSegment(collection *Collection,
+	segmentID int64,
+	partitionID int64,
+	collectionID int64,
+	channel string,
+	segmentType SegmentType,
+	version int64,
+	startPosition *internalpb.MsgPosition) (*Segment, error)
 
 type Collection struct {
 }

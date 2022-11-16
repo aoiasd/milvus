@@ -28,7 +28,7 @@ import (
 	"go.uber.org/zap"
 )
 
-type filterDmNode struct {
+type filterNode struct {
 	pipeline.BaseNode
 	collectionID     UniqueID
 	manager          Manager
@@ -37,20 +37,20 @@ type filterDmNode struct {
 	DeleteMsgPolicys []DeleteMsgFilter
 }
 
-func (fdmNode *filterDmNode) Operate(in pipeline.Msg) pipeline.Msg {
+func (fNode *filterNode) Operate(in pipeline.Msg) pipeline.Msg {
 	if in == nil {
-		log.Debug("type assertion failed for MsgStreamMsg because it's nil", zap.String("name", fdmNode.Name()))
+		log.Debug("type assertion failed for MsgStreamMsg because it's nil", zap.String("name", fNode.Name()))
 		return nil
 	}
 
 	streamMsgPack, ok := in.(*msgstream.MsgPack)
 	if !ok {
-		log.Warn("type assertion failed for MsgPack", zap.String("msgType", reflect.TypeOf(in).Name()), zap.String("name", fdmNode.Name()))
+		log.Warn("type assertion failed for MsgPack", zap.String("msgType", reflect.TypeOf(in).Name()), zap.String("name", fNode.Name()))
 		return nil
 	}
 
-	collection := fdmNode.manager.GetCollection(fdmNode.collectionID)
-	out := taskNodeMsg{
+	collection := fNode.manager.GetCollection(fNode.collectionID)
+	out := workNodeMsg{
 		insertMsgs: []*InsertMsg{},
 		deleteMsgs: []*DeleteMsg{},
 		timeRange: TimeRange{
@@ -61,12 +61,12 @@ func (fdmNode *filterDmNode) Operate(in pipeline.Msg) pipeline.Msg {
 
 	//add msg to out if msg pass check of filter
 	for _, msg := range streamMsgPack.Msgs {
-		err := fdmNode.filtrate(collection, msg)
+		err := fNode.filtrate(collection, msg)
 		if err != nil {
 			log.Debug(fmt.Sprintf("filter invalid message: %s", err.Error()),
 				zap.String("message type", msg.Type().String()),
-				zap.String("channel", fdmNode.channel),
-				zap.Int64("collectionID", fdmNode.collectionID))
+				zap.String("channel", fNode.channel),
+				zap.Int64("collectionID", fNode.collectionID))
 		} else {
 			out.append(msg)
 		}
@@ -74,10 +74,10 @@ func (fdmNode *filterDmNode) Operate(in pipeline.Msg) pipeline.Msg {
 	return out
 }
 
-func (fdmNode *filterDmNode) filtrate(c *Collection, msg msgstream.TsMsg) error {
+func (fNode *filterNode) filtrate(c *Collection, msg msgstream.TsMsg) error {
 	switch msg.Type() {
 	case commonpb.MsgType_Insert:
-		for _, policy := range fdmNode.InsertMsgPolicys {
+		for _, policy := range fNode.InsertMsgPolicys {
 			err := policy(c, msg.(*msgstream.InsertMsg))
 			if err != nil {
 				return err
@@ -85,7 +85,7 @@ func (fdmNode *filterDmNode) filtrate(c *Collection, msg msgstream.TsMsg) error 
 		}
 
 	case commonpb.MsgType_Delete:
-		for _, policy := range fdmNode.DeleteMsgPolicys {
+		for _, policy := range fNode.DeleteMsgPolicys {
 			err := policy(c, msg.(*msgstream.DeleteMsg))
 			if err != nil {
 				return err
@@ -97,8 +97,8 @@ func (fdmNode *filterDmNode) filtrate(c *Collection, msg msgstream.TsMsg) error 
 	return nil
 }
 
-func NewFilterDmNode(collectionID UniqueID, manager Manager, channel Channel) *filterDmNode {
-	return &filterDmNode{
+func NewfilterNode(collectionID UniqueID, manager Manager, channel Channel) *filterNode {
+	return &filterNode{
 		collectionID: collectionID,
 		manager:      manager,
 		channel:      channel,

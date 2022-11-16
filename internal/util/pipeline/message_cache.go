@@ -16,26 +16,65 @@
 
 package pipeline
 
-// a circle queue of message in pipeline
-//
+import (
+	"sync"
+)
+
+// message cache of pipeline message
+// used to limit message size and task sum in pipeline
+// consumers use cache like a circle queue
 type messageCache struct {
 	cache       []Msg
-	left, right int
 	length      int
+	memoryUse   int
+	left, right *int
 
-	memoryUse int
+	storeMu sync.Mutex
 }
 
-func (c *messageCache) Push(msg Msg) {
-	c.cache[c.right] = msg
-	c.right++
-}
-
-func (c *messageCache) Pop() {
-	c.cache[c.left] = nil
-	c.left++
-}
-
-func (c *messageCache) Update(position int, msg Msg) {
+func (c *messageCache) update(position int, msg Msg) {
+	if c.cache[position] != nil {
+		panic("use err cache position")
+	}
 	c.cache[position] = msg
+}
+
+func (c *messageCache) get(position int) Msg {
+	msg := c.cache[position]
+	c.cache[position] = nil
+	return msg
+}
+
+func (c *messageCache) flush() {
+	if (*c.left+1)%c.length == *c.right {
+		c.storeMu.Lock()
+		c.storeMu.Unlock()
+		return
+	}
+
+}
+
+//a consumer of message cache used in pipeline
+type pipelineConsumer struct {
+	cache       *messageCache
+	left, right int
+
+	storeMu sync.Mutex
+}
+
+func (c *pipelineConsumer) pop() Msg {
+	c.storeMu.Lock()
+	defer c.storeMu.Unlock()
+
+	msg := c.cache.get(c.left)
+	c.left = (c.left + 1) % c.cache.length
+	return msg
+}
+
+func (c *pipelineConsumer) push(msg Msg) {
+	c.storeMu.Lock()
+	defer c.storeMu.Unlock()
+
+	c.cache.update(c.right, msg)
+	c.right = (c.right + 1) % c.cache.length
 }

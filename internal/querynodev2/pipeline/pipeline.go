@@ -17,26 +17,37 @@
 package querynodev2
 
 import (
-	"errors"
+	"context"
 
-	"github.com/milvus-io/milvus-proto/go-api/commonpb"
 	"github.com/milvus-io/milvus/internal/mq/msgstream"
+	"github.com/milvus-io/milvus/internal/querynodev2"
+	"github.com/milvus-io/milvus/internal/util/pipeline"
 )
 
-type taskNodeMsg struct {
-	insertMsgs []*InsertMsg
-	deleteMsgs []*DeleteMsg
-	timeRange  TimeRange
+type Pipeline struct {
+	*pipeline.StreamPipeline
+
+	collectionID UniqueID
+	channel      Channel
 }
 
-func (msg *taskNodeMsg) append(taskMsg msgstream.TsMsg) error {
-	switch taskMsg.Type() {
-	case commonpb.MsgType_Insert:
-		msg.insertMsgs = append(msg.insertMsgs, taskMsg.(*InsertMsg))
-	case commonpb.MsgType_Delete:
-		msg.deleteMsgs = append(msg.deleteMsgs, taskMsg.(*DeleteMsg))
-	default:
-		return errors.New("add message of invalid type")
+func NewPipeLine(ctx context.Context,
+	collectionID UniqueID,
+	channel Channel,
+	manager Manager,
+	tSatSafeReplica querynodev2.TSafeReplicaInterface,
+	factory msgstream.Factory,
+) (*Pipeline, error) {
+	dmStream, err := factory.NewTtMsgStream(ctx)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+
+	p := &Pipeline{
+		collectionID:   collectionID,
+		channel:        channel,
+		StreamPipeline: pipeline.NewPipelineWithStream(dmStream, nodeCtxTtInterval, enableTtChecker),
+	}
+
+	return p, nil
 }
