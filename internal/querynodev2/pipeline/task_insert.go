@@ -29,10 +29,6 @@ import (
 	"go.uber.org/zap"
 )
 
-type NodeTask interface {
-	execute() bool
-}
-
 type insertData struct {
 	segment          Segment
 	insertIDs        []UniqueID
@@ -153,7 +149,6 @@ func (t *insertNodeTask) execute() {
 		return t.msgs[i].BeginTs() < t.msgs[j].BeginTs()
 	})
 	collection := t.manager.GetCollection(t.collectionID)
-
 	//get InsertData and merge datas of same segment
 	for _, msg := range t.msgs {
 		segment := t.getSegment(msg, collection)
@@ -165,9 +160,3 @@ func (t *insertNodeTask) execute() {
 		t.insert(insertData)
 	}
 }
-
-type deleteNodeTask struct {
-	msgs []*DeleteMsg
-}
-
-func (t *deleteNodeTask) execute() {}

@@ -31,6 +31,10 @@ type workNode struct {
 	channel      Channel
 }
 
+type NodeTask interface {
+	execute() bool
+}
+
 func (wNode *workNode) Operate(in pipeline.Msg) pipeline.Msg {
 	if in == nil {
 		log.Debug("type assertion failed for MsgStreamMsg because it's nil", zap.String("name", wNode.Name()))
