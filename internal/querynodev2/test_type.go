@@ -32,6 +32,10 @@ type SegmentType = commonpb.SegmentState
 type UniqueID = typeutil.UniqueID
 type Timestamp = typeutil.Timestamp
 
+type IndexedFieldInfo struct{}
+type searchRequest struct{}
+type SearchResult struct{}
+type RetrievePlan struct{}
 type Manager interface {
 	// Collection related
 
@@ -51,10 +55,10 @@ type Manager interface {
 	// Put puts the given segments in,
 	// and increases the ref count of the corresponding collection,
 	// dup segments will not increase the ref count
-	Put(segmentType SegmentType, segments ...*Segment)
-	Get(segmentID UniqueID) *Segment
-	GetSealed(segmentID UniqueID) *Segment
-	GetGrowing(segmentID UniqueID) *Segment
+	Put(segmentType SegmentType, segments ...Segment)
+	Get(segmentID UniqueID) Segment
+	GetSealed(segmentID UniqueID) Segment
+	GetGrowing(segmentID UniqueID) Segment
 	// Remove removes the given segment,
 	// and decreases the ref count of the corresponding collection,
 	// will not decrease the ref count if the given segment not exists
@@ -63,22 +67,37 @@ type Manager interface {
 
 type Loader interface {
 	// Load loads binlogs, and spawn segments
-	Load(ctx context.Context, req *querypb.LoadSegmentsRequest, segmentType SegmentType) (map[int64]*Segment, error)
+	Load(ctx context.Context, req *querypb.LoadSegmentsRequest, segmentType SegmentType) (map[int64]Segment, error)
 
 	// LoadStreamDelta loads delete messages from stream, from the given position,
 	// and applies these messages to the given segments
-	LoadStreamDelta(ctx context.Context, collectionID int64, position *internalpb.MsgPosition, segments map[int64]*Segment) error
+	LoadStreamDelta(ctx context.Context, collectionID int64, position *internalpb.MsgPosition, segments map[int64]Segment) error
 }
 
-type Segment struct {
-}
+type Segment interface {
+	// Properties
+	ID() int64
+	Collection() int64
+	Partition() int64
+	Channel() string
+	Version() int64
+	StartPosition() *internalpb.MsgPosition
+	Type() SegmentType
 
-// For growing segment only
-func (s *Segment) ID() UniqueID
-func (s *Segment) PreInsert(numOfRecords int) (int64, error)
-func (s *Segment) Insert(offset int64, entityIDs []int64, timestamps []Timestamp, record *segcorepb.InsertRecord) error
-func (s *Segment) PreDelete(numOfRecords int) int64
-func (s *Segment) Delete(offset int64, entityIDs []storage.PrimaryKey, timestamps []typeutil.Timestamp) error
+	// Index related
+	AddIndex(fieldID int64, index *IndexedFieldInfo)
+	GetIndex(fieldID int64) *IndexedFieldInfo
+	HaveIndex(fieldID int64) bool
+
+	// Insert related
+	PreInsert(numOfRecords int) (int64, error)
+	Insert(entityIDs []int64, timestamps []Timestamp, record *segcorepb.InsertRecord) error
+	Delete(entityIDs []storage.PrimaryKey, timestamps []typeutil.Timestamp) error
+
+	// Query related
+	Search(searchReq *searchRequest) (*SearchResult, error)
+	Retrieve(plan *RetrievePlan) (*segcorepb.RetrieveResults, error)
+}
 
 func NewSegment(collection *Collection,
 	segmentID int64,
@@ -87,7 +106,7 @@ func NewSegment(collection *Collection,
 	channel string,
 	segmentType SegmentType,
 	version int64,
-	startPosition *internalpb.MsgPosition) (*Segment, error)
+	startPosition *internalpb.MsgPosition) (Segment, error)
 
 type Collection struct {
 }

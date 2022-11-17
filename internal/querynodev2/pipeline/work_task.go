@@ -34,7 +34,7 @@ type NodeTask interface {
 }
 
 type insertData struct {
-	segment          *Segment
+	segment          Segment
 	insertIDs        []UniqueID
 	insertTimestamps []Timestamp
 	insertRecords    []*schemapb.FieldData
@@ -42,7 +42,7 @@ type insertData struct {
 	insertPKs        []primaryKey
 }
 
-func newInsertData(segment *Segment) *insertData {
+func newInsertData(segment Segment) *insertData {
 	return &insertData{
 		segment:          segment,
 		insertIDs:        []UniqueID{},
@@ -62,7 +62,7 @@ type insertNodeTask struct {
 	insertDatas map[UniqueID]*insertData
 }
 
-func (t *insertNodeTask) newSegment(msg *InsertMsg, collection *Collection) *Segment {
+func (t *insertNodeTask) newSegment(msg *InsertMsg, collection *Collection) Segment {
 	startPosition := &internalpb.MsgPosition{
 		ChannelName: msg.ShardName,
 		Timestamp:   msg.BeginTs(),
@@ -77,7 +77,7 @@ func (t *insertNodeTask) newSegment(msg *InsertMsg, collection *Collection) *Seg
 	return segment
 }
 
-func (t *insertNodeTask) getSegment(msg *InsertMsg, collection *Collection) *Segment {
+func (t *insertNodeTask) getSegment(msg *InsertMsg, collection *Collection) Segment {
 	if collection.GetLoadType() == loadTypeCollection {
 		collection.AddPartition(msg.PartitionID)
 	}
@@ -106,7 +106,7 @@ func (t *insertNodeTask) getPKs(msg *InsertMsg, schema *schemapb.CollectionSchem
 	return PKs
 }
 
-func (t *insertNodeTask) addInsertData(msg *InsertMsg, segment *Segment, collection *Collection) {
+func (t *insertNodeTask) addInsertData(msg *InsertMsg, segment Segment, collection *Collection) {
 	insertRecord, err := storage.TransferInsertMsgToInsertRecord(collection.Schema(), msg)
 	if err != nil {
 		err = fmt.Errorf("failed to get primary keys, err = %d", err)
@@ -128,7 +128,6 @@ func (t *insertNodeTask) addInsertData(msg *InsertMsg, segment *Segment, collect
 	iData.insertPKs = append(iData.insertPKs, pks...)
 }
 
-//for release cgo usage,
 func (t *insertNodeTask) getOffset(iData *insertData) {
 	segment := iData.segment
 	var num = len(iData.insertIDs)
@@ -142,9 +141,11 @@ func (t *insertNodeTask) getOffset(iData *insertData) {
 	}
 
 	iData.insertOffset[segment.ID()] = offset
+	//TODO UpdateBloomFilter
 }
 
-func (t *insertNodeTask) insert(iData *insertData) {
+func (t *insertNodeTask) insert(iData *insertData, segment Segment) {
+	segment.Insert()
 }
 
 func (t *insertNodeTask) execute() {
@@ -160,6 +161,7 @@ func (t *insertNodeTask) execute() {
 	}
 
 	for _, insertData := range t.insertDatas {
+		t.getOffset(insertData)
 		t.insert(insertData)
 	}
 }
