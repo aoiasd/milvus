@@ -34,7 +34,8 @@ import (
 
 type channelStateTimer struct {
 	watchkv        kv.MetaKv
-	runningTimers  sync.Map // channel name to timer stop channels
+	timerStops     sync.Map // channel name to timer stop channels
+	timers         sync.Map
 	etcdWatcher    clientv3.WatchChan
 	timeoutWatcher chan *ackEvent
 }
@@ -49,7 +50,6 @@ func newChannelStateTimer(kv kv.MetaKv) *channelStateTimer {
 func (c *channelStateTimer) getWatchers(prefix string) (clientv3.WatchChan, chan *ackEvent) {
 	if c.etcdWatcher == nil {
 		c.etcdWatcher = c.watchkv.WatchWithPrefix(prefix)
-
 	}
 	return c.etcdWatcher, c.timeoutWatcher
 }
@@ -89,31 +89,33 @@ func (c *channelStateTimer) startOne(watchState datapb.ChannelWatchState, channe
 		)
 		return
 	}
+
+	c.removeTimers(channelName)
 	stop := make(chan struct{})
-	c.removeTimers([]string{channelName})
-	c.runningTimers.Store(channelName, stop)
 	timeoutT := time.Unix(0, timeoutTs)
+	timer := time.NewTimer(time.Until(timeoutT))
+	c.timerStops.Store(channelName, stop)
+	c.timers.Store(channelName, timer)
+
 	go func() {
 		log.Info("timer started",
 			zap.String("watch state", watchState.String()),
 			zap.Int64("nodeID", nodeID),
-			zap.String("channel name", channelName),
-			zap.Time("timeout time", timeoutT))
+			zap.String("channel name", channelName))
+
 		select {
-		case <-time.NewTimer(time.Until(timeoutT)).C:
+		case <-timer.C:
 			log.Info("timeout and stop timer: wait for channel ACK timeout",
 				zap.String("watch state", watchState.String()),
 				zap.Int64("nodeID", nodeID),
-				zap.String("channel name", channelName),
-				zap.Time("timeout time", timeoutT))
+				zap.String("channel name", channelName))
 			ackType := getAckType(watchState)
 			c.notifyTimeoutWatcher(&ackEvent{ackType, channelName, nodeID})
 		case <-stop:
 			log.Info("stop timer before timeout",
 				zap.String("watch state", watchState.String()),
 				zap.Int64("nodeID", nodeID),
-				zap.String("channel name", channelName),
-				zap.Time("timeout time", timeoutT))
+				zap.String("channel name", channelName))
 		}
 	}()
 }
@@ -122,18 +124,21 @@ func (c *channelStateTimer) notifyTimeoutWatcher(e *ackEvent) {
 	c.timeoutWatcher <- e
 }
 
-func (c *channelStateTimer) removeTimers(channels []string) {
+func (c *channelStateTimer) removeTimers(channels ...string) {
 	for _, channel := range channels {
-		if stop, ok := c.runningTimers.LoadAndDelete(channel); ok {
+		if stop, ok := c.timerStops.LoadAndDelete(channel); ok {
 			close(stop.(chan struct{}))
+			c.timers.Delete(channel)
 		}
 	}
 }
 
-func (c *channelStateTimer) stopIfExist(e *ackEvent) {
-	stop, ok := c.runningTimers.LoadAndDelete(e.channelName)
-	if ok && e.ackType != watchTimeoutAck && e.ackType != releaseTimeoutAck {
-		close(stop.(chan struct{}))
+//reset set timers
+func (c *channelStateTimer) resetTimers(timeoutTs int64, channels ...string) {
+	for _, channel := range channels {
+		if timer, ok := c.timers.Load(channel); ok {
+			timer.(*time.Timer).Reset(time.Second * time.Duration(timeoutTs))
+		}
 	}
 }
 
@@ -141,7 +146,6 @@ func parseWatchInfo(key string, data []byte) (*datapb.ChannelWatchInfo, error) {
 	watchInfo := datapb.ChannelWatchInfo{}
 	if err := proto.Unmarshal(data, &watchInfo); err != nil {
 		return nil, fmt.Errorf("invalid event data: fail to parse ChannelWatchInfo, key: %s, err: %v", key, err)
-
 	}
 
 	if watchInfo.Vchan == nil {

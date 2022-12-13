@@ -188,6 +188,7 @@ func (c *ChannelManager) checkOldNodes(nodes []UniqueID) error {
 		}
 		nodeWatchInfos[nodeID] = watchInfos
 	}
+	timeout := time.Now().Add(Params.DataCoordCfg.MaxWatchDuration.GetAsDuration(time.Second)).UnixNano()
 
 	for nodeID, watchInfos := range nodeWatchInfos {
 		for _, info := range watchInfos {
@@ -199,7 +200,7 @@ func (c *ChannelManager) checkOldNodes(nodes []UniqueID) error {
 
 			switch info.GetState() {
 			case datapb.ChannelWatchState_ToWatch, datapb.ChannelWatchState_Uncomplete:
-				c.stateTimer.startOne(datapb.ChannelWatchState_ToWatch, channelName, nodeID, info.GetTimeoutTs())
+				c.stateTimer.startOne(datapb.ChannelWatchState_ToWatch, channelName, nodeID, timeout)
 
 			case datapb.ChannelWatchState_WatchFailure:
 				if err := c.Release(nodeID, channelName); err != nil {
@@ -207,7 +208,7 @@ func (c *ChannelManager) checkOldNodes(nodes []UniqueID) error {
 				}
 
 			case datapb.ChannelWatchState_ToRelease:
-				c.stateTimer.startOne(datapb.ChannelWatchState_ToRelease, channelName, nodeID, info.GetTimeoutTs())
+				c.stateTimer.startOne(datapb.ChannelWatchState_ToRelease, channelName, nodeID, timeout)
 
 			case datapb.ChannelWatchState_ReleaseSuccess:
 				if err := c.Reassign(nodeID, channelName); err != nil {
@@ -259,7 +260,6 @@ func (c *ChannelManager) bgCheckChannelsWork(ctx context.Context) {
 			reallocates, err := c.bgChecker(channels, time.Now())
 			if err != nil {
 				log.Warn("channel manager bg check failed", zap.Error(err))
-
 				c.mu.Unlock()
 				continue
 			}
@@ -389,7 +389,7 @@ func (c *ChannelManager) DeleteNode(nodeID int64) error {
 	}
 	log.Info("remove timers for channel of the deregistered node",
 		zap.Any("channels", chNames), zap.Int64("nodeID", nodeID))
-	c.stateTimer.removeTimers(chNames)
+	c.stateTimer.removeTimers(chNames...)
 
 	if err := c.updateWithTimer(updates, datapb.ChannelWatchState_ToWatch); err != nil {
 		return err
@@ -446,11 +446,10 @@ func (c *ChannelManager) fillChannelWatchInfo(op *ChannelOp) {
 	for _, ch := range op.Channels {
 		vcInfo := c.h.GetDataVChanPositions(ch, allPartitionID)
 		info := &datapb.ChannelWatchInfo{
-			Vchan:     vcInfo,
-			StartTs:   time.Now().Unix(),
-			State:     datapb.ChannelWatchState_Uncomplete,
-			TimeoutTs: time.Now().Add(Params.DataCoordCfg.MaxWatchDuration.GetAsDuration(time.Second)).UnixNano(),
-			Schema:    ch.Schema,
+			Vchan:   vcInfo,
+			StartTs: time.Now().Unix(),
+			State:   datapb.ChannelWatchState_Uncomplete,
+			Schema:  ch.Schema,
 		}
 		op.ChannelWatchInfos = append(op.ChannelWatchInfos, info)
 	}
@@ -464,11 +463,10 @@ func (c *ChannelManager) fillChannelWatchInfoWithState(op *ChannelOp, state data
 	for _, ch := range op.Channels {
 		vcInfo := c.h.GetDataVChanPositions(ch, allPartitionID)
 		info := &datapb.ChannelWatchInfo{
-			Vchan:     vcInfo,
-			StartTs:   startTs,
-			State:     state,
-			TimeoutTs: timeoutTs,
-			Schema:    ch.Schema,
+			Vchan:   vcInfo,
+			StartTs: startTs,
+			State:   state,
+			Schema:  ch.Schema,
 		}
 
 		// Only set timer for watchInfo not from bufferID
@@ -480,6 +478,12 @@ func (c *ChannelManager) fillChannelWatchInfoWithState(op *ChannelOp, state data
 		op.ChannelWatchInfos = append(op.ChannelWatchInfos, info)
 	}
 	return channelsWithTimer
+}
+
+//ActivateChannel reset timer of channel to keep this task active
+func (c *ChannelManager) ActivateChannels(channels ...string) {
+	timeoutTs := Params.DataCoordCfg.MaxWatchDuration.GetAsInt64()
+	c.stateTimer.resetTimers(timeoutTs, channels...)
 }
 
 // GetChannels gets channels info of registered nodes.
@@ -608,13 +612,13 @@ func (c *ChannelManager) updateWithTimer(updates ChannelOpSet, state datapb.Chan
 	err := c.store.Update(updates)
 	if err != nil {
 		log.Warn("fail to update", zap.Array("updates", updates), zap.Error(err))
-		c.stateTimer.removeTimers(channelsWithTimer)
+		c.stateTimer.removeTimers(channelsWithTimer...)
 	}
 	return err
 }
 
 func (c *ChannelManager) processAck(e *ackEvent) {
-	c.stateTimer.stopIfExist(e)
+	c.stateTimer.removeTimers(e.channelName)
 
 	switch e.ackType {
 	case invalidAck:

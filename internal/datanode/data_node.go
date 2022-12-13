@@ -101,12 +101,13 @@ var rateCol *rateCollector
 //	`clearSignal` is a signal channel for releasing the flowgraph resources.
 //	`segmentCache` stores all flushing and flushed segments.
 type DataNode struct {
-	ctx              context.Context
-	cancel           context.CancelFunc
-	Role             string
-	stateCode        atomic.Value // commonpb.StateCode_Initializing
-	flowgraphManager *flowgraphManager
-	eventManagerMap  sync.Map // vchannel name -> channelEventManager
+	ctx                   context.Context
+	cancel                context.CancelFunc
+	Role                  string
+	stateCode             atomic.Value // commonpb.StateCode_Initializing
+	flowgraphManager      *flowgraphManager
+	activePutEventManager *activePutEventManager
+	eventManagerMap       sync.Map // vchannel name -> channelEventManager
 
 	clearSignal        chan string // vchannel name
 	segmentCache       *Cache
@@ -252,6 +253,7 @@ func (node *DataNode) Init() error {
 	log.Info("DataNode server init succeeded",
 		zap.String("MsgChannelSubName", Params.CommonCfg.DataNodeSubName.GetValue()))
 
+	node.activePutEventManager = newActivePutEventManager(node.activatePutEvent)
 	return nil
 }
 
@@ -348,6 +350,8 @@ func (node *DataNode) handleWatchInfo(e *event, key string, data []byte) {
 
 		e.info = watchInfo
 		e.vChanName = watchInfo.GetVchan().GetChannelName()
+		node.activePutEventManager.Add(e.vChanName)
+
 		log.Info("DataNode is handling watchInfo PUT event", zap.String("key", key), zap.Any("watch state", watchInfo.GetState().String()))
 	case deleteEventType:
 		e.vChanName = parseDeleteEventKey(key)
@@ -355,7 +359,7 @@ func (node *DataNode) handleWatchInfo(e *event, key string, data []byte) {
 	}
 
 	actualManager, loaded := node.eventManagerMap.LoadOrStore(e.vChanName, newChannelEventManager(
-		node.handlePutEvent, node.handleDeleteEvent, retryWatchInterval,
+		node.handlePutEvent, node.handleDeleteEvent,
 	))
 	if !loaded {
 		actualManager.(*channelEventManager).Run()
@@ -391,11 +395,31 @@ func parseDeleteEventKey(key string) string {
 	return vChanName
 }
 
+func (node *DataNode) activatePutEvent(channels ...string) error {
+	if node.dataCoord == nil {
+		return errors.New("data coord not find")
+	}
+
+	req := &datapb.ActivateChannelsRequest{
+		ChannelNames: channels,
+	}
+	if len(req.ChannelNames) != 0 {
+		log.Info("activate channel", zap.Strings("channels", channels))
+		_, err := node.dataCoord.ActivateChannels(context.Background(), req)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (node *DataNode) handlePutEvent(watchInfo *datapb.ChannelWatchInfo, version int64) (err error) {
 	vChanName := watchInfo.GetVchan().GetChannelName()
 	switch watchInfo.State {
 	case datapb.ChannelWatchState_Uncomplete, datapb.ChannelWatchState_ToWatch:
 		if err := node.flowgraphManager.addAndStart(node, watchInfo.GetVchan(), watchInfo.GetSchema()); err != nil {
+			watchInfo.State = datapb.ChannelWatchState_WatchFailure
 			return fmt.Errorf("fail to add and start flowgraph for vChanName: %s, err: %v", vChanName, err)
 		}
 		log.Info("handle put event: new data sync service success", zap.String("vChanName", vChanName))
@@ -432,6 +456,7 @@ func (node *DataNode) handlePutEvent(watchInfo *datapb.ChannelWatchInfo, version
 		node.tryToReleaseFlowgraph(vChanName)
 		return nil
 	}
+	node.activePutEventManager.Remove(vChanName)
 	log.Info("handle put event success", zap.String("key", key),
 		zap.String("state", watchInfo.State.String()), zap.String("vChanName", vChanName))
 	return nil
@@ -500,6 +525,7 @@ func (node *DataNode) Start() error {
 	}
 
 	node.chunkManager = chunkManager
+	node.activePutEventManager.Run()
 
 	go node.BackGroundGC(node.clearSignal)
 
@@ -541,6 +567,9 @@ func (node *DataNode) Stop() error {
 
 	node.cancel()
 	node.flowgraphManager.dropAll()
+	if node.activePutEventManager != nil {
+		node.activePutEventManager.Close()
+	}
 
 	if node.rowIDAllocator != nil {
 		log.Info("close id allocator", zap.String("role", typeutil.DataNodeRole))

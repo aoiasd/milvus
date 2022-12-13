@@ -3248,6 +3248,7 @@ func TestDataCoord_Import(t *testing.T) {
 	})
 
 	t.Run("with closed server", func(t *testing.T) {
+		Params.Init()
 		svr := newTestServer(t, nil)
 		closeTestServer(t, svr)
 
@@ -3819,6 +3820,20 @@ func testDataCoordBase(t *testing.T, opts ...Option) *Server {
 	}
 
 	return svr
+}
+
+func TestDataCoord_ActivateChannel(t *testing.T) {
+	svr := newTestServer(t, nil)
+	defer closeTestServer(t, svr)
+	ctx := context.Background()
+	testChannel := "testChannel"
+	req := &datapb.ActivateChannelsRequest{
+		ChannelNames: []string{testChannel},
+	}
+
+	rsp, err := svr.ActivateChannels(ctx, req)
+	assert.Equal(t, commonpb.ErrorCode_Success, rsp.ErrorCode)
+	assert.Nil(t, err)
 }
 
 func TestDataCoord_DisableActiveStandby(t *testing.T) {

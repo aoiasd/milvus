@@ -1114,6 +1114,22 @@ func (s *Server) WatchChannels(ctx context.Context, req *datapb.WatchChannelsReq
 	return resp, nil
 }
 
+func (s *Server) ActivateChannels(ctx context.Context, req *datapb.ActivateChannelsRequest) (*commonpb.Status, error) {
+	resp := &commonpb.Status{
+		ErrorCode: commonpb.ErrorCode_Success,
+	}
+
+	if s.isClosed() {
+		log.Warn("failed to activate channels", zap.Any("channels", req.GetChannelNames()),
+			zap.Error(errDataCoordIsUnhealthy(paramtable.GetNodeID())))
+		resp.Reason = msgDataCoordIsUnhealthy(paramtable.GetNodeID())
+		return resp, nil
+	}
+
+	s.channelManager.ActivateChannels(req.ChannelNames...)
+	return resp, nil
+}
+
 // GetFlushState gets the flush state of multiple segments
 func (s *Server) GetFlushState(ctx context.Context, req *milvuspb.GetFlushStateRequest) (*milvuspb.GetFlushStateResponse, error) {
 	resp := &milvuspb.GetFlushStateResponse{Status: &commonpb.Status{ErrorCode: commonpb.ErrorCode_UnexpectedError}}

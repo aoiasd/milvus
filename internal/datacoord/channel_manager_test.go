@@ -127,7 +127,7 @@ func TestChannelManager_StateTransfer(t *testing.T) {
 		waitAndCheckState(t, metakv, datapb.ChannelWatchState_WatchSuccess, nodeID, cName, collectionID)
 
 		assert.Eventually(t, func() bool {
-			_, loaded := chManager.stateTimer.runningTimers.Load(cName)
+			_, loaded := chManager.stateTimer.timerStops.Load(cName)
 			return !loaded
 		}, waitFor, tick)
 
@@ -157,13 +157,13 @@ func TestChannelManager_StateTransfer(t *testing.T) {
 		waitAndCheckState(t, metakv, datapb.ChannelWatchState_ToRelease, nodeID, cName, collectionID)
 
 		assert.Eventually(t, func() bool {
-			_, loaded := chManager.stateTimer.runningTimers.Load(cName)
+			_, loaded := chManager.stateTimer.timerStops.Load(cName)
 			return loaded
 		}, waitFor, tick)
 
 		cancel()
 		wg.Wait()
-		chManager.stateTimer.removeTimers([]string{cName})
+		chManager.stateTimer.removeTimers(cName)
 	})
 
 	t.Run("ToWatch-Timeout", func(t *testing.T) {
@@ -190,17 +190,17 @@ func TestChannelManager_StateTransfer(t *testing.T) {
 			nodeID:      nodeID,
 		}
 		chManager.stateTimer.notifyTimeoutWatcher(e)
-		chManager.stateTimer.stopIfExist(e)
+		chManager.stateTimer.removeTimers(e.channelName)
 
 		waitAndCheckState(t, metakv, datapb.ChannelWatchState_ToRelease, nodeID, cName, collectionID)
 		assert.Eventually(t, func() bool {
-			_, loaded := chManager.stateTimer.runningTimers.Load(cName)
+			_, loaded := chManager.stateTimer.timerStops.Load(cName)
 			return loaded
 		}, waitFor, tick)
 
 		cancel()
 		wg.Wait()
-		chManager.stateTimer.removeTimers([]string{cName})
+		chManager.stateTimer.removeTimers(cName)
 	})
 
 	t.Run("ToRelease-ReleaseSuccess-Reassign-ToWatch-2-DN", func(t *testing.T) {
@@ -243,9 +243,9 @@ func TestChannelManager_StateTransfer(t *testing.T) {
 		assert.Error(t, err)
 		assert.Empty(t, w)
 
-		_, loaded := chManager.stateTimer.runningTimers.Load(cName)
+		_, loaded := chManager.stateTimer.timerStops.Load(cName)
 		assert.True(t, loaded)
-		chManager.stateTimer.removeTimers([]string{cName})
+		chManager.stateTimer.removeTimers(cName)
 	})
 
 	t.Run("ToRelease-ReleaseSuccess-Reassign-ToWatch-1-DN", func(t *testing.T) {
@@ -280,13 +280,13 @@ func TestChannelManager_StateTransfer(t *testing.T) {
 		waitAndCheckState(t, metakv, datapb.ChannelWatchState_ToWatch, nodeID, cName, collectionID)
 
 		assert.Eventually(t, func() bool {
-			_, loaded := chManager.stateTimer.runningTimers.Load(cName)
+			_, loaded := chManager.stateTimer.timerStops.Load(cName)
 			return loaded
 		}, waitFor, tick)
 		cancel()
 		wg.Wait()
 
-		chManager.stateTimer.removeTimers([]string{cName})
+		chManager.stateTimer.removeTimers(cName)
 	})
 
 	t.Run("ToRelease-ReleaseFail-CleanUpAndDelete-Reassign-ToWatch-2-DN", func(t *testing.T) {
@@ -332,9 +332,9 @@ func TestChannelManager_StateTransfer(t *testing.T) {
 		assert.Error(t, err)
 		assert.Empty(t, w)
 
-		_, loaded := chManager.stateTimer.runningTimers.Load(cName)
+		_, loaded := chManager.stateTimer.timerStops.Load(cName)
 		assert.True(t, loaded)
-		chManager.stateTimer.removeTimers([]string{cName})
+		chManager.stateTimer.removeTimers(cName)
 	})
 
 	t.Run("ToRelease-ReleaseFail-CleanUpAndDelete-Reassign-ToWatch-1-DN", func(t *testing.T) {
@@ -371,13 +371,13 @@ func TestChannelManager_StateTransfer(t *testing.T) {
 
 		waitAndCheckState(t, metakv, datapb.ChannelWatchState_ToWatch, nodeID, cName, collectionID)
 		assert.Eventually(t, func() bool {
-			_, loaded := chManager.stateTimer.runningTimers.Load(cName)
+			_, loaded := chManager.stateTimer.timerStops.Load(cName)
 			return loaded
 		}, waitFor, tick)
 
 		cancel()
 		wg.Wait()
-		chManager.stateTimer.removeTimers([]string{cName})
+		chManager.stateTimer.removeTimers(cName)
 	})
 }
 
@@ -424,7 +424,7 @@ func TestChannelManager(t *testing.T) {
 		assert.True(t, chManager.Match(nodeToAdd, "channel-3"))
 
 		waitAndCheckState(t, metakv, datapb.ChannelWatchState_ToWatch, nodeToAdd, "channel-3", collectionID)
-		chManager.stateTimer.removeTimers([]string{"channel-3"})
+		chManager.stateTimer.removeTimers("channel-3")
 	})
 
 	t.Run("test AddNode with no available node", func(t *testing.T) {
@@ -464,7 +464,7 @@ func TestChannelManager(t *testing.T) {
 		assert.NoError(t, err)
 
 		waitAndCheckState(t, metakv, datapb.ChannelWatchState_ToWatch, nodeID, "channel-3", collectionID)
-		chManager.stateTimer.removeTimers([]string{"channel-3"})
+		chManager.stateTimer.removeTimers("channel-3")
 	})
 
 	t.Run("test Watch", func(t *testing.T) {
@@ -489,7 +489,7 @@ func TestChannelManager(t *testing.T) {
 		assert.NoError(t, err)
 		waitAndCheckState(t, metakv, datapb.ChannelWatchState_ToWatch, nodeID, chanToAdd, collectionID)
 
-		chManager.stateTimer.removeTimers([]string{chanToAdd})
+		chManager.stateTimer.removeTimers(chanToAdd)
 	})
 
 	t.Run("test Release", func(t *testing.T) {
@@ -514,7 +514,7 @@ func TestChannelManager(t *testing.T) {
 
 		err = chManager.Release(nodeID, channelName)
 		assert.NoError(t, err)
-		chManager.stateTimer.removeTimers([]string{channelName})
+		chManager.stateTimer.removeTimers(channelName)
 
 		waitAndCheckState(t, metakv, datapb.ChannelWatchState_ToRelease, nodeID, channelName, collectionID)
 	})
@@ -549,7 +549,7 @@ func TestChannelManager(t *testing.T) {
 		remainTest, reassignTest := tests[0], tests[1]
 		err = chManager.Reassign(reassignTest.nodeID, reassignTest.chName)
 		assert.NoError(t, err)
-		chManager.stateTimer.stopIfExist(&ackEvent{releaseSuccessAck, reassignTest.chName, reassignTest.nodeID})
+		chManager.stateTimer.removeTimers(reassignTest.chName)
 
 		// test nodes of reassignTest contains no channel
 		// test all channels are assgined to node of remainTest
@@ -563,7 +563,7 @@ func TestChannelManager(t *testing.T) {
 
 		err = chManager.Reassign(remainTest.nodeID, remainTest.chName)
 		assert.NoError(t, err)
-		chManager.stateTimer.stopIfExist(&ackEvent{releaseSuccessAck, reassignTest.chName, reassignTest.nodeID})
+		chManager.stateTimer.removeTimers(reassignTest.chName)
 
 		// channel is added to remainTest because there's only one node left
 		waitAndCheckState(t, metakv, datapb.ChannelWatchState_ToWatch, remainTest.nodeID, remainTest.chName, collectionID)
@@ -629,7 +629,7 @@ func TestChannelManager(t *testing.T) {
 		remainTest, reassignTest := tests[0], tests[1]
 		err = chManager.CleanupAndReassign(reassignTest.nodeID, reassignTest.chName)
 		assert.NoError(t, err)
-		chManager.stateTimer.stopIfExist(&ackEvent{releaseSuccessAck, reassignTest.chName, reassignTest.nodeID})
+		chManager.stateTimer.removeTimers(reassignTest.chName)
 
 		// test nodes of reassignTest contains no channel
 		assert.False(t, chManager.Match(reassignTest.nodeID, reassignTest.chName))
@@ -644,7 +644,7 @@ func TestChannelManager(t *testing.T) {
 
 		err = chManager.CleanupAndReassign(remainTest.nodeID, remainTest.chName)
 		assert.NoError(t, err)
-		chManager.stateTimer.stopIfExist(&ackEvent{releaseSuccessAck, reassignTest.chName, reassignTest.nodeID})
+		chManager.stateTimer.removeTimers(reassignTest.chName)
 
 		// channel is added to remainTest because there's only one node left
 		waitAndCheckState(t, metakv, datapb.ChannelWatchState_ToWatch, remainTest.nodeID, remainTest.chName, collectionID)
@@ -710,7 +710,7 @@ func TestChannelManager(t *testing.T) {
 					assert.Equal(t, 1, len(op.ChannelWatchInfos))
 					assert.Equal(t, test.inState, op.ChannelWatchInfos[0].GetState())
 
-					chManager.stateTimer.removeTimers(chs)
+					chManager.stateTimer.removeTimers(chs...)
 				}
 			})
 		}
@@ -730,7 +730,7 @@ func TestChannelManager(t *testing.T) {
 		opSet := getReleaseOp(nodeID, &channel{Name: channelName, CollectionID: collectionID})
 
 		chManager.updateWithTimer(opSet, datapb.ChannelWatchState_ToWatch)
-		chManager.stateTimer.removeTimers([]string{channelName})
+		chManager.stateTimer.removeTimers(channelName)
 
 		waitAndCheckState(t, metakv, datapb.ChannelWatchState_ToWatch, nodeID, channelName, collectionID)
 	})
@@ -756,8 +756,7 @@ func TestChannelManager_Reload(t *testing.T) {
 				CollectionID: collectionID,
 				ChannelName:  channelName,
 			},
-			State:     state,
-			TimeoutTs: time.Now().Add(20 * time.Second).UnixNano(),
+			State: state,
 		}
 	}
 
@@ -774,9 +773,9 @@ func TestChannelManager_Reload(t *testing.T) {
 			require.NoError(t, err)
 
 			chManager.checkOldNodes([]UniqueID{nodeID})
-			_, ok := chManager.stateTimer.runningTimers.Load(channelName)
+			_, ok := chManager.stateTimer.timerStops.Load(channelName)
 			assert.True(t, ok)
-			chManager.stateTimer.removeTimers([]string{channelName})
+			chManager.stateTimer.removeTimers(channelName)
 		})
 
 		t.Run("ToRelease", func(t *testing.T) {
@@ -790,9 +789,9 @@ func TestChannelManager_Reload(t *testing.T) {
 			err = chManager.checkOldNodes([]UniqueID{nodeID})
 			assert.NoError(t, err)
 
-			_, ok := chManager.stateTimer.runningTimers.Load(channelName)
+			_, ok := chManager.stateTimer.timerStops.Load(channelName)
 			assert.True(t, ok)
-			chManager.stateTimer.removeTimers([]string{channelName})
+			chManager.stateTimer.removeTimers(channelName)
 		})
 
 		t.Run("WatchFail", func(t *testing.T) {
@@ -813,7 +812,7 @@ func TestChannelManager_Reload(t *testing.T) {
 			assert.NoError(t, err)
 
 			waitAndCheckState(t, metakv, datapb.ChannelWatchState_ToRelease, nodeID, channelName, collectionID)
-			chManager.stateTimer.removeTimers([]string{channelName})
+			chManager.stateTimer.removeTimers(channelName)
 		})
 
 		t.Run("ReleaseSuccess", func(t *testing.T) {
@@ -835,7 +834,7 @@ func TestChannelManager_Reload(t *testing.T) {
 			assert.NoError(t, err)
 
 			waitAndCheckState(t, metakv, datapb.ChannelWatchState_ToWatch, 111, channelName, collectionID)
-			chManager.stateTimer.removeTimers([]string{channelName})
+			chManager.stateTimer.removeTimers(channelName)
 
 			v, err := metakv.Load(path.Join(prefix, strconv.FormatInt(nodeID, 10)))
 			assert.Error(t, err)
@@ -905,7 +904,7 @@ func TestChannelManager_Reload(t *testing.T) {
 		assert.True(t, cm2.Match(3, "channel1"))
 		assert.True(t, cm2.Match(3, "channel2"))
 
-		cm2.stateTimer.removeTimers([]string{"channel1", "channel2"})
+		cm2.stateTimer.removeTimers("channel1", "channel2")
 	})
 }
 
@@ -1118,4 +1117,21 @@ func TestChannelManager_HelperFunc(t *testing.T) {
 		}
 
 	})
+}
+
+func TestChannelManager_ActivateChannel(t *testing.T) {
+	metakv := getMetaKv(t)
+	testChannel := "testChannel"
+	defer func() {
+		metakv.RemoveWithPrefix("")
+		metakv.Close()
+	}()
+
+	c := &ChannelManager{
+		stateTimer: newChannelStateTimer(metakv),
+	}
+	c.stateTimer.startOne(datapb.ChannelWatchState_ToWatch, testChannel, 1, time.Now().Add(20*time.Second).UnixNano())
+	c.ActivateChannels(testChannel)
+	_, ok := c.stateTimer.timers.Load(testChannel)
+	assert.True(t, ok)
 }

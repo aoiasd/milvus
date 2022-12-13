@@ -18,6 +18,7 @@ package datanode
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -38,6 +39,7 @@ import (
 	"github.com/milvus-io/milvus/internal/proto/datapb"
 	"github.com/milvus-io/milvus/internal/storage"
 	"github.com/milvus-io/milvus/internal/types"
+	"github.com/milvus-io/milvus/internal/util/dependency"
 	"github.com/milvus-io/milvus/internal/util/etcd"
 	"github.com/milvus-io/milvus/internal/util/importutil"
 	"github.com/milvus-io/milvus/internal/util/metricsinfo"
@@ -213,6 +215,32 @@ func TestDataNode(t *testing.T) {
 
 }
 
+func TestActivateChannels(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	testChannel := "test-Channel"
+	factory := dependency.NewDefaultFactory(true)
+	node := NewDataNode(ctx, factory)
+	defer cancel()
+
+	rc := &RootCoordFactory{}
+	node.rootCoord = rc
+
+	//datanode was nil
+	err := node.activatePutEvent(testChannel)
+	assert.Error(t, err)
+
+	//normal case
+	ds := &DataCoordFactory{}
+	node.dataCoord = ds
+	err = node.activatePutEvent(testChannel)
+	assert.NoError(t, err)
+
+	//dataCoord ActivateChannels return error
+	ds.ActivateChannelError = errors.New("test error")
+	err = node.activatePutEvent(testChannel)
+	assert.Error(t, err)
+}
+
 func TestWatchChannel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	node := newIDLEDataNodeMock(ctx, schemapb.DataType_Int64)
@@ -274,9 +302,8 @@ func TestWatchChannel(t *testing.T) {
 			UnflushedSegmentIds: []int64{},
 		}
 		info := &datapb.ChannelWatchInfo{
-			State:     datapb.ChannelWatchState_ToWatch,
-			Vchan:     vchan,
-			TimeoutTs: time.Now().Add(time.Minute).UnixNano(),
+			State: datapb.ChannelWatchState_ToWatch,
+			Vchan: vchan,
 		}
 		val, err := proto.Marshal(info)
 		assert.Nil(t, err)
@@ -333,9 +360,8 @@ func TestWatchChannel(t *testing.T) {
 			UnflushedSegmentIds: []int64{},
 		}
 		info := &datapb.ChannelWatchInfo{
-			State:     datapb.ChannelWatchState_ToRelease,
-			Vchan:     vchan,
-			TimeoutTs: time.Now().Add(time.Minute).UnixNano(),
+			State: datapb.ChannelWatchState_ToRelease,
+			Vchan: vchan,
 		}
 		val, err := proto.Marshal(info)
 		assert.Nil(t, err)
@@ -391,15 +417,14 @@ func TestWatchChannel(t *testing.T) {
 			func(vChan string) {
 				node.handleDeleteEvent(vChan)
 				chDel <- struct{}{}
-			}, time.Millisecond*100,
+			},
 		)
 		node.eventManagerMap.Store(ch, m)
 		m.Run()
 
 		info = datapb.ChannelWatchInfo{
-			Vchan:     &datapb.VchannelInfo{ChannelName: ch},
-			State:     datapb.ChannelWatchState_Uncomplete,
-			TimeoutTs: time.Now().Add(time.Minute).UnixNano(),
+			Vchan: &datapb.VchannelInfo{ChannelName: ch},
+			State: datapb.ChannelWatchState_Uncomplete,
 		}
 		bs, err = proto.Marshal(&info)
 		assert.NoError(t, err)
@@ -428,7 +453,7 @@ func TestWatchChannel(t *testing.T) {
 			func(vChan string) {
 				node.handleDeleteEvent(vChan)
 				chDel <- struct{}{}
-			}, time.Millisecond*100,
+			},
 		)
 		node.eventManagerMap.Store(ch, m)
 		m.Run()
@@ -438,9 +463,8 @@ func TestWatchChannel(t *testing.T) {
 		}
 
 		info := datapb.ChannelWatchInfo{
-			Vchan:     &datapb.VchannelInfo{ChannelName: ch},
-			State:     datapb.ChannelWatchState_Uncomplete,
-			TimeoutTs: time.Now().Add(time.Minute).UnixNano(),
+			Vchan: &datapb.VchannelInfo{ChannelName: ch},
+			State: datapb.ChannelWatchState_Uncomplete,
 		}
 		bs, err := proto.Marshal(&info)
 		assert.NoError(t, err)
@@ -461,8 +485,7 @@ func TestWatchChannel(t *testing.T) {
 				DroppedSegments:     []*datapb.SegmentInfo{{ID: 3}},
 				UnflushedSegmentIds: []int64{1},
 			},
-			State:     datapb.ChannelWatchState_Uncomplete,
-			TimeoutTs: time.Now().Add(time.Minute).UnixNano(),
+			State: datapb.ChannelWatchState_Uncomplete,
 		}
 		bs, err := proto.Marshal(&info)
 		assert.NoError(t, err)

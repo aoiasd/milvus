@@ -211,6 +211,8 @@ type DataCoordFactory struct {
 
 	AddSegmentError      bool
 	AddSegmentNotSuccess bool
+
+	ActivateChannelError error
 }
 
 func (ds *DataCoordFactory) AssignSegmentID(ctx context.Context, req *datapb.AssignSegmentIDRequest) (*datapb.AssignSegmentIDResponse, error) {
@@ -295,6 +297,12 @@ func (ds *DataCoordFactory) CheckHealth(ctx context.Context, req *milvuspb.Check
 	return &milvuspb.CheckHealthResponse{
 		IsHealthy: true,
 	}, nil
+}
+
+func (ds *DataCoordFactory) ActivateChannels(ctx context.Context, req *datapb.ActivateChannelsRequest) (*commonpb.Status, error) {
+	return &commonpb.Status{
+		ErrorCode: commonpb.ErrorCode_Success,
+	}, ds.ActivateChannelError
 }
 
 func (ds *DataCoordFactory) GetSegmentInfo(ctx context.Context, req *datapb.GetSegmentInfoRequest) (*datapb.GetSegmentInfoResponse, error) {

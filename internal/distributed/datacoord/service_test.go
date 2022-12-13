@@ -60,6 +60,7 @@ type MockDataCoord struct {
 	dropVChanResp             *datapb.DropVirtualChannelResponse
 	setSegmentStateResp       *datapb.SetSegmentStateResponse
 	importResp                *datapb.ImportTaskResponse
+	activateChannelsResp      *commonpb.Status
 	updateSegStatResp         *commonpb.Status
 	updateChanPos             *commonpb.Status
 	addSegmentResp            *commonpb.Status
@@ -184,6 +185,10 @@ func (m *MockDataCoord) GetCompactionStateWithPlans(ctx context.Context, req *mi
 
 func (m *MockDataCoord) WatchChannels(ctx context.Context, req *datapb.WatchChannelsRequest) (*datapb.WatchChannelsResponse, error) {
 	return m.watchChannelsResp, m.err
+}
+
+func (m *MockDataCoord) ActivateChannels(ctx context.Context, req *datapb.ActivateChannelsRequest) (*commonpb.Status, error) {
+	return m.activateChannelsResp, m.err
 }
 
 func (m *MockDataCoord) GetFlushState(ctx context.Context, req *milvuspb.GetFlushStateRequest) (*milvuspb.GetFlushStateResponse, error) {

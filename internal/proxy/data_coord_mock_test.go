@@ -250,6 +250,10 @@ func (coord *DataCoordMock) WatchChannels(ctx context.Context, req *datapb.Watch
 	return &datapb.WatchChannelsResponse{}, nil
 }
 
+func (coord *DataCoordMock) ActivateChannels(ctx context.Context, req *datapb.ActivateChannelsRequest) (*commonpb.Status, error) {
+	return &commonpb.Status{}, nil
+}
+
 func (coord *DataCoordMock) GetFlushState(ctx context.Context, req *milvuspb.GetFlushStateRequest) (*milvuspb.GetFlushStateResponse, error) {
 	return &milvuspb.GetFlushStateResponse{}, nil
 }

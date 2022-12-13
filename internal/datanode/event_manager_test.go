@@ -34,121 +34,55 @@ func TestChannelEventManager(t *testing.T) {
 			ran = true
 			ch <- struct{}{}
 			return nil
-		}, func(name string) {}, time.Millisecond*10)
+		}, func(name string) {})
 
 		em.Run()
 		em.handleEvent(event{
 			eventType: putEventType,
 			vChanName: "",
 			version:   0,
-			info: &datapb.ChannelWatchInfo{
-				TimeoutTs: time.Now().Add(time.Minute).UnixNano(),
-			},
+			info:      &datapb.ChannelWatchInfo{},
 		})
 		<-ch
 		assert.True(t, ran)
 	})
 
-	t.Run("event already timeout", func(t *testing.T) {
-		ch := make(chan struct{}, 1)
-		ran := false
-		em := newChannelEventManager(func(info *datapb.ChannelWatchInfo, version int64) error {
-			ran = true
-			ch <- struct{}{}
-			return nil
-		}, func(name string) {}, time.Millisecond*10)
-
-		em.Run()
-		em.handleEvent(event{
-			eventType: putEventType,
-			vChanName: "",
-			version:   0,
-			info: &datapb.ChannelWatchInfo{
-				TimeoutTs: time.Now().Add(-time.Minute).UnixNano(),
-			},
-		})
-		select {
-		case <-ch:
-			t.FailNow()
-		case <-time.NewTimer(time.Millisecond * 100).C:
-		}
-		assert.False(t, ran)
-	})
-
-	t.Run("retry success", func(t *testing.T) {
+	t.Run("return failed", func(t *testing.T) {
 		ch := make(chan struct{}, 1)
 		ran := false
 		counter := atomic.Int32{}
 		counter.Store(0)
 		em := newChannelEventManager(func(info *datapb.ChannelWatchInfo, version int64) error {
-			current := counter.Add(1)
-			if current == 2 {
-				ran = true
-				ch <- struct{}{}
-				return nil
-			}
-
+			ran = true
+			ch <- struct{}{}
 			return errors.New("mocked error")
-		}, func(name string) {}, time.Millisecond*10)
+		}, func(name string) {})
 
 		em.Run()
 		em.handleEvent(event{
 			eventType: putEventType,
 			vChanName: "",
 			version:   0,
-			info: &datapb.ChannelWatchInfo{
-				TimeoutTs: time.Now().Add(time.Minute).UnixNano(),
-			},
+			info:      &datapb.ChannelWatchInfo{},
 		})
 		<-ch
 		assert.True(t, ran)
-	})
-
-	t.Run("retry until timeout", func(t *testing.T) {
-		em := newChannelEventManager(func(info *datapb.ChannelWatchInfo, version int64) error {
-			return errors.New("mocked error")
-		}, func(name string) {}, time.Millisecond*100)
-
-		ch := make(chan struct{}, 1)
-
-		go func() {
-			ddl := time.Now().Add(time.Millisecond * 50)
-			evt := event{
-				eventType: putEventType,
-				vChanName: "",
-				version:   0,
-				info: &datapb.ChannelWatchInfo{
-					TimeoutTs: ddl.UnixNano(),
-				},
-			}
-			em.retryHandlePutEvent(evt)
-			ch <- struct{}{}
-		}()
-
-		select {
-		case <-ch:
-		case <-time.NewTimer(time.Second).C:
-			t.FailNow()
-		}
 	})
 
 	t.Run("close behavior", func(t *testing.T) {
 		ch := make(chan struct{}, 1)
 		em := newChannelEventManager(func(info *datapb.ChannelWatchInfo, version int64) error {
 			return errors.New("mocked error")
-		}, func(name string) {}, time.Millisecond*10)
+		}, func(name string) {})
 
 		go func() {
-			ddl := time.Now().Add(time.Minute)
 			evt := event{
 				eventType: putEventType,
 				vChanName: "",
 				version:   0,
-				info: &datapb.ChannelWatchInfo{
-					TimeoutTs: ddl.UnixNano(),
-				},
+				info:      &datapb.ChannelWatchInfo{},
 			}
-			em.retryHandlePutEvent(evt)
+			em.handlePutEvent(evt.info, evt.version)
 			ch <- struct{}{}
 		}()
 
@@ -176,24 +110,19 @@ func TestChannelEventManager(t *testing.T) {
 				ran = true
 				ch <- struct{}{}
 			},
-			time.Millisecond*10,
 		)
 		em.Run()
 		em.handleEvent(event{
 			eventType: putEventType,
 			vChanName: "",
 			version:   0,
-			info: &datapb.ChannelWatchInfo{
-				TimeoutTs: time.Now().Add(time.Minute).UnixNano(),
-			},
+			info:      &datapb.ChannelWatchInfo{},
 		})
 		em.handleEvent(event{
 			eventType: deleteEventType,
 			vChanName: "",
 			version:   0,
-			info: &datapb.ChannelWatchInfo{
-				TimeoutTs: time.Now().Add(time.Minute).UnixNano(),
-			},
+			info:      &datapb.ChannelWatchInfo{},
 		})
 		<-ch
 		assert.True(t, ran)
@@ -212,15 +141,14 @@ func TestChannelEventManager(t *testing.T) {
 				return errors.New("mocked error")
 			},
 			func(name string) {},
-			time.Millisecond*10)
+		)
 		em.Run()
 		em.handleEvent(event{
 			eventType: putEventType,
 			vChanName: "",
 			version:   0,
 			info: &datapb.ChannelWatchInfo{
-				State:     datapb.ChannelWatchState_ToWatch,
-				TimeoutTs: time.Now().Add(time.Minute).UnixNano(),
+				State: datapb.ChannelWatchState_ToWatch,
 			},
 		})
 		em.handleEvent(event{
@@ -228,8 +156,7 @@ func TestChannelEventManager(t *testing.T) {
 			vChanName: "",
 			version:   1,
 			info: &datapb.ChannelWatchInfo{
-				State:     datapb.ChannelWatchState_ToWatch,
-				TimeoutTs: time.Now().Add(time.Minute).UnixNano(),
+				State: datapb.ChannelWatchState_ToWatch,
 			},
 		})
 		<-ch
@@ -251,22 +178,18 @@ func TestChannelEventManager(t *testing.T) {
 					return errors.New("mocked error")
 				},
 				func(name string) {},
-				time.Millisecond*100,
 			)
 
 			ch := make(chan struct{}, 1)
-			ddl := time.Now().Add(time.Minute)
 
 			go func() {
 				evt := event{
 					eventType: putEventType,
 					vChanName: "",
 					version:   0,
-					info: &datapb.ChannelWatchInfo{
-						TimeoutTs: ddl.UnixNano(),
-					},
+					info:      &datapb.ChannelWatchInfo{},
 				}
-				em.retryHandlePutEvent(evt)
+				em.handlePutEvent(evt.info, evt.version)
 				ch <- struct{}{}
 			}()
 
@@ -275,8 +198,7 @@ func TestChannelEventManager(t *testing.T) {
 				vChanName: "",
 				version:   0,
 				info: &datapb.ChannelWatchInfo{
-					State:     es,
-					TimeoutTs: ddl.UnixNano(),
+					State: es,
 				},
 			}
 			select {
@@ -285,5 +207,45 @@ func TestChannelEventManager(t *testing.T) {
 				t.FailNow()
 			}
 		}
+	})
+}
+
+func TestActivePutEventManager(t *testing.T) {
+	ch := make(chan struct{}, 1)
+	var activateChannel []string
+	testChannel := "test-channel"
+
+	t.Run("normal case", func(t *testing.T) {
+		em := newActivePutEventManager(func(channels ...string) error {
+			activateChannel = channels
+			ch <- struct{}{}
+			return nil
+		})
+		em.intervalTime = time.Millisecond * 500
+		em.Add(testChannel)
+		em.Run()
+		defer em.Close()
+		<-ch
+		assert.Equal(t, 1, len(activateChannel))
+		assert.Equal(t, testChannel, activateChannel[0])
+
+		em.Remove(testChannel)
+		<-ch
+		assert.Equal(t, 0, len(activateChannel))
+	})
+
+	t.Run("with error", func(t *testing.T) {
+		em := newActivePutEventManager(func(channels ...string) error {
+			activateChannel = channels
+			ch <- struct{}{}
+			return errors.New("test error")
+		})
+		em.intervalTime = time.Millisecond * 500
+		em.Add(testChannel)
+		em.Run()
+		defer em.Close()
+		<-ch
+		assert.Equal(t, 1, len(activateChannel))
+		assert.Equal(t, testChannel, activateChannel[0])
 	})
 }

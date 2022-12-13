@@ -286,6 +286,8 @@ type DataCoord interface {
 
 	// WatchChannels notifies DataCoord to watch vchannels of a collection
 	WatchChannels(ctx context.Context, req *datapb.WatchChannelsRequest) (*datapb.WatchChannelsResponse, error)
+	//ActivateChannels
+	ActivateChannels(ctx context.Context, req *datapb.ActivateChannelsRequest) (*commonpb.Status, error)
 	// GetFlushState gets the flush state of multiple segments
 	GetFlushState(ctx context.Context, req *milvuspb.GetFlushStateRequest) (*milvuspb.GetFlushStateResponse, error)
 	// SetSegmentState updates a segment's state explicitly.

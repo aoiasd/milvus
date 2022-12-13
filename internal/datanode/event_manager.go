@@ -17,16 +17,17 @@
 package datanode
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/milvus-io/milvus/internal/log"
 	"github.com/milvus-io/milvus/internal/proto/datapb"
-
+	"github.com/milvus-io/milvus/internal/util/typeutil"
 	"go.uber.org/zap"
 )
 
-const retryWatchInterval = 20 * time.Second
+const activateInterval = 15 * time.Second
 
 type event struct {
 	eventType int
@@ -41,7 +42,6 @@ type channelEventManager struct {
 	closeChan         chan struct{}
 	handlePutEvent    func(watchInfo *datapb.ChannelWatchInfo, version int64) error // node.handlePutEvent
 	handleDeleteEvent func(vChanName string)                                        // node.handleDeleteEvent
-	retryInterval     time.Duration
 }
 
 const (
@@ -50,13 +50,12 @@ const (
 )
 
 func newChannelEventManager(handlePut func(*datapb.ChannelWatchInfo, int64) error,
-	handleDel func(string), retryInterval time.Duration) *channelEventManager {
+	handleDel func(string)) *channelEventManager {
 	return &channelEventManager{
 		eventChan:         make(chan event, 10),
 		closeChan:         make(chan struct{}),
 		handlePutEvent:    handlePut,
 		handleDeleteEvent: handleDel,
-		retryInterval:     retryInterval,
 	}
 }
 
@@ -67,7 +66,7 @@ func (e *channelEventManager) Run() {
 			case event := <-e.eventChan:
 				switch event.eventType {
 				case putEventType:
-					e.retryHandlePutEvent(event)
+					e.handlePutEvent(event.info, event.version)
 				case deleteEventType:
 					e.handleDeleteEvent(event.vChanName)
 				}
@@ -76,65 +75,6 @@ func (e *channelEventManager) Run() {
 			}
 		}
 	}()
-}
-
-func (e *channelEventManager) retryHandlePutEvent(event event) {
-	countdown := time.Until(time.Unix(0, event.info.TimeoutTs))
-	if countdown < 0 {
-		log.Warn("event already timed out", zap.String("vChanName", event.vChanName))
-		return
-	}
-	// Trigger retry for-loop when fail to handle put event for the first time
-	if err := e.handlePutEvent(event.info, event.version); err != nil {
-		timer := time.NewTimer(countdown)
-		defer timer.Stop()
-		ticker := time.NewTicker(e.retryInterval)
-		defer ticker.Stop()
-		for {
-			log.Warn("handle put event fail, starting retry",
-				zap.String("vChanName", event.vChanName),
-				zap.String("retry interval", e.retryInterval.String()),
-				zap.Error(err))
-
-			// reset the ticker
-			ticker.Reset(e.retryInterval)
-
-			select {
-			case <-ticker.C:
-				// ticker notify, do another retry
-			case <-timer.C:
-				// timeout
-				log.Warn("event process timed out", zap.String("vChanName", event.vChanName))
-				return
-			case evt, ok := <-e.eventChan:
-				if !ok {
-					log.Warn("event channel closed", zap.String("vChanName", event.vChanName))
-					return
-				}
-				// When got another put event, overwrite current event
-				if evt.eventType == putEventType {
-					// handles only Uncomplete, ToWatch and ToRelease
-					if isEndWatchState(evt.info.State) {
-						return
-					}
-					event = evt
-				}
-				// When getting a delete event at next retry, exit retry loop
-				// When getting a put event, just continue the retry
-				if evt.eventType == deleteEventType {
-					log.Warn("delete event triggerred, terminating retry.",
-						zap.String("vChanName", event.vChanName))
-					e.handleDeleteEvent(evt.vChanName)
-					return
-				}
-			}
-			err = e.handlePutEvent(event.info, event.version)
-			if err == nil {
-				log.Info("handle put event successfully", zap.String("vChanName", event.vChanName))
-				return
-			}
-		}
-	}
 }
 
 func (e *channelEventManager) handleEvent(event event) {
@@ -151,4 +91,63 @@ func isEndWatchState(state datapb.ChannelWatchState) bool {
 	return state != datapb.ChannelWatchState_ToWatch && // start watch
 		state != datapb.ChannelWatchState_ToRelease && // start release
 		state != datapb.ChannelWatchState_Uncomplete // legacy state, equal to ToWatch
+}
+
+type activateFunc func(channels ...string) error
+
+//activePutEventManager like a tickle used to keep channel with state ToWatch or ToRelease active at datacoord
+type activePutEventManager struct {
+	channels     *typeutil.ConcurrentSet[string]
+	intervalTime time.Duration
+	ticker       *time.Ticker
+
+	closeCh   chan struct{}
+	closeOnce sync.Once
+	wg        sync.WaitGroup
+
+	activate activateFunc
+}
+
+func (m *activePutEventManager) Add(channel string) {
+	m.channels.Insert(channel)
+}
+
+func (m *activePutEventManager) Remove(channel string) {
+	m.channels.Remove(channel)
+}
+
+func (m *activePutEventManager) Run() {
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		m.ticker = time.NewTicker(m.intervalTime)
+		for {
+			select {
+			case <-m.ticker.C:
+				err := m.activate(m.channels.Collect()...)
+				if err != nil {
+					log.Warn(fmt.Sprintf("activate put event failed: %s", err.Error()), zap.Strings("channels", m.channels.Collect()))
+				}
+			case <-m.closeCh:
+				log.Info("close active channel manager")
+				return
+			}
+		}
+	}()
+}
+
+func (m *activePutEventManager) Close() {
+	m.closeOnce.Do(func() {
+		close(m.closeCh)
+		m.wg.Wait()
+	})
+}
+
+func newActivePutEventManager(activate activateFunc) *activePutEventManager {
+	return &activePutEventManager{
+		activate:     activate,
+		channels:     typeutil.NewConcurrentSet[string](),
+		intervalTime: activateInterval,
+		closeCh:      make(chan struct{}),
+	}
 }

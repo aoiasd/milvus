@@ -50,6 +50,7 @@ service DataCoord {
   rpc GetCompactionStateWithPlans(milvus.GetCompactionPlansRequest) returns (milvus.GetCompactionPlansResponse) {}
 
   rpc WatchChannels(WatchChannelsRequest) returns (WatchChannelsResponse) {}
+  rpc ActivateChannels(ActivateChannelsRequest) returns (common.Status) {}
   rpc GetFlushState(milvus.GetFlushStateRequest) returns (milvus.GetFlushStateResponse) {}
   rpc DropVirtualChannel(DropVirtualChannelRequest) returns (DropVirtualChannelResponse) {}
 
@@ -422,11 +423,8 @@ message ChannelWatchInfo {
     VchannelInfo vchan= 1;
     int64 startTs = 2;
     ChannelWatchState state = 3;
-    // the timeout ts, datanode shall do nothing after it
-    // if the timeout is not set(= 0), original infinite retry logic shall be applied
-    int64 timeoutTs = 4;
     // the schema of the collection to watch, to avoid get schema rpc issues.
-    schema.CollectionSchema schema = 5;
+    schema.CollectionSchema schema = 4;
 }
 
 enum CompactionType {
@@ -493,6 +491,10 @@ message CompactionStateResponse {
 message SegmentFieldBinlogMeta {
   int64  fieldID = 1;
   string binlog_path = 2;
+}
+
+message ActivateChannelsRequest{
+  repeated string channelNames = 1;
 }
 
 message WatchChannelsRequest {

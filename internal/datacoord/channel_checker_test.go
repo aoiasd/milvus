@@ -52,10 +52,9 @@ func TestChannelStateTimer(t *testing.T) {
 		timer.loadAllChannels(1)
 
 		validWatchInfo := datapb.ChannelWatchInfo{
-			Vchan:     &datapb.VchannelInfo{},
-			StartTs:   time.Now().Unix(),
-			State:     datapb.ChannelWatchState_ToWatch,
-			TimeoutTs: time.Now().Add(20 * time.Millisecond).UnixNano(),
+			Vchan:   &datapb.VchannelInfo{},
+			StartTs: time.Now().Unix(),
+			State:   datapb.ChannelWatchState_ToWatch,
 		}
 		validData, err := proto.Marshal(&validWatchInfo)
 		require.NoError(t, err)
@@ -89,16 +88,15 @@ func TestChannelStateTimer(t *testing.T) {
 	t.Run("test startOne", func(t *testing.T) {
 		normalTimeoutTs := time.Now().Add(20 * time.Second).UnixNano()
 		nowTimeoutTs := time.Now().UnixNano()
-		zeroTimeoutTs := int64(0)
+		invalidTimeoutTs := int64(0)
 		tests := []struct {
 			channelName string
 			timeoutTs   int64
-
 			description string
 		}{
 			{"channel-1", normalTimeoutTs, "test stop"},
 			{"channel-2", nowTimeoutTs, "test timeout"},
-			{"channel-3", zeroTimeoutTs, "not start"},
+			{"channel-3", invalidTimeoutTs, "not start"},
 		}
 
 		timer := newChannelStateTimer(kv)
@@ -113,13 +111,13 @@ func TestChannelStateTimer(t *testing.T) {
 					assert.Equal(t, watchTimeoutAck, e.ackType)
 					assert.Equal(t, test.channelName, e.channelName)
 				} else {
-					timer.stopIfExist(&ackEvent{watchSuccessAck, test.channelName, 1})
+					timer.removeTimers(test.channelName)
 				}
 			})
 		}
 
 		timer.startOne(datapb.ChannelWatchState_ToWatch, "channel-remove", 1, normalTimeoutTs)
-		timer.removeTimers([]string{"channel-remove"})
+		timer.removeTimers("channel-remove")
 	})
 
 	t.Run("test startOne no leaking issue 17335", func(t *testing.T) {
@@ -127,19 +125,35 @@ func TestChannelStateTimer(t *testing.T) {
 		timer := newChannelStateTimer(kv)
 
 		timer.startOne(datapb.ChannelWatchState_ToRelease, "channel-1", 1, timeoutTs)
-		stop, ok := timer.runningTimers.Load("channel-1")
+		stop, ok := timer.timerStops.Load("channel-1")
 		require.True(t, ok)
 
 		timer.startOne(datapb.ChannelWatchState_ToWatch, "channel-1", 1, timeoutTs)
 		_, ok = <-stop.(chan struct{})
 		assert.False(t, ok)
 
-		stop2, ok := timer.runningTimers.Load("channel-1")
+		stop2, ok := timer.timerStops.Load("channel-1")
 		assert.True(t, ok)
 
-		timer.removeTimers([]string{"channel-1"})
+		timer.removeTimers("channel-1")
 		_, ok = <-stop2.(chan struct{})
 		assert.False(t, ok)
+	})
+
+	t.Run("test reset", func(t *testing.T) {
+		timeoutTs := time.Now().Add(20 * time.Second).UnixNano()
+		timer := newChannelStateTimer(kv)
+		testChannel := "channel-test"
+		_, watcher := timer.getWatchers("")
+
+		timer.startOne(datapb.ChannelWatchState_ToRelease, testChannel, 1, timeoutTs)
+		_, ok := timer.timerStops.Load(testChannel)
+		assert.True(t, ok)
+
+		timer.resetTimers(time.Now().Add(500 * time.Millisecond).UnixNano())
+		event := <-watcher
+		assert.Equal(t, testChannel, event.channelName)
+
 	})
 }
 
@@ -151,10 +165,9 @@ func TestChannelStateTimer_parses(t *testing.T) {
 
 	t.Run("test parseWatchInfo", func(t *testing.T) {
 		validWatchInfo := datapb.ChannelWatchInfo{
-			Vchan:     &datapb.VchannelInfo{},
-			StartTs:   time.Now().Unix(),
-			State:     datapb.ChannelWatchState_ToWatch,
-			TimeoutTs: time.Now().Add(20 * time.Millisecond).UnixNano(),
+			Vchan:   &datapb.VchannelInfo{},
+			StartTs: time.Now().Unix(),
+			State:   datapb.ChannelWatchState_ToWatch,
 		}
 		validData, err := proto.Marshal(&validWatchInfo)
 		require.NoError(t, err)
@@ -186,7 +199,6 @@ func TestChannelStateTimer_parses(t *testing.T) {
 					assert.NotNil(t, info)
 					assert.Equal(t, info.GetState(), validWatchInfo.GetState())
 					assert.Equal(t, info.GetStartTs(), validWatchInfo.GetStartTs())
-					assert.Equal(t, info.GetTimeoutTs(), validWatchInfo.GetTimeoutTs())
 				} else {
 					assert.Nil(t, info)
 					assert.Error(t, err)
@@ -205,9 +217,8 @@ func TestChannelStateTimer_parses(t *testing.T) {
 				DroppedSegments:     []*datapb.SegmentInfo{{ID: 3}},
 				UnflushedSegmentIds: []int64{1},
 			},
-			StartTs:   time.Now().Unix(),
-			State:     datapb.ChannelWatchState_ToWatch,
-			TimeoutTs: time.Now().Add(20 * time.Millisecond).UnixNano(),
+			StartTs: time.Now().Unix(),
+			State:   datapb.ChannelWatchState_ToWatch,
 		}
 
 		oldData, err := proto.Marshal(&oldWatchInfo)

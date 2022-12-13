@@ -567,6 +567,20 @@ func (c *Client) WatchChannels(ctx context.Context, req *datapb.WatchChannelsReq
 	return ret.(*datapb.WatchChannelsResponse), err
 }
 
+//ActivateChannels reset timeout timer of WatchChannelEvent to keep channel active
+func (c *Client) ActivateChannels(ctx context.Context, req *datapb.ActivateChannelsRequest) (*commonpb.Status, error) {
+	ret, err := c.grpcClient.ReCall(ctx, func(client datapb.DataCoordClient) (any, error) {
+		if !funcutil.CheckCtxValid(ctx) {
+			return nil, ctx.Err()
+		}
+		return client.ActivateChannels(ctx, req)
+	})
+	if err != nil || ret == nil {
+		return nil, err
+	}
+	return ret.(*commonpb.Status), err
+}
+
 // GetFlushState gets the flush state of multiple segments
 func (c *Client) GetFlushState(ctx context.Context, req *milvuspb.GetFlushStateRequest) (*milvuspb.GetFlushStateResponse, error) {
 	ret, err := c.grpcClient.ReCall(ctx, func(client datapb.DataCoordClient) (any, error) {

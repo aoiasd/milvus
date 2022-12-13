@@ -329,6 +329,11 @@ func (s *Server) WatchChannels(ctx context.Context, req *datapb.WatchChannelsReq
 	return s.dataCoord.WatchChannels(ctx, req)
 }
 
+// ActivateChannels reset channel timeout
+func (s *Server) ActivateChannels(ctx context.Context, req *datapb.ActivateChannelsRequest) (*commonpb.Status, error) {
+	return s.dataCoord.ActivateChannels(ctx, req)
+}
+
 // GetFlushState gets the flush state of multiple segments
 func (s *Server) GetFlushState(ctx context.Context, req *milvuspb.GetFlushStateRequest) (*milvuspb.GetFlushStateResponse, error) {
 	return s.dataCoord.GetFlushState(ctx, req)

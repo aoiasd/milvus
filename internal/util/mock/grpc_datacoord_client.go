@@ -125,6 +125,11 @@ func (m *GrpcDataCoordClient) GetCompactionStateWithPlans(ctx context.Context, r
 func (m *GrpcDataCoordClient) WatchChannels(ctx context.Context, req *datapb.WatchChannelsRequest, opts ...grpc.CallOption) (*datapb.WatchChannelsResponse, error) {
 	return &datapb.WatchChannelsResponse{}, m.Err
 }
+
+func (m *GrpcDataCoordClient) ActivateChannels(ctx context.Context, req *datapb.ActivateChannelsRequest, opts ...grpc.CallOption) (*commonpb.Status, error) {
+	return &commonpb.Status{}, m.Err
+}
+
 func (m *GrpcDataCoordClient) GetFlushState(ctx context.Context, req *milvuspb.GetFlushStateRequest, opts ...grpc.CallOption) (*milvuspb.GetFlushStateResponse, error) {
 	return &milvuspb.GetFlushStateResponse{}, m.Err
 }

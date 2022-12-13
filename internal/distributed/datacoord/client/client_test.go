@@ -171,6 +171,9 @@ func Test_NewClient(t *testing.T) {
 		r39, err := client.UpdateChannelCheckpoint(ctx, nil)
 		retCheck(retNotNil, r39, err)
 
+		r40, err := client.ActivateChannels(ctx, nil)
+		retCheck(retNotNil, r40, err)
+
 		{
 			ret, err := client.BroadcastAlteredCollection(ctx, nil)
 			retCheck(retNotNil, ret, err)
