@@ -28,6 +28,7 @@ import (
 	"github.com/milvus-io/milvus/internal/proto/datapb"
 	"github.com/milvus-io/milvus/internal/proto/indexpb"
 	"github.com/milvus-io/milvus/internal/proto/internalpb"
+	"github.com/milvus-io/milvus/internal/proto/logpb"
 	"github.com/milvus-io/milvus/internal/proto/proxypb"
 	"github.com/milvus-io/milvus/internal/proto/querypb"
 	"github.com/milvus-io/milvus/internal/proto/rootcoordpb"
@@ -338,4 +339,21 @@ type QueryCoordComponent interface {
 
 	// SetQueryNodeCreator set QueryNode client creator func for QueryCoord
 	SetQueryNodeCreator(func(ctx context.Context, addr string, nodeID int64) (QueryNodeClient, error))
+}
+
+type LogNode interface {
+	Component
+	WatchChannel(ctx context.Context, req logpb.WatchChannelRequest) (*commonpb.Status, error)
+}
+
+type LogNodeComponent interface {
+	LogNode
+	SetAddress(address string)
+
+	// SetEtcdClient set etcd client for LogNode
+	SetEtcdClient(etcdClient *clientv3.Client)
+
+	// UpdateStateCode updates state code for LogNode
+	//  `stateCode` is current statement of this LogNode, indicating whether it's healthy.
+	UpdateStateCode(stateCode commonpb.StateCode)
 }
