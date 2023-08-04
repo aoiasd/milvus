@@ -14,6 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "iostream"
 #include "index/VectorMemIndex.h"
 #include "index/Meta.h"
 #include "index/Utils.h"
@@ -115,9 +116,13 @@ VectorMemIndex::BuildWithDataset(const DatasetPtr& dataset, const Config& config
     AssertInfo(conf_adapter->CheckTrain(index_config, GetIndexMode()), "something wrong in index parameters!");
 
     knowhere::TimeRecorder rc("BuildWithoutIds", 1);
+    std::cout<< "config: "<< index_config <<std::endl;
     index_->BuildAll(dataset, index_config);
     rc.ElapseFromBegin("Done");
+    std::cout<< "start" <<std::endl;
+    std::cout<< "aoiasd_test: "<< type(index_) <<std::endl;
     SetDim(index_->Dim());
+    std::cout<< "endl" <<std::endl;
 }
 
 void
@@ -125,7 +130,6 @@ VectorMemIndex::Build(const Config& config) {
     auto insert_files = GetValueFromConfig<std::vector<std::string>>(config, "insert_files");
     AssertInfo(insert_files.has_value(), "insert file paths is empty when build disk ann index");
     auto field_datas = file_manager_->CacheRawDataToMemory(insert_files.value());
-
     int64_t total_size = 0;
     int64_t total_num_rows = 0;
     int64_t dim = 0;
