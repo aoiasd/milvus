@@ -116,11 +116,11 @@ VectorMemIndex::BuildWithDataset(const DatasetPtr& dataset, const Config& config
     AssertInfo(conf_adapter->CheckTrain(index_config, GetIndexMode()), "something wrong in index parameters!");
 
     knowhere::TimeRecorder rc("BuildWithoutIds", 1);
-    std::cout<< "config: "<< index_config <<std::endl;
+    std::cout<< "config: "<< config <<std::endl;
     index_->BuildAll(dataset, index_config);
     rc.ElapseFromBegin("Done");
     std::cout<< "start" <<std::endl;
-    std::cout<< "aoiasd_test: "<< type(index_) <<std::endl;
+    std::cout<< "aoiasd_test: "<< index_->Dim() <<std::endl;
     SetDim(index_->Dim());
     std::cout<< "endl" <<std::endl;
 }
