@@ -4,7 +4,9 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/milvus-io/milvus/internal/mq/mqimpl/rocksmq/server"
+	"github.com/milvus-io/milvus/internal/mq/msgstream/mqwrapper/logservice"
 	"github.com/milvus-io/milvus/internal/mq/msgstream/mqwrapper/rmq"
+	"github.com/milvus-io/milvus/internal/types"
 	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/mq/msgstream"
 	"github.com/milvus-io/milvus/pkg/util/paramtable"
@@ -22,5 +24,15 @@ func NewRocksmqFactory(path string, cfg *paramtable.ServiceParam) msgstream.Fact
 		DispatcherFactory: msgstream.ProtoUDFactory{},
 		ReceiveBufSize:    cfg.MQCfg.ReceiveBufSize.GetAsInt64(),
 		MQBufSize:         cfg.MQCfg.MQBufSize.GetAsInt64(),
+	}
+}
+
+// NewLogServiceMQFactory creates a new msgstream factory based on logservice.
+func NewLogServiceMQFactory(logcoord types.LogCoord) msgstream.Factory {
+	return &msgstream.CommonFactory{
+		Newer:             logservice.LogServiceDefaultConstructor(logcoord),
+		DispatcherFactory: msgstream.ProtoUDFactory{},
+		ReceiveBufSize:    1024,
+		MQBufSize:         1024,
 	}
 }

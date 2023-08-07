@@ -357,3 +357,7 @@ type LogNodeComponent interface {
 	//  `stateCode` is current statement of this LogNode, indicating whether it's healthy.
 	UpdateStateCode(stateCode commonpb.StateCode)
 }
+
+type LogCoord interface {
+	Component
+}

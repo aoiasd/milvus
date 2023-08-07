@@ -22,7 +22,11 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/suite"
 
+	"github.com/milvus-io/milvus/internal/mq/msgstream/mqwrapper/logservice"
+	"github.com/milvus-io/milvus/internal/types"
+	"github.com/milvus-io/milvus/pkg/mq/msgstream"
 	"github.com/milvus-io/milvus/pkg/util/paramtable"
 )
 
@@ -40,4 +44,30 @@ func TestRmsFactory(t *testing.T) {
 
 	_, err = rmsFactory.NewTtMsgStream(ctx)
 	assert.NoError(t, err)
+}
+
+type LogServiceMQFactorySuite struct {
+	suite.Suite
+
+	factory   msgstream.Factory
+	mockcoord types.LogCoord
+}
+
+func (suite *LogServiceMQFactorySuite) SetupTest() {
+	suite.factory = NewLogServiceMQFactory(suite.mockcoord)
+}
+
+func (suite *LogServiceMQFactorySuite) TestBasic() {
+	commonFactory, ok := suite.factory.(*msgstream.CommonFactory)
+	suite.Require().True(ok)
+
+	client, err := commonFactory.Newer()
+	suite.Require().NoError(err)
+
+	_, ok = client.(*logservice.LogServiceClient)
+	suite.True(ok)
+}
+
+func TestLogServiceMQFactory(t *testing.T) {
+	suite.Run(t, new(LogServiceMQFactorySuite))
 }
