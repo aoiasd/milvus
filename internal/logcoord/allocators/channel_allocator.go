@@ -14,16 +14,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package logcoord
+package allocators
 
 import (
 	"fmt"
 	"sync"
+
+	"github.com/milvus-io/milvus/internal/logcoord/meta"
 )
 
 // TODO ADD TO PARAMTABLE
-const maxPChannelNum = 16
-const pChannelFormat = "%s_%d"
 const vChannelFormat = "%s_%dv%d"
 
 type ChannelAllocator interface {
@@ -31,26 +31,17 @@ type ChannelAllocator interface {
 	Release(vchannel string)
 }
 
+// channel allocator deside pchannel and vchannel name
 // alloc pchannel for vchannel.
 type UniformChannelAllocator struct {
-	pchannelPrefix string
-	pChannelInfo   map[string]int
-	vchannelSet    map[string]struct{}
+	meta meta.ChannelsMeta
+	// pChannel -> vChannelNum
+	pChannelInfo map[string]int
 
 	mu sync.Mutex
 }
 
-func (a *UniformChannelAllocator) newPChannel() string {
-	newChannel := fmt.Sprintf(pChannelFormat, a.pchannelPrefix, len(a.pChannelInfo))
-	a.pChannelInfo[newChannel] = 0
-	return newChannel
-}
-
 func (a *UniformChannelAllocator) selectPChannel() string {
-	if len(a.pChannelInfo) <= maxPChannelNum {
-		return a.newPChannel()
-	}
-
 	minChannel, minCount := "", -1
 	for pChannel, count := range a.pChannelInfo {
 		if minChannel == "" || count < minCount {
@@ -71,9 +62,10 @@ func (a *UniformChannelAllocator) Alloc(collectionID uint64, num int) []string {
 		vChannel := fmt.Sprintf(vChannelFormat, pChannel, collectionID, id)
 
 		vChannels[id] = vChannel
-		a.vchannelSet[vChannel] = struct{}{}
+		//TODO ADD AND VERFY VCHANNEL IN META
 		a.pChannelInfo[pChannel]++
 	}
+
 	return vChannels
 }
 
@@ -82,10 +74,7 @@ func (a *UniformChannelAllocator) Release(vChannels ...string) {
 	defer a.mu.Unlock()
 
 	for _, vChannel := range vChannels {
-		_, ok := a.vchannelSet[vChannel]
-		if ok {
-			a.pChannelInfo[vChannel]--
-			delete(a.vchannelSet, vChannel)
-		}
+		//TODO DELETE AND VERFY VCHANNEL IN META
+		a.pChannelInfo[vChannel]--
 	}
 }
