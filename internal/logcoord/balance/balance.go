@@ -18,12 +18,11 @@ package balance
 
 import (
 	"sync"
-
-	"github.com/milvus-io/milvus/internal/logcoord/allocators"
 )
 
-type NodeBalancer struct {
-	nodeAllocator *allocators.NodeAllocator
+type Balancer struct {
+	nodeAllocator *NodeAllocator
+	channelAllocator *ChannelAllocator
 
 	startOnce sync.Once
 	stopOnce  sync.Once
