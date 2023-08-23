@@ -31,7 +31,7 @@ type Session struct {
 	creator SessionCreator
 }
 
-func (s *Session) init(ctx context.Context) error {
+func (s *Session) Init(ctx context.Context) error {
 	if s.creator == nil {
 		return fmt.Errorf("unable to create client for %s because of a nil client creator", s.address)
 	}
@@ -44,14 +44,8 @@ func (s *Session) init(ctx context.Context) error {
 	return nil
 }
 
-func (s *Session) GetClient(ctx context.Context) (types.LogNode, error) {
-	if s.client == nil {
-		err := s.init(ctx)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return s.client, nil
+func (s *Session) GetClient() types.LogNode {
+	return s.client
 }
 
 func NewSession(nodeID int64, address string, creator SessionCreator) *Session {

@@ -16,28 +16,31 @@
 
 package session
 
-import "sync"
+import (
+	"context"
+	"sync"
+)
 
 type SessionManager struct {
 	sessions struct {
 		sync.RWMutex
 		data map[int64]*Session
 	}
-	creator  SessionCreator
-	notifyCh chan int64
+	creator SessionCreator
 }
 
-func (s *SessionManager) Notify() chan<- int64 {
-	return s.notifyCh
-}
-
-func (s *SessionManager) AddSession(nodeID int64, address string) {
+func (s *SessionManager) AddSession(ctx context.Context, nodeID int64, address string) error {
 	s.sessions.Lock()
 	defer s.sessions.Unlock()
 
 	session := NewSession(nodeID, address, s.creator)
+	err := session.Init(ctx)
+	if err != nil {
+		return err
+	}
+
 	s.sessions.data[nodeID] = session
-	s.notifyCh <- nodeID
+	return nil
 }
 
 func (s *SessionManager) GetSessions(nodeID int64) *Session {
@@ -57,7 +60,6 @@ func NewSessionManager(creator SessionCreator) *SessionManager {
 			sync.RWMutex
 			data map[int64]*Session
 		}{data: make(map[int64]*Session)},
-		creator:  creator,
-		notifyCh: make(chan int64, 128),
+		creator: creator,
 	}
 }

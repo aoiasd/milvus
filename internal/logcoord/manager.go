@@ -17,14 +17,14 @@
 package logcoord
 
 import (
-	"github.com/milvus-io/milvus/internal/logcoord/allocators"
+	"github.com/milvus-io/milvus/internal/logcoord/balance"
 	"github.com/milvus-io/milvus/internal/logcoord/meta"
 )
 
 type ChannelManager struct {
 	meta             *meta.ChannelsMeta
-	channelAllocator *allocators.ChannelAllocator
-	nodeAllocator    *allocators.NodeAllocator
+	channelAllocator ChannelAllocator
+	nodeBalancer     balance.NodeBalancer
 }
 
 func (m *ChannelManager) Init() {
