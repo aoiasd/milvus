@@ -18,6 +18,7 @@ package balance
 
 import (
 	"sync"
+	"time"
 
 	"github.com/milvus-io/milvus/pkg/log"
 	"go.uber.org/zap"
@@ -26,6 +27,7 @@ import (
 // NodeAllocator alloc log node for pchannel
 type NodeAllocator interface {
 	Alloc(pChannel string) int64
+	Unalloc(pChannel string)
 	//return a realloc plan for balance
 	//empty string means don't need balance
 	//return pchannel, node, target_nodes
@@ -33,13 +35,57 @@ type NodeAllocator interface {
 
 	AddNode(nodeID int64)
 	RemoveNode(nodeID int64) []string
+	FreezeNode(nodeID int64)
+}
+
+const FreezeInterval = 10 * time.Second
+
+type NodeInfo struct {
+	// pChannel list
+	channelList []string
+	FreezeTime  time.Time
+}
+
+func (i *NodeInfo) RemoveChannel(target string) {
+	targetID := -1
+	for id, channel := range i.channelList {
+		if channel == target {
+			targetID = id
+			break
+		}
+	}
+	if targetID != -1 {
+		i.channelList = append(i.channelList[:targetID], i.channelList[targetID+1:]...)
+	}
+}
+
+func (i *NodeInfo) GetChannelNum() int64 {
+	return int64(len(i.channelList))
+}
+
+func (i *NodeInfo) AddChannel(channel string) {
+	i.channelList = append(i.channelList, channel)
+}
+
+func (i *NodeInfo) PopChannel() string {
+	target_channel := i.channelList[0]
+	i.channelList = i.channelList[1:]
+	return target_channel
+}
+
+func (i *NodeInfo) GetChannels() []string {
+	return i.channelList
+}
+
+func (i *NodeInfo) IsFrozen() bool {
+	return time.Now().Before(i.FreezeTime)
 }
 
 type UniformNodeAllocator struct {
-	// nodeID -> pChannel
-	channelList map[int64][]string
+	// nodeID -> NodeInfo
+	nodeInfos map[int64]*NodeInfo
 	// pChannel -> nodeID
-	channelMapping map[string]int64
+	nodeMapping map[string]int64
 
 	mu sync.Mutex
 }
@@ -48,31 +94,47 @@ func (allocator *UniformNodeAllocator) AddNode(nodeID int64) {
 	allocator.mu.Lock()
 	defer allocator.mu.Unlock()
 
-	_, ok := allocator.channelList[nodeID]
+	_, ok := allocator.nodeInfos[nodeID]
 	if !ok {
-		allocator.channelList[nodeID] = []string{}
+		allocator.nodeInfos[nodeID] = NewNodeInfo()
 	}
 }
 
 func (allocator *UniformNodeAllocator) RemoveNode(nodeID int64) []string {
 	allocator.mu.Lock()
 	defer allocator.mu.Unlock()
-	channels, ok := allocator.channelList[nodeID]
+	info, ok := allocator.nodeInfos[nodeID]
 	if !ok {
 		return []string{}
 	}
 
-	if len(channels) != 0 {
+	if info.GetChannelNum() != 0 {
 		log.Info("Remove log node but not reassign all pchannel", zap.Int64("nodeID", nodeID))
 	}
-	delete(allocator.channelList, nodeID)
-	return channels
+	delete(allocator.nodeInfos, nodeID)
+	return info.GetChannels()
+}
+
+func (allocator *UniformNodeAllocator) FreezeNode(nodeID int64) {
+	allocator.mu.Lock()
+	defer allocator.mu.Unlock()
+
+	info, ok := allocator.nodeInfos[nodeID]
+	if !ok {
+		return
+	}
+
+	info.FreezeTime = time.Now().Add(FreezeInterval)
 }
 
 func (allocator *UniformNodeAllocator) selectMinNode() (int64, int64) {
 	minNode, minCount := int64(-1), int64(-1)
-	for nodeID, channels := range allocator.channelList {
-		count := int64(len(channels))
+	for nodeID, info := range allocator.nodeInfos {
+		if info.IsFrozen() {
+			continue
+		}
+
+		count := info.GetChannelNum()
 		if minNode == -1 || count < minCount {
 			minNode = nodeID
 			minCount = count
@@ -83,8 +145,12 @@ func (allocator *UniformNodeAllocator) selectMinNode() (int64, int64) {
 
 func (allocator *UniformNodeAllocator) selectMaxNode() (int64, int64) {
 	maxNode, maxCount := int64(-1), int64(-1)
-	for nodeID, channels := range allocator.channelList {
-		count := int64(len(channels))
+	for nodeID, info := range allocator.nodeInfos {
+		if info.IsFrozen() {
+			continue
+		}
+
+		count := info.GetChannelNum()
 		if maxNode == -1 || count > maxCount {
 			maxNode = nodeID
 			maxCount = count
@@ -98,8 +164,8 @@ func (allocator *UniformNodeAllocator) Alloc(pChannel string) int64 {
 	defer allocator.mu.Unlock()
 
 	minNode, _ := allocator.selectMinNode()
-	allocator.channelList[minNode] = append(allocator.channelList[minNode], pChannel)
-	allocator.channelMapping[pChannel] = minNode
+	allocator.nodeInfos[minNode].AddChannel(pChannel)
+	allocator.nodeMapping[pChannel] = minNode
 	return minNode
 }
 
@@ -107,10 +173,10 @@ func (allocator *UniformNodeAllocator) Unalloc(pChannel string) {
 	allocator.mu.Lock()
 	defer allocator.mu.Unlock()
 
-	node, ok := allocator.channelMapping[pChannel]
+	nodeID, ok := allocator.nodeMapping[pChannel]
 	if ok {
-		remove(allocator.channelList[node], pChannel)
-		delete(allocator.channelMapping, pChannel)
+		allocator.nodeInfos[nodeID].RemoveChannel(pChannel)
+		delete(allocator.nodeMapping, pChannel)
 	}
 }
 
@@ -120,32 +186,24 @@ func (allocator *UniformNodeAllocator) Realloc() (string, int64, int64) {
 
 	maxNode, maxCount := allocator.selectMaxNode()
 	minNode, minCount := allocator.selectMinNode()
-	if maxCount <= minCount+1 || maxCount == 0 {
+	if maxCount <= minCount+2 || maxCount == 0 {
 		return "", -1, -1
 	}
 
-	target_channel := allocator.channelList[maxNode][0]
-	allocator.channelList[maxNode] = allocator.channelList[maxNode][1:]
-	allocator.channelMapping[target_channel] = minNode
+	target_channel := allocator.nodeInfos[maxNode].PopChannel()
+	allocator.nodeMapping[target_channel] = minNode
 	return target_channel, maxNode, minNode
 }
 
 func NewUniformNodeAllocator() *UniformNodeAllocator {
 	return &UniformNodeAllocator{
-		channelList:    make(map[int64][]string),
-		channelMapping: make(map[string]int64),
+		nodeInfos:   make(map[int64]*NodeInfo),
+		nodeMapping: make(map[string]int64),
 	}
 }
 
-func remove(list []string, target string) {
-	targetID := -1
-	for id, value := range list {
-		if value == target {
-			targetID = id
-			break
-		}
-	}
-	if targetID != -1 {
-		list = append(list[:targetID], list[targetID+1:]...)
+func NewNodeInfo() *NodeInfo {
+	return &NodeInfo{
+		channelList: []string{},
 	}
 }

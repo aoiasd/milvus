@@ -66,10 +66,15 @@ func (ba *NodeBalancer) allocAll(ctx context.Context) {
 		select {
 		case channel := <-ba.waittingChannels:
 			nodeID := ba.nodeAllocator.Alloc(channel)
-			retry.Do(ctx, func() error {
+			err := retry.Do(ctx, func() error {
 				err := ba.alloc(ctx, channel, nodeID)
 				return err
-			}, retry.Attempts(10))
+			}, retry.Attempts(3))
+
+			if err != nil {
+				ba.nodeAllocator.Unalloc(channel)
+				ba.nodeAllocator.FreezeNode(nodeID)
+			}
 		default:
 			return
 		}
@@ -85,7 +90,7 @@ func (ba *NodeBalancer) balance() {
 		select {
 		case <-ba.balanceNotify:
 			ba.allocAll(ctx)
-			//TODO REASSIGN NOT BALANCE NODE
+			//TODO REASSIGN CHANNEL TO NOT BALANCE NODE
 		case <-ba.stopCh:
 			log.Info("close log node balancer")
 			return

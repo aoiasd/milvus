@@ -21,6 +21,8 @@ import (
 	"sync"
 )
 
+// SessionManager manage log node session
+// and trigger balance when log node changes
 type SessionManager struct {
 	sessions struct {
 		sync.RWMutex

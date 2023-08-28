@@ -24,6 +24,7 @@ import (
 )
 
 type SessionCreator func(ctx context.Context, addr string) (types.LogNode, error)
+type SessionType int32
 type Session struct {
 	nodeID  int64
 	address string
