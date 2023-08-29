@@ -46,6 +46,8 @@ const (
 	DataNodeRole = "datanode"
 	// IndexNodeRole is a constant represent IndexNode
 	IndexNodeRole = "indexnode"
+	// LogNode is a constant represent LogNode
+	LogNodeRole = "lognode"
 )
 
 var (

@@ -19,18 +19,20 @@ package logcoord
 import (
 	"github.com/milvus-io/milvus/internal/logcoord/balance"
 	"github.com/milvus-io/milvus/internal/logcoord/meta"
+	"github.com/milvus-io/milvus/internal/logcoord/session"
 )
 
-type ChannelManager struct {
+type Server struct {
 	meta             *meta.ChannelsMeta
-	channelAllocator ChannelAllocator
+	channelAllocator balance.ChannelAllocator
 	nodeBalancer     balance.NodeBalancer
+	sessionManager   session.SessionManager
 }
 
-func (m *ChannelManager) Init() {
-
+func (m *Server) Init() {
+	m.nodeBalancer.Start()
 }
 
-func (m *ChannelManager) Assign(collectionID uint64, num int64) {
-
+func (m *Server) AllocChannel(collectionID uint64, num int) []string {
+	return m.channelAllocator.Alloc(collectionID, num)
 }

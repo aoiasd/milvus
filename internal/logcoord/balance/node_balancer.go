@@ -38,6 +38,7 @@ type NodeBalancer struct {
 
 	wg        sync.WaitGroup
 	startOnce sync.Once
+	stopOnce  sync.Once
 	stopCh    chan struct{}
 }
 
@@ -48,7 +49,7 @@ func (ba *NodeBalancer) alloc(ctx context.Context, channel string, nodeID int64)
 		return fmt.Errorf("alloc a relased node")
 	}
 
-	client := session.GetClient()
+	client := session.GetClient(ctx)
 	resp, err := client.WatchChannel(ctx, logpb.WatchChannelRequest{})
 	if err != nil {
 		return err
@@ -102,6 +103,13 @@ func (ba *NodeBalancer) Start() {
 	ba.startOnce.Do(func() {
 		ba.wg.Add(1)
 		go ba.balance()
+	})
+}
+
+func (ba *NodeBalancer) Stop() {
+	ba.stopOnce.Do(func() {
+		close(ba.stopCh)
+		ba.wg.Wait()
 	})
 }
 

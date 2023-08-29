@@ -17,7 +17,6 @@
 package session
 
 import (
-	"context"
 	"sync"
 )
 
@@ -28,21 +27,22 @@ type SessionManager struct {
 		sync.RWMutex
 		data map[int64]*Session
 	}
-	creator SessionCreator
+	connector SessionConnector
 }
 
-func (s *SessionManager) AddSession(ctx context.Context, nodeID int64, address string) error {
+func (s *SessionManager) AddSession(nodeID int64, address string) {
 	s.sessions.Lock()
 	defer s.sessions.Unlock()
 
-	session := NewSession(nodeID, address, s.creator)
-	err := session.Init(ctx)
-	if err != nil {
-		return err
-	}
-
+	session := NewSession(nodeID, address, s.connector)
 	s.sessions.data[nodeID] = session
-	return nil
+}
+
+func (s *SessionManager) RemoveSession(nodeID int64) {
+	s.sessions.Lock()
+	defer s.sessions.Unlock()
+
+	delete(s.sessions.data, nodeID)
 }
 
 func (s *SessionManager) GetSessions(nodeID int64) *Session {
@@ -56,12 +56,12 @@ func (s *SessionManager) GetSessions(nodeID int64) *Session {
 	return session
 }
 
-func NewSessionManager(creator SessionCreator) *SessionManager {
+func NewSessionManager(connector SessionConnector) *SessionManager {
 	return &SessionManager{
 		sessions: struct {
 			sync.RWMutex
 			data map[int64]*Session
 		}{data: make(map[int64]*Session)},
-		creator: creator,
+		connector: connector,
 	}
 }

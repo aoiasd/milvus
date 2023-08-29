@@ -21,23 +21,25 @@ import (
 	"fmt"
 
 	"github.com/milvus-io/milvus/internal/types"
+	"github.com/milvus-io/milvus/pkg/log"
+	"go.uber.org/zap"
 )
 
-type SessionCreator func(ctx context.Context, addr string) (types.LogNode, error)
+type SessionConnector func(ctx context.Context, addr string) (types.LogNode, error)
 type SessionType int32
 type Session struct {
-	nodeID  int64
-	address string
-	client  types.LogNode
-	creator SessionCreator
+	nodeID    int64
+	address   string
+	client    types.LogNode
+	connector SessionConnector
 }
 
-func (s *Session) Init(ctx context.Context) error {
-	if s.creator == nil {
+func (s *Session) connect(ctx context.Context) error {
+	if s.connector == nil {
 		return fmt.Errorf("unable to create client for %s because of a nil client creator", s.address)
 	}
 
-	client, err := s.creator(ctx, s.address)
+	client, err := s.connector(ctx, s.address)
 	if err != nil {
 		return err
 	}
@@ -45,14 +47,20 @@ func (s *Session) Init(ctx context.Context) error {
 	return nil
 }
 
-func (s *Session) GetClient() types.LogNode {
+func (s *Session) GetClient(ctx context.Context) types.LogNode {
+	if s.client == nil {
+		err := s.connect(ctx)
+		if err != nil {
+			log.Info("session connect failed", zap.Int64("nodeID", s.nodeID), zap.String("address", s.address))
+		}
+	}
 	return s.client
 }
 
-func NewSession(nodeID int64, address string, creator SessionCreator) *Session {
+func NewSession(nodeID int64, address string, connector SessionConnector) *Session {
 	return &Session{
-		nodeID:  nodeID,
-		address: address,
-		creator: creator,
+		nodeID:    nodeID,
+		address:   address,
+		connector: connector,
 	}
 }
