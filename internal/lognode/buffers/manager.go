@@ -17,7 +17,7 @@
 package buffers
 
 type BufferManger struct {
-	iBuffers map[int64]InsertBuffer
+	buffers map[int64]DataBuffer
 }
 
 func (m *BufferManger) SyncFull() error {

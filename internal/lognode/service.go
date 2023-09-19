@@ -20,10 +20,15 @@ import (
 	"context"
 
 	"github.com/milvus-io/milvus-proto/go-api/v2/commonpb"
+	"github.com/milvus-io/milvus-proto/go-api/v2/msgpb"
 	"github.com/milvus-io/milvus/internal/proto/logpb"
 	"github.com/milvus-io/milvus/pkg/util/merr"
 )
 
 func (node *LogNode) WatchChannel(ctx context.Context, req logpb.WatchChannelRequest) (*commonpb.Status, error) {
+	return merr.Status(nil), nil
+}
+
+func (node *LogNode) Insert(ctx context.Context, msg msgpb.InsertRequest) (*commonpb.Status, error) {
 	return merr.Status(nil), nil
 }

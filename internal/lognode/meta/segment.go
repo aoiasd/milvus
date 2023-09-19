@@ -20,6 +20,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/bits-and-blooms/bloom/v3"
 	"github.com/milvus-io/milvus/internal/proto/datapb"
 	"github.com/milvus-io/milvus/internal/storage"
 )
@@ -46,11 +47,55 @@ func (s *Segment) GetType() datapb.SegmentType {
 	return s.sType.Load().(datapb.SegmentType)
 }
 
+func (s *Segment) IsPKExist(pk storage.PrimaryKey) bool {
+	s.statLock.Lock()
+	defer s.statLock.Unlock()
+	if s.currentStat != nil && s.currentStat.PkExist(pk) {
+		return true
+	}
+
+	for _, historyStats := range s.historyStats {
+		if historyStats.PkExist(pk) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Segment) UpdatePKStat(ids storage.FieldData) error {
+	s.statLock.RLock()
+	defer s.statLock.RUnlock()
+
+	err := s.currentStat.UpdatePKRange(ids)
+	return err
+}
+
+func (s *Segment) RollPKStat(stat *storage.PrimaryKeyStats) {
+	s.statLock.Lock()
+	defer s.statLock.Unlock()
+
+	pkStat := &storage.PkStatistics{
+		PkFilter: stat.BF,
+		MinPK:    stat.MinPk,
+		MaxPK:    stat.MaxPk,
+	}
+	s.historyStats = append(s.historyStats, pkStat)
+	s.currentStat = &storage.PkStatistics{
+		//TODO USE FLUSH LIMIT AS SIZE
+		PkFilter: bloom.NewWithEstimates(storage.BloomFilterSize, storage.MaxBloomFalsePositive),
+	}
+}
+
 func NewSegment(collectionID, partitionID, segmentID uint64, sType datapb.SegmentType) *Segment {
 	segment := &Segment{
 		collectionID: collectionID,
 		partitionID:  partitionID,
 		segmentID:    segmentID,
+		currentStat: &storage.PkStatistics{
+			//TODO USE FLUSH LIMIT AS SIZE
+			PkFilter: bloom.NewWithEstimates(storage.BloomFilterSize, storage.MaxBloomFalsePositive),
+		},
+		historyStats: []*storage.PkStatistics{},
 	}
 	segment.SetType(sType)
 	return segment
