@@ -803,6 +803,21 @@ func MergeInsertData(buffer *InsertData, datas ...*InsertData) {
 	}
 }
 
+func MergeDeleteData(buffer *DeleteData, datas ...*DeleteData) {
+	if buffer == nil {
+		log.Warn("Attempt to merge data into a nil buffer, skip the data merge.")
+		return
+	}
+
+	for _, data := range datas {
+		if data != nil {
+			buffer.Pks = append(buffer.Pks, data.Pks...)
+			buffer.Tss = append(buffer.Tss, data.Tss...)
+			buffer.RowCount += data.RowCount
+		}
+	}
+}
+
 // TODO: string type.
 func GetPkFromInsertData(collSchema *schemapb.CollectionSchema, data *InsertData) (FieldData, error) {
 	helper, err := typeutil.CreateSchemaHelper(collSchema)

@@ -30,6 +30,7 @@ import (
 	"github.com/milvus-io/milvus/pkg/util/commonpbutil"
 	"github.com/milvus-io/milvus/pkg/util/funcutil"
 	"github.com/milvus-io/milvus/pkg/util/typeutil"
+	"github.com/samber/lo"
 )
 
 // MsgType is an alias of commonpb.MsgType
@@ -44,6 +45,7 @@ type TsMsg interface {
 	SetTraceCtx(ctx context.Context)
 	ID() UniqueID
 	SetID(id UniqueID)
+	SetTs(Timestamp)
 	BeginTs() Timestamp
 	EndTs() Timestamp
 	Type() MsgType
@@ -139,6 +141,13 @@ func (it *InsertMsg) ID() UniqueID {
 // SetID set the ID of this message pack
 func (it *InsertMsg) SetID(id UniqueID) {
 	it.Base.MsgID = id
+}
+
+// SetTs set the timestamp of this message pack
+func (it *InsertMsg) SetTs(ts Timestamp) {
+	it.Timestamps = lo.RepeatBy(int(it.GetNumRows()), func(_ int) uint64 { return ts })
+	it.BeginTimestamp = ts
+	it.EndTimestamp = ts
 }
 
 // Type returns the type of this message pack
@@ -327,6 +336,13 @@ func (dt *DeleteMsg) SetID(id UniqueID) {
 	dt.Base.MsgID = id
 }
 
+// SetTs set the timestamp of this message pack
+func (dt *DeleteMsg) SetTs(ts Timestamp) {
+	dt.Timestamps = lo.RepeatBy(int(dt.GetNumRows()), func(_ int) uint64 { return ts })
+	dt.BeginTimestamp = ts
+	dt.EndTimestamp = ts
+}
+
 // Type returns the type of this message pack
 func (dt *DeleteMsg) Type() MsgType {
 	return dt.Base.MsgType
@@ -436,6 +452,12 @@ func (tst *TimeTickMsg) SetID(id UniqueID) {
 	tst.Base.MsgID = id
 }
 
+// SetTs set the timestamp of this message pack
+func (tst *TimeTickMsg) SetTs(ts Timestamp) {
+	tst.BeginTimestamp = ts
+	tst.EndTimestamp = ts
+}
+
 // Type returns the type of this message pack
 func (tst *TimeTickMsg) Type() MsgType {
 	return tst.Base.MsgType
@@ -498,6 +520,12 @@ func (cc *CreateCollectionMsg) ID() UniqueID {
 // SetID set the ID of this message pack
 func (cc *CreateCollectionMsg) SetID(id UniqueID) {
 	cc.Base.MsgID = id
+}
+
+// SetTs set the timestamp of this message pack
+func (cc *CreateCollectionMsg) SetTs(ts Timestamp) {
+	cc.BeginTimestamp = ts
+	cc.EndTimestamp = ts
 }
 
 // Type returns the type of this message pack
@@ -564,6 +592,12 @@ func (dc *DropCollectionMsg) SetID(id UniqueID) {
 	dc.Base.MsgID = id
 }
 
+// SetTs set the timestamp of this message pack
+func (dc *DropCollectionMsg) SetTs(ts Timestamp) {
+	dc.BeginTimestamp = ts
+	dc.EndTimestamp = ts
+}
+
 // Type returns the type of this message pack
 func (dc *DropCollectionMsg) Type() MsgType {
 	return dc.Base.MsgType
@@ -626,6 +660,12 @@ func (cp *CreatePartitionMsg) ID() UniqueID {
 // SetID set the ID of this message pack
 func (cp *CreatePartitionMsg) SetID(id UniqueID) {
 	cp.Base.MsgID = id
+}
+
+// SetTs set the timestamp of this message pack
+func (cp *CreatePartitionMsg) SetTs(ts Timestamp) {
+	cp.BeginTimestamp = ts
+	cp.EndTimestamp = ts
 }
 
 // Type returns the type of this message pack
@@ -692,6 +732,12 @@ func (dp *DropPartitionMsg) SetID(id UniqueID) {
 	dp.Base.MsgID = id
 }
 
+// SetTs set the timestamp of this message pack
+func (dp *DropPartitionMsg) SetTs(ts Timestamp) {
+	dp.BeginTimestamp = ts
+	dp.EndTimestamp = ts
+}
+
 // Type returns the type of this message pack
 func (dp *DropPartitionMsg) Type() MsgType {
 	return dp.Base.MsgType
@@ -754,6 +800,12 @@ func (m *DataNodeTtMsg) ID() UniqueID {
 // SetID set the ID of this message pack
 func (m *DataNodeTtMsg) SetID(id UniqueID) {
 	m.Base.MsgID = id
+}
+
+// SetTs set the timestamp of this message pack
+func (m *DataNodeTtMsg) SetTs(ts Timestamp) {
+	m.BeginTimestamp = ts
+	m.EndTimestamp = ts
 }
 
 // Type returns the type of this message pack

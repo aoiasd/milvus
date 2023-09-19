@@ -18,30 +18,84 @@ package wal
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 
+	"github.com/milvus-io/milvus/internal/allocator"
 	"github.com/milvus-io/milvus/pkg/mq/msgstream"
 )
 
 type WriteAheadLogger struct {
-	channel     string
+	channel string
+	lastTs  atomic.Uint64
+
 	stream      msgstream.MsgStream
 	tsAllocator TimestampAllocator
+	idAllocator *allocator.IDAllocator
+	mu          sync.Mutex
 }
 
-func (logger *WriteAheadLogger) Produce(ctx context.Context, msg *msgstream.MsgPack) error {
+func NewWriteAheadLogger(
+	channel string,
+	tsAllocator TimestampAllocator,
+	idAllocator *allocator.IDAllocator) *WriteAheadLogger {
+	return &WriteAheadLogger{
+		channel:     channel,
+		tsAllocator: tsAllocator,
+		idAllocator: idAllocator,
+	}
+}
+
+func (logger *WriteAheadLogger) GetChannelName() string {
+	return logger.channel
+}
+
+func (logger *WriteAheadLogger) GetLastTimestamp() uint64 {
+	return logger.lastTs.Load()
+}
+
+func (logger *WriteAheadLogger) Start(ctx context.Context, factory msgstream.Factory) error {
+	logger.mu.Lock()
+	defer logger.mu.Unlock()
+
+	stream, err := factory.NewMsgStream(ctx)
+	if err != nil {
+		return err
+	}
+
+	logger.stream = stream
+	logger.stream.AsProducer([]string{logger.channel})
+	return nil
+}
+
+func (logger *WriteAheadLogger) Produce(ctx context.Context, msg msgstream.TsMsg) error {
+	logger.mu.Lock()
+	defer logger.mu.Unlock()
+
 	ts, err := logger.tsAllocator.AllocOne(ctx)
 	if err != nil {
 		return err
 	}
 
-	msg.BeginTs = ts
-	msg.EndTs = ts
-
-	err = logger.stream.Produce(msg)
+	id, err := logger.idAllocator.AllocOne()
 	if err != nil {
 		return err
 	}
+
+	msg.SetID(id)
+	msg.SetTs(ts)
+
+	pack := &msgstream.MsgPack{
+		BeginTs: ts,
+		EndTs:   ts,
+		Msgs:    []msgstream.TsMsg{msg},
+	}
+
+	err = logger.stream.Produce(pack)
+	if err != nil {
+		return err
+	}
+
+	logger.lastTs.Store(ts)
 	return nil
 }
-
-// func (logger *WriteAheadLogger)
