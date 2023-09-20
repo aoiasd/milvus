@@ -18,19 +18,26 @@ package lognode
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
 	"syscall"
 
-	etcd "go.etcd.io/etcd/client/v3"
-
 	"github.com/milvus-io/milvus-proto/go-api/v2/commonpb"
+	"github.com/milvus-io/milvus-proto/go-api/v2/milvuspb"
+	"github.com/milvus-io/milvus/internal/allocator"
+	"github.com/milvus-io/milvus/internal/lognode/wal"
+	"github.com/milvus-io/milvus/internal/types"
+	"github.com/milvus-io/milvus/internal/util/dependency"
 	"github.com/milvus-io/milvus/internal/util/sessionutil"
+	"github.com/milvus-io/milvus/pkg/common"
 	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/util/lifetime"
+	"github.com/milvus-io/milvus/pkg/util/merr"
 	"github.com/milvus-io/milvus/pkg/util/paramtable"
 	"github.com/milvus-io/milvus/pkg/util/typeutil"
+	etcd "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -51,6 +58,23 @@ type LogNode struct {
 	session *sessionutil.Session
 	etcdCli *etcd.Client
 	address string
+
+	factory       dependency.Factory
+	loggerManager *wal.LoggerManager
+	idAllocator   *allocator.IDAllocator
+
+	rootCoord types.RootCoord
+}
+
+func NewLogNode(ctx context.Context, factory dependency.Factory) *LogNode {
+	ctx, cancel := context.WithCancel(ctx)
+
+	return &LogNode{
+		ctx:      ctx,
+		cancel:   cancel,
+		factory:  factory,
+		lifetime: lifetime.NewLifetime(commonpb.StateCode_Abnormal),
+	}
 }
 
 func (node *LogNode) initSession() error {
@@ -94,6 +118,47 @@ func (node *LogNode) Init() error {
 				zap.String("node address", node.session.Address))
 			return
 		}
+
+		node.factory.Init(paramtable.Get())
+
+		// init wal logger manager
+		node.loggerManager = wal.NewLoggerManger(node.factory)
+		err = node.loggerManager.Init(node.rootCoord)
+		if err != nil {
+			return
+		}
+
+		node.idAllocator, err = allocator.NewIDAllocator(node.ctx, node.rootCoord, paramtable.GetNodeID())
+		if err != nil {
+			log.Warn("failed to create id allocator",
+				zap.String("role", typeutil.LogNodeRole),
+				zap.Int64("nodeID", paramtable.GetNodeID()),
+				zap.Error(err))
+			return
+		}
+	})
+
+	return err
+}
+
+func (node *LogNode) Start() error {
+	var err error
+
+	node.startOnce.Do(func() {
+		if err = node.idAllocator.Start(); err != nil {
+			log.Warn("failed to start id allocator",
+				zap.String("role", typeutil.LogNodeRole),
+				zap.Int64("nodeID", paramtable.GetNodeID()),
+				zap.Error(err))
+			return
+		}
+		log.Debug("start id allocator done", zap.String("role", typeutil.LogNodeRole), zap.Int64("nodeID", paramtable.GetNodeID()))
+
+		node.UpdateStateCode(commonpb.StateCode_Healthy)
+		log.Info("lognode node start successfully",
+			zap.Int64("queryNodeID", paramtable.GetNodeID()),
+			zap.String("Address", node.address),
+		)
 	})
 
 	return err
@@ -111,6 +176,43 @@ func (node *LogNode) SetEtcdClient(etcdClient *etcd.Client) {
 	node.etcdCli = etcdClient
 }
 
+func (node *LogNode) SetRootCoord(rc types.RootCoord) error {
+	if rc == nil {
+		return errors.New("null RootCoord interface")
+	}
+
+	node.rootCoord = rc
+	return nil
+}
+
 func (node *LogNode) UpdateStateCode(stateCode commonpb.StateCode) {
 	node.lifetime.SetState(stateCode)
+}
+
+func (node *LogNode) GetComponentStates(ctx context.Context) (*milvuspb.ComponentStates, error) {
+	stats := &milvuspb.ComponentStates{
+		Status: merr.Status(nil),
+	}
+
+	code := node.lifetime.GetState()
+	nodeID := common.NotRegisteredID
+
+	if node.session != nil && node.session.Registered() {
+		nodeID = paramtable.GetNodeID()
+	}
+	info := &milvuspb.ComponentInfo{
+		NodeID:    nodeID,
+		Role:      typeutil.QueryNodeRole,
+		StateCode: code,
+	}
+	stats.State = info
+	return stats, nil
+}
+
+// GetStatisticsChannel returns the statistics channel
+// Statistics channel contains statistics infos of query nodes, such as segment infos, memory infos
+func (node *LogNode) GetStatisticsChannel(ctx context.Context) (*milvuspb.StringResponse, error) {
+	return &milvuspb.StringResponse{
+		Status: merr.Status(nil),
+	}, nil
 }

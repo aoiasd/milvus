@@ -77,6 +77,7 @@ type ComponentParam struct {
 	DataCoordGrpcServerCfg  GrpcServerConfig
 	DataNodeGrpcServerCfg   GrpcServerConfig
 	IndexNodeGrpcServerCfg  GrpcServerConfig
+	LogNodeGrpcServerCfg    GrpcServerConfig
 
 	RootCoordGrpcClientCfg  GrpcClientConfig
 	ProxyGrpcClientCfg      GrpcClientConfig
@@ -85,6 +86,7 @@ type ComponentParam struct {
 	DataCoordGrpcClientCfg  GrpcClientConfig
 	DataNodeGrpcClientCfg   GrpcClientConfig
 	IndexNodeGrpcClientCfg  GrpcClientConfig
+	LogNodeGrpcClientCfg    GrpcClientConfig
 
 	IntegrationTestCfg integrationTestConfig
 }
@@ -125,6 +127,7 @@ func (p *ComponentParam) init(bt *BaseTable) {
 	p.DataCoordGrpcServerCfg.Init("dataCoord", bt)
 	p.DataNodeGrpcServerCfg.Init("dataNode", bt)
 	p.IndexNodeGrpcServerCfg.Init("indexNode", bt)
+	p.LogNodeGrpcServerCfg.init("logNode", bt)
 
 	p.RootCoordGrpcClientCfg.Init("rootCoord", bt)
 	p.ProxyGrpcClientCfg.Init("proxy", bt)
@@ -133,6 +136,7 @@ func (p *ComponentParam) init(bt *BaseTable) {
 	p.DataCoordGrpcClientCfg.Init("dataCoord", bt)
 	p.DataNodeGrpcClientCfg.Init("dataNode", bt)
 	p.IndexNodeGrpcClientCfg.Init("indexNode", bt)
+	p.LogNodeGrpcServerCfg.init("logNode", bt)
 
 	p.IntegrationTestCfg.init(bt)
 }

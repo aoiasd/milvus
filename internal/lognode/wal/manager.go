@@ -21,7 +21,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/milvus-io/milvus/internal/allocator"
+	"github.com/milvus-io/milvus/internal/types"
 	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/mq/msgstream"
 	"github.com/milvus-io/milvus/pkg/util/merr"
@@ -41,32 +41,41 @@ func WithTsPhysicalTime(ti time.Time) ChannelFilter {
 type LoggerManager struct {
 	loggers     map[string]*WriteAheadLogger
 	tsAllocator TimestampAllocator
-	idAllocator *allocator.IDAllocator
 	factory     msgstream.Factory
 
 	mu sync.RWMutex
 }
 
-func (m *LoggerManager) AddLogger(pChannel string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	_, ok := m.loggers[pChannel]
-	if !ok {
-		m.loggers[pChannel] = NewWriteAheadLogger(pChannel, m.tsAllocator, m.idAllocator)
+func NewLoggerManger(factory msgstream.Factory) *LoggerManager {
+	return &LoggerManager{
+		loggers: make(map[string]*WriteAheadLogger),
+		factory: factory,
 	}
 }
 
-func (m *LoggerManager) StartLogger(ctx context.Context, pChannel string) error {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+func (m *LoggerManager) Init(rc types.RootCoord) error {
+	// TODO RET SIZE OPTION
+	allocator, err := NewTimestampAllocator(1024, rc)
+	if err != nil {
+		return err
+	}
+	m.tsAllocator = allocator
+	return nil
+}
+
+func (m *LoggerManager) AddLogger(ctx context.Context, pChannel string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	logger, ok := m.loggers[pChannel]
 	if !ok {
-		return merr.WrapErrChannelNotFound(pChannel, "channel logger not added")
+		m.loggers[pChannel] = NewWriteAheadLogger(pChannel, m.tsAllocator)
+		err := logger.Init(ctx, m.factory)
+		if err != nil {
+			return err
+		}
 	}
-
-	return logger.Start(ctx, m.factory)
+	return nil
 }
 
 func (m *LoggerManager) RemoveLogger(pChannel string) {

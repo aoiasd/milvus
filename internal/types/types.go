@@ -343,7 +343,7 @@ type QueryCoordComponent interface {
 
 type LogNode interface {
 	Component
-	WatchChannel(ctx context.Context, req logpb.WatchChannelRequest) (*commonpb.Status, error)
+	WatchChannel(ctx context.Context, req *logpb.WatchChannelRequest) (*commonpb.Status, error)
 }
 
 type LogNodeComponent interface {
@@ -356,6 +356,15 @@ type LogNodeComponent interface {
 	// UpdateStateCode updates state code for LogNode
 	//  `stateCode` is current statement of this LogNode, indicating whether it's healthy.
 	UpdateStateCode(stateCode commonpb.StateCode)
+
+	// SetRootCoord set RootCoord for QueryCoord
+	// `rootCoord` is a client of root coordinator.
+	//
+	// Return a generic error in status:
+	//     If the rootCoord is nil.
+	// Return nil in status:
+	//     The rootCoord is not nil.
+	SetRootCoord(rootCoord RootCoord) error
 }
 
 type LogCoord interface {

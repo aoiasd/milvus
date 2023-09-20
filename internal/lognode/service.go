@@ -25,10 +25,10 @@ import (
 	"github.com/milvus-io/milvus/pkg/util/merr"
 )
 
-func (node *LogNode) WatchChannel(ctx context.Context, req logpb.WatchChannelRequest) (*commonpb.Status, error) {
+func (node *LogNode) WatchChannel(ctx context.Context, req *logpb.WatchChannelRequest) (*commonpb.Status, error) {
 	return merr.Status(nil), nil
 }
 
-func (node *LogNode) Insert(ctx context.Context, msg msgpb.InsertRequest) (*commonpb.Status, error) {
+func (node *LogNode) Insert(ctx context.Context, msg *msgpb.InsertRequest) (*commonpb.Status, error) {
 	return merr.Status(nil), nil
 }

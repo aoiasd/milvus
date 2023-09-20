@@ -17,12 +17,14 @@
 package logservice
 
 import (
+	"context"
+
 	"github.com/milvus-io/milvus/internal/types"
 	"github.com/milvus-io/milvus/pkg/mq/msgstream/mqwrapper"
 )
 
-func LogServiceDefaultConstructor(logcoord types.LogCoord) func() (mqwrapper.Client, error) {
-	return func() (mqwrapper.Client, error) {
+func LogServiceDefaultConstructor(logcoord types.LogCoord) func(context.Context) (mqwrapper.Client, error) {
+	return func(_ context.Context) (mqwrapper.Client, error) {
 		return &LogServiceClient{
 			logcoord: logcoord,
 		}, nil

@@ -21,7 +21,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/milvus-io/milvus/internal/allocator"
 	"github.com/milvus-io/milvus/pkg/mq/msgstream"
 )
 
@@ -31,18 +30,15 @@ type WriteAheadLogger struct {
 
 	stream      msgstream.MsgStream
 	tsAllocator TimestampAllocator
-	idAllocator *allocator.IDAllocator
 	mu          sync.Mutex
 }
 
 func NewWriteAheadLogger(
 	channel string,
-	tsAllocator TimestampAllocator,
-	idAllocator *allocator.IDAllocator) *WriteAheadLogger {
+	tsAllocator TimestampAllocator) *WriteAheadLogger {
 	return &WriteAheadLogger{
 		channel:     channel,
 		tsAllocator: tsAllocator,
-		idAllocator: idAllocator,
 	}
 }
 
@@ -54,7 +50,7 @@ func (logger *WriteAheadLogger) GetLastTimestamp() uint64 {
 	return logger.lastTs.Load()
 }
 
-func (logger *WriteAheadLogger) Start(ctx context.Context, factory msgstream.Factory) error {
+func (logger *WriteAheadLogger) Init(ctx context.Context, factory msgstream.Factory) error {
 	logger.mu.Lock()
 	defer logger.mu.Unlock()
 
@@ -76,13 +72,6 @@ func (logger *WriteAheadLogger) Produce(ctx context.Context, msg msgstream.TsMsg
 	if err != nil {
 		return err
 	}
-
-	id, err := logger.idAllocator.AllocOne()
-	if err != nil {
-		return err
-	}
-
-	msg.SetID(id)
 	msg.SetTs(ts)
 
 	pack := &msgstream.MsgPack{

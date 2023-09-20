@@ -61,7 +61,7 @@ func (suite *LogServiceMQFactorySuite) TestBasic() {
 	commonFactory, ok := suite.factory.(*msgstream.CommonFactory)
 	suite.Require().True(ok)
 
-	client, err := commonFactory.Newer()
+	client, err := commonFactory.Newer(context.Background())
 	suite.Require().NoError(err)
 
 	_, ok = client.(*logservice.LogServiceClient)
