@@ -418,6 +418,9 @@ dataNode:
   timetick:
     byRPC: true
 
+logNode:
+  port: 19532
+
 # Configures the system log output.
 log:
   level: info # Only supports debug, info, warn, error, panic, or fatal. Default 'info'.

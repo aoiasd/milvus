@@ -18,6 +18,7 @@ package grpclognode
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"strconv"
 	"sync"
@@ -40,6 +41,7 @@ import (
 	"github.com/milvus-io/milvus/pkg/util/interceptor"
 	"github.com/milvus-io/milvus/pkg/util/logutil"
 	"github.com/milvus-io/milvus/pkg/util/paramtable"
+	"github.com/milvus-io/milvus/pkg/util/retry"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.uber.org/zap"
@@ -152,7 +154,7 @@ func (s *Server) initRpc(params *paramtable.ComponentParam) error {
 
 func (s *Server) startGrpcLoop(grpcPort int) {
 	defer s.wg.Done()
-	Params := &paramtable.Get().QueryCoordGrpcServerCfg
+	Params := &paramtable.Get().LogNodeGrpcServerCfg
 	var kaep = keepalive.EnforcementPolicy{
 		MinTime:             5 * time.Second, // If a client pings more than once every 5 seconds, terminate the connection
 		PermitWithoutStream: true,            // Allow pings even when there are no active streams
@@ -163,9 +165,23 @@ func (s *Server) startGrpcLoop(grpcPort int) {
 		Timeout: 10 * time.Second, // Wait 10 second for the ping ack before assuming the connection is dead
 	}
 	log.Debug("network", zap.String("port", strconv.Itoa(grpcPort)))
-	lis, err := net.Listen("tcp", ":"+strconv.Itoa(grpcPort))
+
+	var lis net.Listener
+	var err error
+	err = retry.Do(s.ctx, func() error {
+		addr := ":" + strconv.Itoa(grpcPort)
+		lis, err = net.Listen("tcp", addr)
+		if err == nil {
+			s.logNode.SetAddress(fmt.Sprintf("%s:%d", Params.IP, lis.Addr().(*net.TCPAddr).Port))
+		} else {
+			// set port=0 to get next available port
+			grpcPort = 0
+		}
+		return err
+	}, retry.Attempts(10))
+
 	if err != nil {
-		log.Debug("GrpcServer:failed to listen:", zap.String("error", err.Error()))
+		log.Error("QueryNode GrpcServer:failed to listen", zap.Error(err))
 		s.grpcErrChan <- err
 		return
 	}

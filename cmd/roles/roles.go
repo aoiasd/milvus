@@ -136,6 +136,7 @@ type MilvusRoles struct {
 	EnableDataNode   bool `env:"ENABLE_DATA_NODE"`
 	EnableIndexCoord bool `env:"ENABLE_INDEX_COORD"`
 	EnableIndexNode  bool `env:"ENABLE_INDEX_NODE"`
+	EnableLogNode    bool `env:"ENABLE_LOG_NODE"`
 
 	Local    bool
 	Embedded bool
@@ -218,6 +219,11 @@ func (mr *MilvusRoles) runIndexNode(ctx context.Context, localMsg bool, wg *sync
 	cleanLocalDir(indexDataLocalPath)
 
 	return runComponent(ctx, localMsg, wg, components.NewIndexNode, metrics.RegisterIndexNode)
+}
+
+func (mr *MilvusRoles) runLogNode(ctx context.Context, localMsg bool, wg *sync.WaitGroup) component {
+	wg.Add(1)
+	return runComponent(ctx, localMsg, wg, components.NewLogNode, func(registry *prometheus.Registry) {})
 }
 
 func (mr *MilvusRoles) setupLogger() {
@@ -341,7 +347,7 @@ func (mr *MilvusRoles) Run(alias string) {
 	local := mr.Local
 
 	var rootCoord, queryCoord, indexCoord, dataCoord component
-	var proxy, dataNode, indexNode, queryNode component
+	var proxy, dataNode, indexNode, queryNode, logNode component
 	if mr.EnableRootCoord {
 		rootCoord = mr.runRootCoord(ctx, local, &wg)
 	}
@@ -374,6 +380,10 @@ func (mr *MilvusRoles) Run(alias string) {
 		indexNode = mr.runIndexNode(ctx, local, &wg)
 	}
 
+	if mr.EnableLogNode {
+		logNode = mr.runLogNode(ctx, local, &wg)
+	}
+
 	wg.Wait()
 
 	mr.setupLogger()
@@ -403,7 +413,7 @@ func (mr *MilvusRoles) Run(alias string) {
 	log.Info("All coordinators have stopped")
 
 	// stop nodes
-	nodes := []component{queryNode, indexNode, dataNode}
+	nodes := []component{queryNode, indexNode, dataNode, logNode}
 	for _, node := range nodes {
 		if node != nil {
 			wg.Add(1)

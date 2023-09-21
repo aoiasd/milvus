@@ -127,7 +127,7 @@ func (p *ComponentParam) init(bt *BaseTable) {
 	p.DataCoordGrpcServerCfg.Init("dataCoord", bt)
 	p.DataNodeGrpcServerCfg.Init("dataNode", bt)
 	p.IndexNodeGrpcServerCfg.Init("indexNode", bt)
-	p.LogNodeGrpcServerCfg.init("logNode", bt)
+	p.LogNodeGrpcServerCfg.Init("logNode", bt)
 
 	p.RootCoordGrpcClientCfg.Init("rootCoord", bt)
 	p.ProxyGrpcClientCfg.Init("proxy", bt)
@@ -136,7 +136,7 @@ func (p *ComponentParam) init(bt *BaseTable) {
 	p.DataCoordGrpcClientCfg.Init("dataCoord", bt)
 	p.DataNodeGrpcClientCfg.Init("dataNode", bt)
 	p.IndexNodeGrpcClientCfg.Init("indexNode", bt)
-	p.LogNodeGrpcServerCfg.init("logNode", bt)
+	p.LogNodeGrpcClientCfg.Init("logNode", bt)
 
 	p.IntegrationTestCfg.init(bt)
 }

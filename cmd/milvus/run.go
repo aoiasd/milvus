@@ -33,6 +33,7 @@ type run struct {
 	enableQueryNode  bool
 	enableDataNode   bool
 	enableIndexNode  bool
+	enableLogNode    bool
 	enableProxy      bool
 }
 
@@ -73,6 +74,8 @@ func (c *run) execute(args []string, flags *flag.FlagSet) {
 		role.EnableIndexCoord = true
 	case typeutil.IndexNodeRole:
 		role.EnableIndexNode = true
+	case typeutil.LogNodeRole:
+		role.EnableLogNode = true
 	case typeutil.StandaloneRole, typeutil.EmbeddedRole:
 		role.EnableRootCoord = true
 		role.EnableProxy = true
@@ -123,6 +126,7 @@ func (c *run) formatFlags(args []string, flags *flag.FlagSet) {
 	flags.BoolVar(&c.enableDataNode, typeutil.DataNodeRole, false, "enable data node")
 	flags.BoolVar(&c.enableIndexNode, typeutil.IndexNodeRole, false, "enable index node")
 	flags.BoolVar(&c.enableProxy, typeutil.ProxyRole, false, "enable proxy node")
+	flags.BoolVar(&c.enableLogNode, typeutil.LogNodeRole, false, "enable index node")
 
 	if c.serverType == typeutil.EmbeddedRole {
 		flags.SetOutput(io.Discard)
