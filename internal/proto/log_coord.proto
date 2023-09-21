@@ -11,8 +11,12 @@ service LogNode {
 }
 
 message WatchChannelRequest{
-    int64 collectionID = 1;
-    int64 partationID =2;
-    string channelName = 3;
-    string startPosition = 4;
+    common.MsgBase base = 1;
+    string pChannel = 2;
+}
+
+message InsertRequest{
+    common.MsgBase base = 1;
+    msg.InsertRequest msg = 2;
+    string vChannel = 3;
 }
