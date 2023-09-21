@@ -34,33 +34,27 @@ import (
 
 type TimestampAllocator interface {
 	AllocOne(ctx context.Context) (uint64, error)
-	Refresh(ctx context.Context) (uint64, error)
 }
 
 type RemoteTimestampAllocator struct {
 	rc     types.RootCoord
 	nodeID int64
 
-	retStart uint64
-	retCnt   uint32
-	retSize  uint32
-
 	mu sync.Mutex
 }
 
 // newTimestampAllocator creates a new timestampAllocator
-func NewTimestampAllocator(retSize uint32, rc types.RootCoord) (*RemoteTimestampAllocator, error) {
+func NewTimestampAllocator(rc types.RootCoord) (*RemoteTimestampAllocator, error) {
 	a := &RemoteTimestampAllocator{
-		nodeID:  paramtable.GetNodeID(),
-		rc:      rc,
-		retSize: retSize,
-		mu:      sync.Mutex{},
+		nodeID: paramtable.GetNodeID(),
+		rc:     rc,
+		mu:     sync.Mutex{},
 	}
 	return a, nil
 }
 
-func (ta *RemoteTimestampAllocator) refresh(ctx context.Context) error {
-	tr := timerecord.NewTimeRecorder("refreshTimestamp")
+func (ta *RemoteTimestampAllocator) alloc(ctx context.Context, count uint32) ([]uint64, error) {
+	tr := timerecord.NewTimeRecorder("applyTimestamp")
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	req := &rootcoordpb.AllocTimestampRequest{
@@ -69,7 +63,7 @@ func (ta *RemoteTimestampAllocator) refresh(ctx context.Context) error {
 			commonpbutil.WithMsgID(0),
 			commonpbutil.WithSourceID(ta.nodeID),
 		),
-		Count: ta.retSize,
+		Count: count,
 	}
 
 	resp, err := ta.rc.AllocTimestamp(ctx, req)
@@ -78,42 +72,28 @@ func (ta *RemoteTimestampAllocator) refresh(ctx context.Context) error {
 	}()
 
 	if err != nil {
-		return fmt.Errorf("syncTimestamp Failed:%w", err)
+		return nil, fmt.Errorf("syncTimestamp Failed:%w", err)
 	}
-	if resp.Status.ErrorCode != commonpb.ErrorCode_Success {
-		return fmt.Errorf("syncTimestamp Failed:%s", resp.Status.Reason)
+	if resp.GetStatus().GetErrorCode() != commonpb.ErrorCode_Success {
+		return nil, fmt.Errorf("syncTimeStamp Failed:%s", resp.GetStatus().GetReason())
 	}
-
-	ta.retStart = resp.Timestamp
-	ta.retCnt = 0
-
-	return nil
-}
-
-func (ta *RemoteTimestampAllocator) Refresh(ctx context.Context) (uint64, error) {
-	ta.mu.Lock()
-	defer ta.mu.Unlock()
-
-	err := ta.refresh(ctx)
-	if err != nil {
-		return 0, err
+	if resp == nil {
+		return nil, fmt.Errorf("empty AllocTimestampResponse")
+	}
+	start, cnt := resp.GetTimestamp(), resp.GetCount()
+	ret := make([]uint64, cnt)
+	for i := uint32(0); i < cnt; i++ {
+		ret[i] = start + uint64(i)
 	}
 
-	return ta.retStart, nil
+	return ret, nil
 }
 
 // AllocOne allocates a timestamp.
 func (ta *RemoteTimestampAllocator) AllocOne(ctx context.Context) (uint64, error) {
-	ta.mu.Lock()
-	defer ta.mu.Unlock()
-
-	if ta.retCnt >= ta.retSize {
-		err := ta.refresh(ctx)
-		if err != nil {
-			return 0, err
-		}
+	ret, err := ta.alloc(ctx, 1)
+	if err != nil {
+		return 0, err
 	}
-	ret := ta.retStart + uint64(ta.retCnt)
-	ta.retCnt++
-	return ret, nil
+	return ret[0], nil
 }

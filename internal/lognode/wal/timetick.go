@@ -70,19 +70,14 @@ func (t *TimeTicker) work() {
 		case <-ti.C:
 			ctx := context.Background()
 			msg := t.newTTMsg()
-			tsStart, err := t.tsAllocator.Refresh(ctx)
-			if err != nil {
-				log.Warn("refresh timestamp allocator cache by time ticker failed")
-				continue
-			}
 
 			// broadcast time tick message for channel have no message after last time tick
-			err = t.loggerManger.Broadcast(ctx, msg, WithTsPhysicalTime(t.lastTime))
+			ts, err := t.loggerManger.Broadcast(ctx, msg, WithTsPhysicalTime(t.lastTime))
 			if err != nil {
 				log.Warn("produce time tick msg to channel failed")
 				continue
 			}
-			t.lastTime = tsoutil.PhysicalTime(tsStart)
+			t.lastTime = tsoutil.PhysicalTime(ts)
 		case <-t.closeCh:
 			log.Info("close time ticker of channels")
 			return

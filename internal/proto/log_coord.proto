@@ -5,9 +5,11 @@ package milvus.proto.index;
 option go_package = "github.com/milvus-io/milvus/internal/proto/logpb";
 
 import "common.proto";
+import "msg.proto";
 
 service LogNode {
     rpc WatchChannel(WatchChannelRequest)returns (common.Status){};
+    rpc Insert(InsertRequest)returns (common.Status){};
 }
 
 message WatchChannelRequest{
@@ -18,5 +20,5 @@ message WatchChannelRequest{
 message InsertRequest{
     common.MsgBase base = 1;
     msg.InsertRequest msg = 2;
-    string vChannel = 3;
+    repeated string vChannels = 3;
 }

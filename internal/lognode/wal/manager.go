@@ -39,6 +39,7 @@ func WithTsPhysicalTime(ti time.Time) ChannelFilter {
 }
 
 type LoggerManager struct {
+	// pChannelName -> Logger
 	loggers     map[string]*WriteAheadLogger
 	tsAllocator TimestampAllocator
 	factory     msgstream.Factory
@@ -55,7 +56,7 @@ func NewLoggerManger(factory msgstream.Factory) *LoggerManager {
 
 func (m *LoggerManager) Init(rc types.RootCoord) error {
 	// TODO RET SIZE OPTION
-	allocator, err := NewTimestampAllocator(1024, rc)
+	allocator, err := NewTimestampAllocator(rc)
 	if err != nil {
 		return err
 	}
@@ -69,7 +70,7 @@ func (m *LoggerManager) AddLogger(ctx context.Context, pChannel string) error {
 
 	logger, ok := m.loggers[pChannel]
 	if !ok {
-		m.loggers[pChannel] = NewWriteAheadLogger(pChannel, m.tsAllocator)
+		m.loggers[pChannel] = NewWriteAheadLogger(pChannel)
 		err := logger.Init(ctx, m.factory)
 		if err != nil {
 			return err
@@ -78,19 +79,43 @@ func (m *LoggerManager) AddLogger(ctx context.Context, pChannel string) error {
 	return nil
 }
 
-func (m *LoggerManager) RemoveLogger(pChannel string) {
+func (m *LoggerManager) RemoveLogger(channel string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	_, ok := m.loggers[pChannel]
+	_, ok := m.loggers[channel]
 	if ok {
-		delete(m.loggers, pChannel)
+		delete(m.loggers, channel)
 	}
 }
 
-func (m *LoggerManager) Broadcast(ctx context.Context, msg msgstream.TsMsg, filters ...ChannelFilter) error {
+func (m *LoggerManager) Produce(ctx context.Context, channel string, msg msgstream.TsMsg) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
+	logger, ok := m.loggers[channel]
+	if !ok {
+		return merr.WrapErrChannelNotFound(channel, "channel not watch")
+	}
+
+	ts, err := m.tsAllocator.AllocOne(ctx)
+	if err != nil {
+		return err
+	}
+	msg.SetTs(ts)
+
+	return logger.Produce(ctx, msg)
+}
+
+func (m *LoggerManager) Broadcast(ctx context.Context, msg msgstream.TsMsg, filters ...ChannelFilter) (uint64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	ts, err := m.tsAllocator.AllocOne(ctx)
+	if err != nil {
+		return 0, err
+	}
+	msg.SetTs(ts)
 
 	filterFunc := func(wal *WriteAheadLogger) bool {
 		for _, filter := range filters {
@@ -111,17 +136,5 @@ func (m *LoggerManager) Broadcast(ctx context.Context, msg msgstream.TsMsg, filt
 			}
 		}
 	}
-	return merr.Combine(errCombine...)
-}
-
-func (m *LoggerManager) Produce(ctx context.Context, msg msgstream.TsMsg, pChannel string) error {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	logger, ok := m.loggers[pChannel]
-	if !ok {
-		return merr.WrapErrChannelNotFound(pChannel, "channel logger not added")
-	}
-
-	return logger.Produce(ctx, msg)
+	return ts, merr.Combine(errCombine...)
 }

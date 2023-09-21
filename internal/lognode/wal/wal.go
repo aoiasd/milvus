@@ -28,17 +28,13 @@ type WriteAheadLogger struct {
 	channel string
 	lastTs  atomic.Uint64
 
-	stream      msgstream.MsgStream
-	tsAllocator TimestampAllocator
-	mu          sync.Mutex
+	stream msgstream.MsgStream
+	mu     sync.Mutex
 }
 
-func NewWriteAheadLogger(
-	channel string,
-	tsAllocator TimestampAllocator) *WriteAheadLogger {
+func NewWriteAheadLogger(channel string) *WriteAheadLogger {
 	return &WriteAheadLogger{
-		channel:     channel,
-		tsAllocator: tsAllocator,
+		channel: channel,
 	}
 }
 
@@ -68,23 +64,17 @@ func (logger *WriteAheadLogger) Produce(ctx context.Context, msg msgstream.TsMsg
 	logger.mu.Lock()
 	defer logger.mu.Unlock()
 
-	ts, err := logger.tsAllocator.AllocOne(ctx)
-	if err != nil {
-		return err
-	}
-	msg.SetTs(ts)
-
 	pack := &msgstream.MsgPack{
-		BeginTs: ts,
-		EndTs:   ts,
+		BeginTs: msg.BeginTs(),
+		EndTs:   msg.EndTs(),
 		Msgs:    []msgstream.TsMsg{msg},
 	}
 
-	err = logger.stream.Produce(pack)
+	err := logger.stream.Produce(pack)
 	if err != nil {
 		return err
 	}
 
-	logger.lastTs.Store(ts)
+	logger.lastTs.Store(pack.EndTs)
 	return nil
 }
