@@ -50,7 +50,9 @@ func (ba *NodeBalancer) alloc(ctx context.Context, channel string, nodeID int64)
 	}
 
 	client := session.GetClient(ctx)
-	resp, err := client.WatchChannel(ctx, logpb.WatchChannelRequest{})
+	resp, err := client.WatchChannel(ctx, &logpb.WatchChannelRequest{
+		PChannel: channel,
+	})
 	if err != nil {
 		return err
 	}

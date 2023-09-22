@@ -72,7 +72,7 @@ func checkTopicExist(ctx context.Context, factory msgstream.Factory, names ...st
 	}
 	defer ms.Close()
 	subName := "pre-created-topic-check"
-	ms.AsConsumer(names, subName, mqwrapper.SubscriptionPositionUnknown)
+	ms.AsConsumer(ctx, names, subName, mqwrapper.SubscriptionPositionUnknown)
 
 	for _, name := range names {
 		err := ms.CheckTopicValid(name)
