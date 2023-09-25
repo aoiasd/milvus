@@ -14,40 +14,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package meta
+package channel
 
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/mq/msgstream"
 	"github.com/milvus-io/milvus/pkg/mq/msgstream/mqwrapper"
-	"github.com/milvus-io/milvus/pkg/util/paramtable"
 	"go.uber.org/zap"
 )
-
-type PhysicalChannel struct {
-	name   string
-	nodeID int64
-}
-
-type VirtualChannel struct {
-	name     string
-	pChannel string
-	//watchStatus
-}
-
-type ChannelsMeta struct {
-	ctx     context.Context
-	factory msgstream.Factory
-
-	pChannelList []string
-	pChannelInfo map[string]*PhysicalChannel
-
-	initOnce sync.Once
-}
 
 func genPChannelNames(prefix string, num int64) []string {
 	var results []string
@@ -81,45 +58,4 @@ func checkTopicExist(ctx context.Context, factory msgstream.Factory, names ...st
 			panic("created topic not exist")
 		}
 	}
-}
-
-func NewChannelsMeta(ctx context.Context, factory msgstream.Factory) *ChannelsMeta {
-	params := &paramtable.Get().CommonCfg
-
-	var names []string
-	if params.PreCreatedTopicEnabled.GetAsBool() {
-		names = params.TopicNames.GetAsStrings()
-		checkTopicExist(ctx, factory, names...)
-	} else {
-		// TODO ADD TO PARAMTABLE
-		prefix := "rootcoord-dml"
-		num := int64(16)
-		names = genPChannelNames(prefix, num)
-	}
-
-	channelsMeta := &ChannelsMeta{
-		ctx:          ctx,
-		factory:      factory,
-		pChannelList: names,
-	}
-
-	channelsMeta.Init()
-	return channelsMeta
-}
-
-func (meta *ChannelsMeta) Init() {
-	meta.initOnce.Do(func() {
-		// Init PChannel
-		for _, pChannel := range meta.pChannelList {
-			meta.pChannelInfo[pChannel] = &PhysicalChannel{
-				name:   pChannel,
-				nodeID: -1,
-			}
-		}
-		// TODO LOAD FROM KV
-	})
-}
-
-func (meta *ChannelsMeta) GetPChannels() []string {
-	return meta.pChannelList
 }

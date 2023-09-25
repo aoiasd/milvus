@@ -19,8 +19,6 @@ package balance
 import (
 	"fmt"
 	"sync"
-
-	"github.com/milvus-io/milvus/internal/logcoord/meta"
 )
 
 // TODO ADD TO PARAMTABLE
@@ -34,7 +32,6 @@ type ChannelAllocator interface {
 // channel allocator deside pchannel and vchannel name
 // alloc pchannel for vchannel.
 type UniformChannelAllocator struct {
-	meta meta.ChannelsMeta
 	// pChannel -> vChannelNum
 	pChannelInfo map[string]int
 

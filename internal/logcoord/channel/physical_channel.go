@@ -14,4 +14,35 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package meta
+package channel
+
+import (
+	"sync/atomic"
+)
+
+type PhysicalChannel struct {
+	name    string
+	nodeID  atomic.Uint64
+	leaseID atomic.Uint64
+}
+
+func NewPhysicalChannel(name string) *PhysicalChannel {
+	return &PhysicalChannel{
+		name: name,
+	}
+}
+
+func (c *PhysicalChannel) Alloc(nodeID uint64) uint64 {
+	c.nodeID.Store(nodeID)
+	leaseID := c.leaseID.Add(1)
+	return leaseID
+}
+
+func (c *PhysicalChannel) Revert(nodeID, leaseID uint64) {
+	c.nodeID.Store(nodeID)
+	c.leaseID.Store(leaseID)
+}
+
+func (c *PhysicalChannel) GetNodeID() uint64 {
+	return c.nodeID.Load()
+}

@@ -31,31 +31,6 @@ import (
 	"go.uber.org/zap"
 )
 
-func (node *LogNode) PrewatchChannel(ctx context.Context, req *logpb.WatchChannelRequest) (*commonpb.Status, error) {
-	log.Debug("received WatchChannel Request",
-		zap.Int64("msgID", req.GetBase().GetMsgID()),
-		zap.String("pChannel", req.GetPChannel()))
-
-	if !node.lifetime.Add(commonpbutil.IsHealthy) {
-		msg := fmt.Sprintf("log node %d is not ready", paramtable.GetNodeID())
-		err := merr.WrapErrServiceNotReady(msg)
-		return merr.Status(err), nil
-	}
-	defer node.lifetime.Done()
-
-	if !CheckTargetID(req) {
-		targetID := req.GetBase().GetTargetID()
-		log.Warn("target ID not match",
-			zap.Int64("targetID", targetID),
-			zap.Int64("nodeID", paramtable.GetNodeID()),
-		)
-		return util.WrapStatus(commonpb.ErrorCode_NodeIDNotMatch, common.WrapNodeIDNotMatchMsg(targetID, paramtable.GetNodeID())), nil
-	}
-
-	err := node.loggerManager.AddLogger(ctx, req.GetPChannel())
-	return merr.Status(err), nil
-}
-
 func (node *LogNode) WatchChannel(ctx context.Context, req *logpb.WatchChannelRequest) (*commonpb.Status, error) {
 	log.Debug("received WatchChannel Request",
 		zap.Int64("msgID", req.GetBase().GetMsgID()),

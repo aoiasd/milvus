@@ -138,6 +138,23 @@ type DataCoordCatalog interface {
 	GcConfirm(ctx context.Context, collectionID, partitionID typeutil.UniqueID) bool
 }
 
+type LogCoordCatalog interface {
+	// PChannel
+	AllocPChannel(ctx context.Context, pChannel string, nodeID uint64) error
+
+	// VChannel
+	MarkChannelAdded(ctx context.Context, channel string) error
+	MarkChannelDeleted(ctx context.Context, channel string) error
+	ShouldDropChannel(ctx context.Context, channel string) bool
+	ChannelExists(ctx context.Context, channel string) bool
+	DropChannel(ctx context.Context, channel string) error
+
+	//  VChannel Checkpoint
+	ListVChannelCheckpoint(ctx context.Context) (map[string]*msgpb.MsgPosition, error)
+	SaveVChannelCheckpoint(ctx context.Context, vChannel string, pos *msgpb.MsgPosition) error
+	DropVChannelCheckpoint(ctx context.Context, vChannel string) error
+}
+
 type QueryCoordCatalog interface {
 	SaveCollection(collection *querypb.CollectionLoadInfo, partitions ...*querypb.PartitionLoadInfo) error
 	SavePartition(info ...*querypb.PartitionLoadInfo) error

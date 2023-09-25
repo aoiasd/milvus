@@ -14,32 +14,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package logcoord
+package channel
 
-import (
-	"github.com/milvus-io/milvus/internal/logcoord/balance"
-	"github.com/milvus-io/milvus/internal/logcoord/channel"
-	"github.com/milvus-io/milvus/internal/logcoord/session"
-)
+import "github.com/milvus-io/milvus-proto/go-api/v2/msgpb"
 
-type Server struct {
-	channelManager channel.Manager
-	nodeBalancer   balance.NodeBalancer
-	sessionManager session.SessionManager
+type VirtualChannel struct {
+	name            string
+	collectionID    uint64
+	createTimestamp uint64
+	startPosition   *msgpb.MsgPosition
 }
 
-func NewLogCoord() *Server {
-	return &Server{}
-}
-
-func (m *Server) Init() error {
-	return nil
-}
-
-func (m *Server) Start() {
-	m.nodeBalancer.Start()
-}
-
-func (m *Server) AllocChannel(collectionID uint64, num int) []string {
-	return m.channelManager.AddVChannels(collectionID, num)
+func NewVirtualChannel(collectionID, createTimestamp uint64, name string, startPosition *msgpb.MsgPosition) *VirtualChannel {
+	return &VirtualChannel{
+		name:            name,
+		collectionID:    collectionID,
+		createTimestamp: createTimestamp,
+		startPosition:   startPosition,
+	}
 }
