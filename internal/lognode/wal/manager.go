@@ -54,7 +54,7 @@ func NewLoggerManger(factory msgstream.Factory) *LoggerManager {
 	}
 }
 
-func (m *LoggerManager) Init(rc types.RootCoord) error {
+func (m *LoggerManager) Init(rc types.RootCoordClient) error {
 	// TODO RET SIZE OPTION
 	allocator, err := NewTimestampAllocator(rc)
 	if err != nil {

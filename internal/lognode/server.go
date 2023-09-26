@@ -63,7 +63,7 @@ type LogNode struct {
 	loggerManager *wal.LoggerManager
 	idAllocator   *allocator.IDAllocator
 
-	rootCoord types.RootCoord
+	rootCoord types.RootCoordClient
 }
 
 func NewLogNode(ctx context.Context, factory dependency.Factory) *LogNode {
@@ -176,7 +176,7 @@ func (node *LogNode) SetEtcdClient(etcdClient *etcd.Client) {
 	node.etcdCli = etcdClient
 }
 
-func (node *LogNode) SetRootCoord(rc types.RootCoord) error {
+func (node *LogNode) SetRootCoord(rc types.RootCoordClient) error {
 	if rc == nil {
 		return errors.New("null RootCoord interface")
 	}
@@ -189,24 +189,22 @@ func (node *LogNode) UpdateStateCode(stateCode commonpb.StateCode) {
 	node.lifetime.SetState(stateCode)
 }
 
-func (node *LogNode) GetComponentStates(ctx context.Context) (*milvuspb.ComponentStates, error) {
-	stats := &milvuspb.ComponentStates{
-		Status: merr.Status(nil),
-	}
-
+func (node *LogNode) GetComponentStates(ctx context.Context, req *milvuspb.GetComponentStatesRequest) (*milvuspb.ComponentStates, error) {
 	code := node.lifetime.GetState()
 	nodeID := common.NotRegisteredID
-
 	if node.session != nil && node.session.Registered() {
 		nodeID = paramtable.GetNodeID()
 	}
-	info := &milvuspb.ComponentInfo{
-		NodeID:    nodeID,
-		Role:      typeutil.QueryNodeRole,
-		StateCode: code,
+
+	resp := &milvuspb.ComponentStates{
+		State: &milvuspb.ComponentInfo{
+			NodeID:    nodeID,
+			Role:      typeutil.LogNodeRole,
+			StateCode: code,
+		},
+		Status: merr.Status(nil),
 	}
-	stats.State = info
-	return stats, nil
+	return resp, nil
 }
 
 // GetStatisticsChannel returns the statistics channel

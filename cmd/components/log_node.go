@@ -20,6 +20,7 @@ import (
 	"context"
 
 	"github.com/milvus-io/milvus-proto/go-api/v2/commonpb"
+	"github.com/milvus-io/milvus-proto/go-api/v2/milvuspb"
 	grpclognode "github.com/milvus-io/milvus/internal/distributed/lognode"
 	"github.com/milvus-io/milvus/internal/util/dependency"
 	"github.com/milvus-io/milvus/pkg/log"
@@ -65,7 +66,7 @@ func (n *LogNode) Stop() error {
 
 // GetComponentStates returns LogNode's states
 func (n *LogNode) Health(ctx context.Context) commonpb.StateCode {
-	resp, err := n.svr.GetComponentStates(ctx)
+	resp, err := n.svr.GetComponentStates(ctx, &milvuspb.GetComponentStatesRequest{})
 	if err != nil {
 		return commonpb.StateCode_Abnormal
 	}

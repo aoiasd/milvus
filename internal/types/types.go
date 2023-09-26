@@ -278,12 +278,12 @@ type QueryNode interface {
 type QueryNodeComponent interface {
 	QueryNode
 
+	SetAddress(address string)
+	GetAddress() string
+
 	// UpdateStateCode updates state code for QueryNode
 	//  `stateCode` is current statement of this query node, indicating whether it's healthy.
 	UpdateStateCode(stateCode commonpb.StateCode)
-
-	SetAddress(address string)
-	GetAddress() string
 
 	// SetEtcdClient set etcd client for QueryNode
 	SetEtcdClient(etcdClient *clientv3.Client)
@@ -343,7 +343,7 @@ type QueryCoordComponent interface {
 
 type LogNode interface {
 	Component
-	WatchChannel(ctx context.Context, req *logpb.WatchChannelRequest) (*commonpb.Status, error)
+	logpb.LogNodeServer
 }
 
 type LogNodeComponent interface {
@@ -364,7 +364,7 @@ type LogNodeComponent interface {
 	//     If the rootCoord is nil.
 	// Return nil in status:
 	//     The rootCoord is not nil.
-	SetRootCoord(rootCoord RootCoord) error
+	SetRootCoord(rootCoord RootCoordClient) error
 }
 
 type LogCoord interface {

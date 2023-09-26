@@ -5,9 +5,11 @@ package milvus.proto.index;
 option go_package = "github.com/milvus-io/milvus/internal/proto/logpb";
 
 import "common.proto";
+import "milvus.proto";
 import "msg.proto";
 
 service LogNode {
+    rpc GetComponentStates(milvus.GetComponentStatesRequest) returns (milvus.ComponentStates) {}
     rpc WatchChannel(WatchChannelRequest)returns (common.Status){};
     rpc Insert(InsertRequest)returns (common.Status){};
 }

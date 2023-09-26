@@ -54,7 +54,7 @@ type Server struct {
 	// server
 	serverID atomic.Int64
 	factory  dependency.Factory
-	logNode  types.LogNodeComponent
+	lognode  types.LogNodeComponent
 
 	// rpc
 	grpcServer  *grpc.Server
@@ -64,7 +64,7 @@ type Server struct {
 	etcdCli *clientv3.Client
 
 	// component client
-	rootCoord types.RootCoord
+	rootCoord types.RootCoordClient
 
 	wg     sync.WaitGroup
 	ctx    context.Context
@@ -77,7 +77,7 @@ func NewServer(ctx context.Context, factory dependency.Factory) (*Server, error)
 	svr := ln.NewLogNode(ctx, factory)
 
 	return &Server{
-		logNode:     svr,
+		lognode:     svr,
 		ctx:         ctx,
 		cancel:      cancel,
 		factory:     factory,
@@ -95,16 +95,6 @@ func (s *Server) initRootCoord() error {
 		}
 	}
 
-	if err = s.rootCoord.Init(); err != nil {
-		log.Error("QueryCoord RootCoordClient Init failed", zap.Error(err))
-		return err
-	}
-
-	if err = s.rootCoord.Start(); err != nil {
-		log.Error("QueryCoord RootCoordClient Start failed", zap.Error(err))
-		return err
-	}
-
 	log.Debug("QueryCoord try to wait for RootCoord ready")
 	err = componentutil.WaitForComponentHealthy(s.ctx, s.rootCoord, "RootCoord", 1000000, time.Millisecond*200)
 	if err != nil {
@@ -112,7 +102,7 @@ func (s *Server) initRootCoord() error {
 		panic(err)
 	}
 
-	err = s.logNode.SetRootCoord(s.rootCoord)
+	err = s.lognode.SetRootCoord(s.rootCoord)
 	if err != nil {
 		return err
 	}
@@ -135,7 +125,7 @@ func (s *Server) initEtcd(params *paramtable.ComponentParam) error {
 	}
 
 	s.etcdCli = etcdCli
-	s.logNode.SetEtcdClient(etcdCli)
+	s.lognode.SetEtcdClient(etcdCli)
 	return nil
 }
 
@@ -172,7 +162,7 @@ func (s *Server) startGrpcLoop(grpcPort int) {
 		addr := ":" + strconv.Itoa(grpcPort)
 		lis, err = net.Listen("tcp", addr)
 		if err == nil {
-			s.logNode.SetAddress(fmt.Sprintf("%s:%d", Params.IP, lis.Addr().(*net.TCPAddr).Port))
+			s.lognode.SetAddress(fmt.Sprintf("%s:%d", Params.IP, lis.Addr().(*net.TCPAddr).Port))
 		} else {
 			// set port=0 to get next available port
 			grpcPort = 0
@@ -240,40 +230,40 @@ func (s *Server) init() error {
 		return err
 	}
 
-	if err := s.logNode.Init(); err != nil {
+	if err := s.lognode.Init(); err != nil {
 		return err
 	}
 	return nil
 }
 
 func (s *Server) start() error {
-	if err := s.logNode.Register(); err != nil {
+	if err := s.lognode.Register(); err != nil {
 		return err
 	}
 
-	return s.logNode.Start()
+	return s.lognode.Start()
 }
 
 func (s *Server) Run() error {
 	if err := s.init(); err != nil {
 		return err
 	}
-	log.Debug("LogNode init done ...")
+	log.Debug("lognode init done ...")
 
 	if err := s.start(); err != nil {
 		return err
 	}
-	log.Debug("LogNode start done ...")
+	log.Debug("lognode start done ...")
 	return nil
 }
 
 func (s *Server) Stop() error {
 	Params := &paramtable.Get().QueryCoordGrpcServerCfg
-	log.Debug("logNode stop", zap.String("Address", Params.GetAddress()))
+	log.Debug("lognode stop", zap.String("Address", Params.GetAddress()))
 	if s.etcdCli != nil {
 		defer s.etcdCli.Close()
 	}
-	err := s.logNode.Stop()
+	err := s.lognode.Stop()
 	s.cancel()
 	if s.grpcServer != nil {
 		log.Debug("Graceful stop grpc server...")
@@ -283,10 +273,14 @@ func (s *Server) Stop() error {
 }
 
 // RPC Method
-func (s *Server) WatchChannel(ctx context.Context, req *logpb.WatchChannelRequest) (*commonpb.Status, error) {
-	return s.logNode.WatchChannel(ctx, req)
+func (s *Server) GetComponentStates(ctx context.Context, req *milvuspb.GetComponentStatesRequest) (*milvuspb.ComponentStates, error) {
+	return s.lognode.GetComponentStates(ctx, req)
 }
 
-func (s *Server) GetComponentStates(ctx context.Context) (*milvuspb.ComponentStates, error) {
-	return s.logNode.GetComponentStates(ctx)
+func (s *Server) WatchChannel(ctx context.Context, req *logpb.WatchChannelRequest) (*commonpb.Status, error) {
+	return s.lognode.WatchChannel(ctx, req)
+}
+
+func (s *Server) Insert(ctx context.Context, req *logpb.InsertRequest) (*commonpb.Status, error) {
+	return s.lognode.Insert(ctx, req)
 }

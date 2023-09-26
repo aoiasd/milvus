@@ -25,6 +25,7 @@ import (
 	"github.com/milvus-io/milvus/internal/util"
 	"github.com/milvus-io/milvus/pkg/common"
 	"github.com/milvus-io/milvus/pkg/log"
+	"github.com/milvus-io/milvus/pkg/mq/msgstream"
 	"github.com/milvus-io/milvus/pkg/util/commonpbutil"
 	"github.com/milvus-io/milvus/pkg/util/merr"
 	"github.com/milvus-io/milvus/pkg/util/paramtable"
@@ -77,13 +78,10 @@ func (node *LogNode) Insert(ctx context.Context, req *logpb.InsertRequest) (*com
 		return util.WrapStatus(commonpb.ErrorCode_NodeIDNotMatch, common.WrapNodeIDNotMatchMsg(targetID, paramtable.GetNodeID())), nil
 	}
 
-	channels, msgs := RepackInsert(req)
-	for i, channel := range channels {
-		err := node.loggerManager.Produce(ctx, channel, msgs[i])
-		if err != nil {
-			return merr.Status(err), nil
-		}
+	msg := &msgstream.InsertMsg{
+		BaseMsg:       msgstream.BaseMsg{},
+		InsertRequest: *req.Msg,
 	}
-
-	return merr.Status(nil), nil
+	err := node.loggerManager.Produce(ctx, req.VChannels[0], msg)
+	return merr.Status(err), nil
 }

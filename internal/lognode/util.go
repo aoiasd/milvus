@@ -18,13 +18,9 @@ package lognode
 
 import (
 	"github.com/milvus-io/milvus-proto/go-api/v2/commonpb"
-	"github.com/milvus-io/milvus/internal/proto/logpb"
-	"github.com/milvus-io/milvus/pkg/mq/msgstream"
 	"github.com/milvus-io/milvus/pkg/util/paramtable"
 )
 
 func CheckTargetID[R interface{ GetBase() *commonpb.MsgBase }](req R) bool {
 	return req.GetBase().GetTargetID() == paramtable.GetNodeID()
 }
-
-func RepackInsert(msg *logpb.InsertRequest) ([]string, []*msgstream.InsertMsg)

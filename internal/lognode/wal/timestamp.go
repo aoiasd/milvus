@@ -37,14 +37,14 @@ type TimestampAllocator interface {
 }
 
 type RemoteTimestampAllocator struct {
-	rc     types.RootCoord
+	rc     types.RootCoordClient
 	nodeID int64
 
 	mu sync.Mutex
 }
 
 // newTimestampAllocator creates a new timestampAllocator
-func NewTimestampAllocator(rc types.RootCoord) (*RemoteTimestampAllocator, error) {
+func NewTimestampAllocator(rc types.RootCoordClient) (*RemoteTimestampAllocator, error) {
 	a := &RemoteTimestampAllocator{
 		nodeID: paramtable.GetNodeID(),
 		rc:     rc,
