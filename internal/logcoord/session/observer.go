@@ -14,14 +14,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package observer
+package session
 
 import (
 	"sync"
 
 	"github.com/blang/semver/v4"
-	"github.com/milvus-io/milvus/internal/logcoord/balance"
-	"github.com/milvus-io/milvus/internal/logcoord/session"
 	"github.com/milvus-io/milvus/internal/util/sessionutil"
 	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/util/typeutil"
@@ -29,8 +27,8 @@ import (
 )
 
 type SessionObserver struct {
-	nodeBalancer   *balance.NodeBalancer
-	sessionManager *session.SessionManager
+	nodeBalancer   *NodeBalancer
+	sessionManager *SessionManager
 	session        *sessionutil.Session
 
 	eventCh <-chan *sessionutil.SessionEvent

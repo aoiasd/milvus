@@ -14,14 +14,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package balance
+package session
 
 import (
 	"context"
 	"fmt"
 	"sync"
 
-	"github.com/milvus-io/milvus/internal/logcoord/session"
+	"github.com/milvus-io/milvus/internal/logcoord/allocators"
 	"github.com/milvus-io/milvus/internal/proto/logpb"
 	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/util/merr"
@@ -30,8 +30,8 @@ import (
 )
 
 type NodeBalancer struct {
-	nodeAllocator  NodeAllocator
-	sessionManager *session.SessionManager
+	nodeAllocator  allocators.NodeAllocator
+	sessionManager *SessionManager
 
 	waittingChannels chan string
 	balanceNotify    chan struct{}
@@ -140,8 +140,8 @@ func (ba *NodeBalancer) Notify() {
 	}
 }
 
-func NewNodeBalancer(sessionManager *session.SessionManager) *NodeBalancer {
-	nodeAllocator := NewUniformNodeAllocator()
+func NewNodeBalancer(sessionManager *SessionManager) *NodeBalancer {
+	nodeAllocator := allocators.NewUniformNodeAllocator()
 	return &NodeBalancer{
 		nodeAllocator:  nodeAllocator,
 		sessionManager: sessionManager,

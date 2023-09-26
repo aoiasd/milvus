@@ -20,21 +20,27 @@ import (
 	"context"
 	"sync"
 
-	"github.com/milvus-io/milvus/internal/logcoord/balance"
+	"github.com/milvus-io/milvus/internal/logcoord/allocators"
 	"github.com/milvus-io/milvus/pkg/mq/msgstream"
 	"github.com/milvus-io/milvus/pkg/util/paramtable"
 	"github.com/samber/lo"
 )
 
+// ChannelManager manger all vchannel and pchannel
 type Manager interface {
-	AddVChannels(collectionID uint64, num int) []string
+	// pchannel
+	GetPChannelNames() []string
+
+	// vchannel
+	GetVChannelNames() []string
+	ApplyVChannels(collectionID uint64, num int) []string
 }
 
 type ChannelManager struct {
 	ctx     context.Context
 	factory msgstream.Factory
 
-	allocator balance.ChannelAllocator
+	allocator allocators.ChannelAllocator
 
 	vChannelInfo map[string]*VirtualChannel
 	pChannelInfo map[string]*PhysicalChannel
@@ -93,8 +99,7 @@ func (m *ChannelManager) GetVChannelNames() []string {
 	return lo.Keys(m.vChannelInfo)
 }
 
-func (m *ChannelManager) AddVChannels(collectionID uint64, num int) []string {
+func (m *ChannelManager) ApplyVChannels(collectionID uint64, num int) []string {
 	names := m.allocator.Alloc(collectionID, num)
-
 	return names
 }
