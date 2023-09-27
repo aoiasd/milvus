@@ -27,9 +27,8 @@ import (
 )
 
 type SessionObserver struct {
-	nodeBalancer   *NodeBalancer
-	sessionManager *SessionManager
-	session        *sessionutil.Session
+	manager *SessionManager
+	session *sessionutil.Session
 
 	eventCh <-chan *sessionutil.SessionEvent
 
@@ -37,6 +36,14 @@ type SessionObserver struct {
 	stopOnce  sync.Once
 	stopCh    chan struct{}
 	wg        sync.WaitGroup
+}
+
+func NewSessionObserver(manager *SessionManager, session *sessionutil.Session) *SessionObserver {
+	return &SessionObserver{
+		manager: manager,
+		session: session,
+		stopCh:  make(chan struct{}),
+	}
 }
 
 func (ob *SessionObserver) Init() error {
@@ -48,8 +55,7 @@ func (ob *SessionObserver) Init() error {
 	}
 
 	for _, session := range sessions {
-		ob.sessionManager.AddSession(session.ServerID, session.Address)
-		ob.nodeBalancer.AddNode(session.ServerID)
+		ob.manager.AddSession(session.ServerID, session.Address)
 	}
 
 	ob.eventCh = ob.session.WatchServicesWithVersionRange(typeutil.DataNodeRole, r, rev+1, nil)
@@ -86,11 +92,9 @@ func (ob *SessionObserver) observe() {
 func (ob *SessionObserver) handlerEvent(event *sessionutil.SessionEvent) {
 	switch event.EventType {
 	case sessionutil.SessionAddEvent:
-		ob.sessionManager.AddSession(event.Session.ServerID, event.Session.Address)
-		ob.nodeBalancer.AddNode(event.Session.ServerID)
+		ob.manager.AddSession(event.Session.ServerID, event.Session.Address)
 	case sessionutil.SessionDelEvent:
-		ob.sessionManager.RemoveSession(event.Session.ServerID)
-		ob.nodeBalancer.RemoveNode(event.Session.ServerID)
+		ob.manager.RemoveSession(event.Session.ServerID)
 	default:
 		log.Warn("session observer recieve unknown event", zap.String("type", event.EventType.String()))
 	}

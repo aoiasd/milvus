@@ -29,7 +29,7 @@ import (
 	"go.uber.org/zap"
 )
 
-type NodeBalancer struct {
+type SessionBalancer struct {
 	nodeAllocator  allocators.NodeAllocator
 	sessionManager *SessionManager
 
@@ -42,7 +42,15 @@ type NodeBalancer struct {
 	stopCh    chan struct{}
 }
 
-func (ba *NodeBalancer) alloc(ctx context.Context, channel string, nodeID int64) error {
+func NewSessionBalancer(sessionManager *SessionManager) *SessionBalancer {
+	nodeAllocator := allocators.NewUniformNodeAllocator()
+	return &SessionBalancer{
+		nodeAllocator:  nodeAllocator,
+		sessionManager: sessionManager,
+	}
+}
+
+func (ba *SessionBalancer) alloc(ctx context.Context, channel string, nodeID int64) error {
 	session := ba.sessionManager.GetSessions(nodeID)
 	if session == nil {
 		log.Warn("Session relased, but not remove from log node balancer", zap.Int64("nodeID", nodeID))
@@ -64,7 +72,7 @@ func (ba *NodeBalancer) alloc(ctx context.Context, channel string, nodeID int64)
 	return nil
 }
 
-func (ba *NodeBalancer) allocAll(ctx context.Context) {
+func (ba *SessionBalancer) allocAll(ctx context.Context) {
 	for {
 		select {
 		case channel := <-ba.waittingChannels:
@@ -84,7 +92,7 @@ func (ba *NodeBalancer) allocAll(ctx context.Context) {
 	}
 }
 
-func (ba *NodeBalancer) balance() {
+func (ba *SessionBalancer) balance() {
 	defer ba.wg.Done()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -101,49 +109,41 @@ func (ba *NodeBalancer) balance() {
 	}
 }
 
-func (ba *NodeBalancer) Start() {
+func (ba *SessionBalancer) Start() {
 	ba.startOnce.Do(func() {
 		ba.wg.Add(1)
 		go ba.balance()
 	})
 }
 
-func (ba *NodeBalancer) Stop() {
+func (ba *SessionBalancer) Stop() {
 	ba.stopOnce.Do(func() {
 		close(ba.stopCh)
 		ba.wg.Wait()
 	})
 }
 
-func (ba *NodeBalancer) AddNode(nodeID int64) {
+func (ba *SessionBalancer) AddNode(nodeID int64) {
 	ba.nodeAllocator.AddNode(nodeID)
 	ba.Notify()
 }
 
-func (ba *NodeBalancer) RemoveNode(nodeID int64) {
+func (ba *SessionBalancer) RemoveNode(nodeID int64) {
 	offlineChannels := ba.nodeAllocator.RemoveNode(nodeID)
 	ba.AddChannel(offlineChannels...)
 }
 
-func (ba *NodeBalancer) AddChannel(channels ...string) {
+func (ba *SessionBalancer) AddChannel(channels ...string) {
 	for _, channel := range channels {
 		ba.waittingChannels <- channel
 	}
 	ba.Notify()
 }
 
-func (ba *NodeBalancer) Notify() {
+func (ba *SessionBalancer) Notify() {
 	select {
 	case ba.balanceNotify <- struct{}{}:
 		log.Info("notify log node balancer to do balance")
 	default:
-	}
-}
-
-func NewNodeBalancer(sessionManager *SessionManager) *NodeBalancer {
-	nodeAllocator := allocators.NewUniformNodeAllocator()
-	return &NodeBalancer{
-		nodeAllocator:  nodeAllocator,
-		sessionManager: sessionManager,
 	}
 }

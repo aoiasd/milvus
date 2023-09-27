@@ -20,17 +20,18 @@ import (
 	"context"
 	"fmt"
 
+	grpclognodeclient "github.com/milvus-io/milvus/internal/distributed/lognode/client"
 	"github.com/milvus-io/milvus/internal/types"
 	"github.com/milvus-io/milvus/pkg/log"
 	"go.uber.org/zap"
 )
 
-type SessionConnector func(ctx context.Context, addr string) (types.LogNode, error)
+type SessionConnector func(ctx context.Context, addr string, nodeID int64) (types.LogNodeClient, error)
 type SessionType int32
 type Session struct {
 	nodeID    int64
 	address   string
-	client    types.LogNode
+	client    types.LogNodeClient
 	connector SessionConnector
 }
 
@@ -39,7 +40,7 @@ func (s *Session) connect(ctx context.Context) error {
 		return fmt.Errorf("unable to create client for %s because of a nil client creator", s.address)
 	}
 
-	client, err := s.connector(ctx, s.address)
+	client, err := s.connector(ctx, s.address, s.nodeID)
 	if err != nil {
 		return err
 	}
@@ -47,7 +48,7 @@ func (s *Session) connect(ctx context.Context) error {
 	return nil
 }
 
-func (s *Session) GetClient(ctx context.Context) types.LogNode {
+func (s *Session) GetClient(ctx context.Context) types.LogNodeClient {
 	if s.client == nil {
 		err := s.connect(ctx)
 		if err != nil {
@@ -63,4 +64,8 @@ func NewSession(nodeID int64, address string, connector SessionConnector) *Sessi
 		address:   address,
 		connector: connector,
 	}
+}
+
+func DefaultLogNodeConnector(ctx context.Context, addr string, nodeID int64) (types.LogNodeClient, error) {
+	return grpclognodeclient.NewClient(ctx, addr, nodeID)
 }

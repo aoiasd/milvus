@@ -26,14 +26,15 @@ import (
 	"github.com/samber/lo"
 )
 
-// ChannelManager manger all vchannel and pchannel
+// ChannelManager manger all vchannel and pchannel info
+// And create vchannel
 type Manager interface {
 	// pchannel
 	GetPChannelNames() []string
 
 	// vchannel
 	GetVChannelNames() []string
-	ApplyVChannels(collectionID uint64, num int) []string
+	AllocVChannels(collectionID uint64, num int) []string
 }
 
 type ChannelManager struct {
@@ -99,7 +100,7 @@ func (m *ChannelManager) GetVChannelNames() []string {
 	return lo.Keys(m.vChannelInfo)
 }
 
-func (m *ChannelManager) ApplyVChannels(collectionID uint64, num int) []string {
+func (m *ChannelManager) AllocVChannels(collectionID uint64, num int) []string {
 	names := m.allocator.Alloc(collectionID, num)
 	return names
 }

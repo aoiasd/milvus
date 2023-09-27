@@ -39,6 +39,7 @@ import (
 	"github.com/milvus-io/milvus/internal/kv"
 	etcdkv "github.com/milvus-io/milvus/internal/kv/etcd"
 	"github.com/milvus-io/milvus/internal/kv/tikv"
+	"github.com/milvus-io/milvus/internal/logcoord"
 	"github.com/milvus-io/milvus/internal/metastore/kv/datacoord"
 	"github.com/milvus-io/milvus/internal/proto/datapb"
 	"github.com/milvus-io/milvus/internal/storage"
@@ -119,6 +120,7 @@ type Server struct {
 	garbageCollector *garbageCollector
 	gcOpt            GcOption
 	handler          Handler
+	logCoord         logcoord.Server
 
 	compactionTrigger trigger
 	compactionHandler compactionPlanContext

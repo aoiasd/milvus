@@ -18,50 +18,91 @@ package session
 
 import (
 	"sync"
+
+	"github.com/milvus-io/milvus/internal/util/sessionutil"
 )
 
-// SessionManager manage log node session
-// and trigger balance when log node changes
+// SessionManager manger all lognode session
+type Manager interface {
+	Init() error
+	Start()
+	Stop()
+
+	AddSession(nodeID int64, address string)
+	RemoveSession(nodeID int64)
+	GetSessions(nodeID int64)
+}
+
+// SessionManager manage lognode sessions
+// And trigger balance when log node changes
 type SessionManager struct {
 	sessions struct {
 		sync.RWMutex
 		data map[int64]*Session
 	}
+
 	connector SessionConnector
+	balancer  *SessionBalancer
+	observer  *SessionObserver
 }
 
-func (s *SessionManager) AddSession(nodeID int64, address string) {
-	s.sessions.Lock()
-	defer s.sessions.Unlock()
-
-	session := NewSession(nodeID, address, s.connector)
-	s.sessions.data[nodeID] = session
-}
-
-func (s *SessionManager) RemoveSession(nodeID int64) {
-	s.sessions.Lock()
-	defer s.sessions.Unlock()
-
-	delete(s.sessions.data, nodeID)
-}
-
-func (s *SessionManager) GetSessions(nodeID int64) *Session {
-	s.sessions.RLock()
-	defer s.sessions.RUnlock()
-
-	session, ok := s.sessions.data[nodeID]
-	if !ok {
-		return nil
-	}
-	return session
-}
-
-func NewSessionManager(connector SessionConnector) *SessionManager {
-	return &SessionManager{
+func NewSessionManager(connector SessionConnector, etcdSession *sessionutil.Session) *SessionManager {
+	manager := &SessionManager{
 		sessions: struct {
 			sync.RWMutex
 			data map[int64]*Session
 		}{data: make(map[int64]*Session)},
 		connector: connector,
 	}
+	manager.observer = NewSessionObserver(manager, etcdSession)
+	manager.balancer = NewSessionBalancer(manager)
+
+	return manager
+}
+
+func (m *SessionManager) Init() error {
+	err := m.observer.Init()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (m *SessionManager) Start() {
+	m.balancer.Start()
+	m.observer.Start()
+}
+
+func (s *SessionManager) Stop() {
+	s.observer.Stop()
+	s.balancer.Stop()
+}
+
+func (m *SessionManager) AddSession(nodeID int64, address string) {
+	m.sessions.Lock()
+	defer m.sessions.Unlock()
+
+	session := NewSession(nodeID, address, m.connector)
+	m.sessions.data[nodeID] = session
+	m.balancer.AddNode(session.nodeID)
+}
+
+func (m *SessionManager) RemoveSession(nodeID int64) {
+	m.sessions.Lock()
+	defer m.sessions.Unlock()
+
+	delete(m.sessions.data, nodeID)
+	m.balancer.RemoveNode(nodeID)
+}
+
+func (m *SessionManager) GetSessions(nodeID int64) *Session {
+	m.sessions.RLock()
+	defer m.sessions.RUnlock()
+
+	session, ok := m.sessions.data[nodeID]
+	if !ok {
+		return nil
+	}
+	return session
 }

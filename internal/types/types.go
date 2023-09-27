@@ -341,6 +341,12 @@ type QueryCoordComponent interface {
 	SetQueryNodeCreator(func(ctx context.Context, addr string, nodeID int64) (QueryNodeClient, error))
 }
 
+// LogNodeClient is the client interface for lognode server
+type LogNodeClient interface {
+	io.Closer
+	logpb.LogNodeClient
+}
+
 type LogNode interface {
 	Component
 	logpb.LogNodeServer
