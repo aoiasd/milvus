@@ -14,7 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package allocators
+package session
 
 import (
 	"sync"
@@ -28,7 +28,7 @@ import (
 type NodeAllocator interface {
 	Alloc(pChannel string) int64
 	Unalloc(pChannel string)
-	//return a realloc plan for balance
+	//create a realloc plan for balance
 	//empty string means don't need balance
 	//return pchannel, node, target_nodes
 	Realloc() (string, int64, int64)

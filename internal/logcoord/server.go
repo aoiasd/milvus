@@ -20,14 +20,14 @@ import (
 	"context"
 	"sync"
 
-	"github.com/milvus-io/milvus/internal/logcoord/channel"
+	"github.com/milvus-io/milvus/internal/logcoord/meta"
 	"github.com/milvus-io/milvus/internal/logcoord/session"
 	"github.com/milvus-io/milvus/internal/util/sessionutil"
 	"github.com/milvus-io/milvus/pkg/mq/msgstream"
 )
 
 type Server struct {
-	channelManager channel.Manager
+	meta           meta.ChannelMeta
 	sessionManager *session.SessionManager
 	streamFactory  msgstream.Factory
 
@@ -36,17 +36,21 @@ type Server struct {
 	stopOnce  sync.Once
 }
 
-func NewLogCoord(ctx context.Context, factory msgstream.Factory, etcdSession *sessionutil.Session) *Server {
+func NewLogCoord(factory msgstream.Factory, etcdSession *sessionutil.Session) *Server {
 	return &Server{
-		channelManager: channel.NewChannelManager(ctx, factory),
 		streamFactory:  factory,
 		sessionManager: session.NewSessionManager(session.DefaultLogNodeConnector, etcdSession),
 	}
 }
 
-func (m *Server) Init() error {
-	var err error = nil
+func (m *Server) Init(ctx context.Context) error {
+	var err error
 	m.initOnce.Do(func() {
+		err = m.meta.Init(ctx)
+		if err != nil {
+			return
+		}
+
 		err = m.sessionManager.Init()
 	})
 	return err
@@ -64,6 +68,10 @@ func (m *Server) Stop() {
 	})
 }
 
-func (m *Server) AllocVChannels(collectionID uint64, num int) []string {
-	return m.channelManager.AllocVChannels(collectionID, num)
+func (m *Server) WatchVChannel(channels ...string) error {
+	return m.meta.AddVChannel(channels...)
+}
+
+func (m *Server) UnwatchVChannel(channels ...string) error {
+	return m.meta.RemoveVChannel(channels...)
 }

@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/milvus-io/milvus/internal/logcoord/allocators"
 	"github.com/milvus-io/milvus/internal/proto/logpb"
 	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/util/merr"
@@ -30,7 +29,7 @@ import (
 )
 
 type SessionBalancer struct {
-	nodeAllocator  allocators.NodeAllocator
+	nodeAllocator  NodeAllocator
 	sessionManager *SessionManager
 
 	waittingChannels chan string
@@ -43,7 +42,7 @@ type SessionBalancer struct {
 }
 
 func NewSessionBalancer(sessionManager *SessionManager) *SessionBalancer {
-	nodeAllocator := allocators.NewUniformNodeAllocator()
+	nodeAllocator := NewUniformNodeAllocator()
 	return &SessionBalancer{
 		nodeAllocator:  nodeAllocator,
 		sessionManager: sessionManager,

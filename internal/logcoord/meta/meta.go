@@ -14,35 +14,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package channel
+package meta
 
-import (
-	"sync/atomic"
-)
+import "context"
 
-type PhysicalChannel struct {
-	name    string
-	nodeID  atomic.Uint64
-	leaseID atomic.Uint64
-}
+type ChannelMeta interface {
+	Init(ctx context.Context) error
+	//pChannel
+	CreatePChannels(names ...string) error
+	ListPChannelName() []string
 
-func NewPhysicalChannel(name string) *PhysicalChannel {
-	return &PhysicalChannel{
-		name: name,
-	}
-}
-
-func (c *PhysicalChannel) Alloc(nodeID uint64) uint64 {
-	c.nodeID.Store(nodeID)
-	leaseID := c.leaseID.Add(1)
-	return leaseID
-}
-
-func (c *PhysicalChannel) Revert(nodeID, leaseID uint64) {
-	c.nodeID.Store(nodeID)
-	c.leaseID.Store(leaseID)
-}
-
-func (c *PhysicalChannel) GetNodeID() uint64 {
-	return c.nodeID.Load()
+	//vChannel
+	AddVChannel(channels ...string) error
+	RemoveVChannel(channels ...string) error
+	ListVChannel() []*VirtualChannel
+	ListVChannelName() []string
 }
