@@ -23,9 +23,11 @@ import (
 	"time"
 
 	"github.com/cockroachdb/errors"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 
+	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/util"
 	"github.com/milvus-io/milvus/pkg/util/crypto"
 )
@@ -38,6 +40,7 @@ func UnaryAccessLogInterceptor(ctx context.Context, req any, info *grpc.UnarySer
 	resp, err := handler(newCtx, req)
 	accessInfo.SetResult(resp, err)
 	accessInfo.Write()
+	log.Info("test access", zap.Duration("interval", time.Since(accessInfo.end)))
 	return resp, err
 }
 
