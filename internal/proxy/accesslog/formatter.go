@@ -18,8 +18,11 @@ package accesslog
 
 import (
 	"strings"
+	"time"
 
+	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/util/merr"
+	"go.uber.org/zap"
 )
 
 const (
@@ -135,6 +138,7 @@ func (f *Formatter) build() {
 func (f *Formatter) Format(info AccessInfo) string {
 	fieldValues := info.Get(f.fields...)
 
+	start := time.Now()
 	result := ""
 	for id, prefix := range f.prefixs {
 		result += prefix
@@ -143,6 +147,7 @@ func (f *Formatter) Format(info AccessInfo) string {
 		}
 	}
 	result += "\n"
+	log.Info("test accesslog format time cost", zap.String("traceID", info.TraceID()), zap.Duration("cost", time.Since(start)))
 	return result
 }
 

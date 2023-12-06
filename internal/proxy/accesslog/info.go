@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/trace"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -31,12 +32,14 @@ import (
 
 	"github.com/milvus-io/milvus-proto/go-api/v2/commonpb"
 	"github.com/milvus-io/milvus/internal/proxy/connection"
+	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/util/merr"
 	"github.com/milvus-io/milvus/pkg/util/requestutil"
 )
 
 type AccessInfo interface {
 	Get(keys ...string) []string
+	TraceID() string
 }
 
 type GrpcAccessInfo struct {
@@ -93,7 +96,9 @@ func (i *GrpcAccessInfo) Get(keys ...string) []string {
 		if value, ok := metricMap[key]; ok {
 			result = append(result, value)
 		} else if getFunc, ok := metricFuncMap[key]; ok {
+			start := time.Now()
 			result = append(result, getFunc(i))
+			log.Info("test access get cost", zap.String("traceID", i.TraceID()), zap.String("key", key), zap.Duration("cost", time.Since(start)))
 		}
 	}
 	return result
@@ -110,6 +115,16 @@ func (i *GrpcAccessInfo) Write() bool {
 	}
 	_, err := _globalW.Write([]byte(formatter.Format(i)))
 	return err == nil
+}
+
+func (i *GrpcAccessInfo) TraceID() string {
+	meta, ok := metadata.FromOutgoingContext(i.ctx)
+	if ok {
+		return meta.Get(clientRequestIDKey)[0]
+	}
+
+	traceID := trace.SpanFromContext(i.ctx).SpanContext().TraceID()
+	return traceID.String()
 }
 
 func getTimeCost(i *GrpcAccessInfo) string {

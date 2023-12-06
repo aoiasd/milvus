@@ -40,7 +40,7 @@ func UnaryAccessLogInterceptor(ctx context.Context, req any, info *grpc.UnarySer
 	resp, err := handler(newCtx, req)
 	accessInfo.SetResult(resp, err)
 	accessInfo.Write()
-	log.Info("test access", zap.Duration("interval", time.Since(accessInfo.end)))
+	log.Info("test access time cost", zap.String("traceID", accessInfo.TraceID()), zap.Duration("cost", time.Since(accessInfo.end)))
 	return resp, err
 }
 
