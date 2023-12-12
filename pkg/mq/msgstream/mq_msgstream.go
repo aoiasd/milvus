@@ -229,6 +229,9 @@ func (ms *mqMsgStream) Close() {
 
 	ms.client.Close()
 	close(ms.receiveBuf)
+	log.Info("close mq msg stream success",
+		zap.Int("producer num", len(ms.producers)),
+		zap.Int("consumer num", len(ms.consumers)))
 }
 
 func (ms *mqMsgStream) ComputeProduceChannelIndexes(tsMsgs []TsMsg) [][]int32 {

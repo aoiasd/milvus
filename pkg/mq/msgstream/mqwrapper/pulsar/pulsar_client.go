@@ -129,6 +129,9 @@ func (pc *pulsarClient) Subscribe(options mqwrapper.ConsumerOptions) (mqwrapper.
 	}
 
 	pConsumer := &Consumer{c: consumer, closeCh: make(chan struct{})}
+	globalConsumerCount.Add(1)
+	pConsumer.Count.Store(0)
+	log.Info("test pulsar conumer sub", zap.Int32("count", globalConsumerCount.Load()))
 	// prevent seek to earliest patch applied when using latest position options
 	if options.SubscriptionInitialPosition == mqwrapper.SubscriptionPositionLatest {
 		pConsumer.AtLatest = true

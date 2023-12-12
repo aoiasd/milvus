@@ -20,6 +20,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -37,10 +38,17 @@ type Consumer struct {
 	msgChannel chan mqwrapper.Message
 	hasSeek    bool
 	AtLatest   bool
+	Count      atomic.Int64
 	closeCh    chan struct{}
 	once       sync.Once
 	skip       bool
 	closeOnce  sync.Once
+}
+
+var globalConsumerCount atomic.Int32
+
+func init() {
+	globalConsumerCount.Store(0)
 }
 
 // Subscription get a subscription for the consumer
@@ -72,13 +80,17 @@ func (pc *Consumer) Chan() <-chan mqwrapper.Message {
 					select {
 					case msg, ok := <-pc.c.Chan():
 						if !ok {
-							log.Debug("pulsar consumer channel closed")
+							log.Info("pulsar consumer channel closed")
 							return
 						}
 
 						if !pc.skip {
 							select {
 							case pc.msgChannel <- &pulsarMessage{msg: msg}:
+								pc.Count.Add(1)
+								if pc.Count.Load() >= 200 {
+									log.Info("test consumer chan", zap.Int64("count", pc.Count.Load()))
+								}
 							case <-pc.closeCh:
 							}
 						} else {
@@ -86,6 +98,7 @@ func (pc *Consumer) Chan() <-chan mqwrapper.Message {
 						}
 					case <-pc.closeCh: // workaround for pulsar consumer.receiveCh not closed
 						close(pc.msgChannel)
+						log.Info("pulsar consumer channel closed")
 						return
 					}
 				}
@@ -111,6 +124,7 @@ func (pc *Consumer) Seek(id mqwrapper.MessageID, inclusive bool) error {
 // Ack the consumption of a single message
 func (pc *Consumer) Ack(message mqwrapper.Message) {
 	pm := message.(*pulsarMessage)
+	pc.Count.Add(-1)
 	pc.c.Ack(pm.msg)
 }
 
@@ -139,6 +153,8 @@ func (pc *Consumer) Close() {
 			}
 			// only close if unsubscribe successfully
 			pc.c.Close()
+			globalConsumerCount.Add(-1)
+			log.Info("test pulsar conumer unsub", zap.Int32("count", globalConsumerCount.Load()))
 			return nil
 		}
 
