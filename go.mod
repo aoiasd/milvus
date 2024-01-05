@@ -244,6 +244,7 @@ replace (
 	github.com/expr-lang/expr => github.com/SimFG/expr v0.0.0-20231218130003-94d085776dc5
 	github.com/go-kit/kit => github.com/go-kit/kit v0.1.0
 	// github.com/milvus-io/milvus-storage/go => ../milvus-storage/go
+	github.com/milvus-io/milvus-proto/go-api/v2 => ../milvus-proto/go-api
 	github.com/milvus-io/milvus/pkg => ./pkg
 	github.com/streamnative/pulsarctl => github.com/xiaofan-luan/pulsarctl v0.5.1
 	github.com/tecbot/gorocksdb => github.com/milvus-io/gorocksdb v0.0.0-20220624081344-8c5f4212846b // indirect

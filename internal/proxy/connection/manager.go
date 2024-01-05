@@ -101,6 +101,16 @@ func (s *connectionManager) Register(ctx context.Context, identifier int64, info
 	log.Ctx(ctx).Info("client register", cli.GetLogger()...)
 }
 
+func (s *connectionManager) Deregister(ctx context.Context, identifier int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if cli, ok := s.clientInfos[identifier]; ok {
+		delete(s.clientInfos, identifier)
+		log.Ctx(ctx).Info("client deregister", cli.GetLogger()...)
+	}
+}
+
 func (s *connectionManager) KeepActive(identifier int64) {
 	// make this asynchronous and then the rpc won't be blocked too long.
 	s.buffer <- identifier

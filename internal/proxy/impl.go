@@ -5115,6 +5115,17 @@ func (node *Proxy) Connect(ctx context.Context, request *milvuspb.ConnectRequest
 	}, nil
 }
 
+func (node *Proxy) Disconnect(ctx context.Context, request *milvuspb.DisconnectRequest) (*commonpb.Status, error) {
+	if err := merr.CheckHealthy(node.GetStateCode()); err != nil {
+		return merr.Status(err), nil
+	}
+
+	log.Info("disconnect received", zap.Int64("identifier", request.GetIdentifier()))
+
+	connection.GetManager().Deregister(ctx, request.GetIdentifier())
+	return merr.Status(nil), nil
+}
+
 func (node *Proxy) ReplicateMessage(ctx context.Context, req *milvuspb.ReplicateMessageRequest) (*milvuspb.ReplicateMessageResponse, error) {
 	if err := merr.CheckHealthy(node.GetStateCode()); err != nil {
 		return &milvuspb.ReplicateMessageResponse{Status: merr.Status(err)}, nil
