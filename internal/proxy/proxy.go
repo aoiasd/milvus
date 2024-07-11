@@ -37,9 +37,11 @@ import (
 	"github.com/milvus-io/milvus/internal/proto/internalpb"
 	"github.com/milvus-io/milvus/internal/proxy/connection"
 	"github.com/milvus-io/milvus/internal/types"
+	"github.com/milvus-io/milvus/internal/util/ctokenizer"
 	"github.com/milvus-io/milvus/internal/util/dependency"
 	"github.com/milvus-io/milvus/internal/util/hookutil"
 	"github.com/milvus-io/milvus/internal/util/sessionutil"
+	"github.com/milvus-io/milvus/internal/util/tokenizerapi"
 	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/metrics"
 	"github.com/milvus-io/milvus/pkg/mq/msgstream"
@@ -131,6 +133,8 @@ type Proxy struct {
 
 	// delete rate limiter
 	enableComplexDeleteLimit bool
+
+	tokenizer tokenizerapi.Tokenizer
 }
 
 // NewProxy returns a Proxy struct.
@@ -155,6 +159,12 @@ func NewProxy(ctx context.Context, factory dependency.Factory) (*Proxy, error) {
 		replicateStreamManager: replicateStreamManager,
 	}
 	node.UpdateStateCode(commonpb.StateCode_Abnormal)
+	tokenizer, err := ctokenizer.NewTokenizer(make(map[string]string))
+	if err != nil {
+		return nil, err
+	}
+	node.tokenizer = tokenizer
+
 	expr.Register("proxy", node)
 	hookutil.InitOnceHook()
 	Extension = hookutil.Extension

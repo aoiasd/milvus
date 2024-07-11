@@ -19,6 +19,7 @@ package proxy
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -2914,6 +2915,31 @@ func (node *Proxy) search(ctx context.Context, request *milvuspb.SearchRequest) 
 			Status: merr.Status(err),
 		}, nil
 	}
+
+	var text string
+	for _, pair := range request.SearchParams {
+		if pair.GetKey() == "params" {
+			var param map[string]interface{} = make(map[string]interface{})
+			err := json.Unmarshal([]byte(pair.GetValue()), &param)
+			if err != nil {
+				panic(err)
+			}
+			text = param["text"].(string)
+		}
+	}
+
+	stream := node.tokenizer.NewTokenStream(text)
+
+	SparseEmbedding := map[uint32]float32{}
+	tokens := []string{}
+
+	for stream.Advance() {
+		token := stream.Token()
+		hashValue := typeutil.HashString2Uint32(token)
+		tokens = append(tokens, token)
+		SparseEmbedding[hashValue] += 1
+	}
+	log.Info("test--", zap.String("text", text), zap.Any("tokens", tokens), zap.Any("sparse embedding", SparseEmbedding))
 
 	method := "Search"
 	tr := timerecord.NewTimeRecorder(method)
