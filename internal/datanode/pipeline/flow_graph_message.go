@@ -19,6 +19,7 @@ package pipeline
 import (
 	"github.com/milvus-io/milvus-proto/go-api/v2/msgpb"
 	"github.com/milvus-io/milvus/internal/datanode/util"
+	"github.com/milvus-io/milvus/internal/datanode/writebuffer"
 	"github.com/milvus-io/milvus/internal/storage"
 	"github.com/milvus-io/milvus/internal/util/flowgraph"
 	"github.com/milvus-io/milvus/pkg/mq/msgstream"
@@ -46,7 +47,10 @@ type (
 type FlowGraphMsg struct {
 	BaseMsg
 	InsertMessages []*msgstream.InsertMsg
+	InsertData     []*writebuffer.InsertData
+
 	DeleteMessages []*msgstream.DeleteMsg
+
 	TimeRange      util.TimeRange
 	StartPositions []*msgpb.MsgPosition
 	EndPositions   []*msgpb.MsgPosition

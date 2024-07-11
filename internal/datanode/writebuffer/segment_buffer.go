@@ -32,8 +32,10 @@ func (buf *segmentBuffer) IsFull() bool {
 	return buf.insertBuffer.IsFull() || buf.deltaBuffer.IsFull()
 }
 
-func (buf *segmentBuffer) Yield() (insert []*storage.InsertData, delete *storage.DeleteData) {
-	return buf.insertBuffer.Yield(), buf.deltaBuffer.Yield()
+func (buf *segmentBuffer) Yield() (insert []*storage.InsertData, embedding []*storage.EmbeddingData, delete *storage.DeleteData) {
+	insert, embedding = buf.insertBuffer.Yield()
+	delete = buf.deltaBuffer.Yield()
+	return
 }
 
 func (buf *segmentBuffer) MinTimestamp() typeutil.Timestamp {

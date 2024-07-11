@@ -394,34 +394,86 @@ func (wb *writeBufferBase) getOrCreateBuffer(segmentID int64) *segmentBuffer {
 	return buffer
 }
 
-func (wb *writeBufferBase) yieldBuffer(segmentID int64) ([]*storage.InsertData, *storage.DeleteData, *TimeRange, *msgpb.MsgPosition) {
+func (wb *writeBufferBase) yieldBuffer(segmentID int64) ([]*storage.InsertData, []*storage.EmbeddingData, *storage.DeleteData, *TimeRange, *msgpb.MsgPosition) {
 	buffer, ok := wb.buffers[segmentID]
 	if !ok {
-		return nil, nil, nil, nil
+		return nil, nil, nil, nil, nil
 	}
 
 	// remove buffer and move it to sync manager
 	delete(wb.buffers, segmentID)
 	start := buffer.EarliestPosition()
 	timeRange := buffer.GetTimeRange()
-	insert, delta := buffer.Yield()
+	insert, embedding, delta := buffer.Yield()
 
-	return insert, delta, timeRange, start
+	return insert, embedding, delta, timeRange, start
 }
 
-type inData struct {
+type InsertData struct {
 	segmentID   int64
 	partitionID int64
 	data        []*storage.InsertData
-	pkField     []storage.FieldData
-	tsField     []*storage.Int64FieldData
-	rowNum      int64
+	embeddings  []*storage.EmbeddingData
+
+	pkField []storage.FieldData
+	pkType  schemapb.DataType
+
+	tsField []*storage.Int64FieldData
+	rowNum  int64
 
 	intPKTs map[int64]int64
 	strPKTs map[string]int64
 }
 
-func (id *inData) pkExists(pk storage.PrimaryKey, ts uint64) bool {
+func NewInsertData(segmentID, partitionID int64, cap int, pkType schemapb.DataType) *InsertData {
+	data := &InsertData{
+		segmentID:   segmentID,
+		partitionID: partitionID,
+		data:        make([]*storage.InsertData, 0, cap),
+		embeddings:  make([]*storage.EmbeddingData, 0, cap),
+		pkField:     make([]storage.FieldData, 0, cap),
+		pkType:      pkType,
+	}
+
+	switch pkType {
+	case schemapb.DataType_Int64:
+		data.intPKTs = make(map[int64]int64)
+	case schemapb.DataType_VarChar:
+		data.strPKTs = make(map[string]int64)
+	}
+
+	return data
+}
+
+func (id *InsertData) Append(data *storage.InsertData, emData *storage.EmbeddingData, pkFieldData storage.FieldData, tsFieldData *storage.Int64FieldData) {
+	id.data = append(id.data, data)
+	id.pkField = append(id.pkField, pkFieldData)
+	id.tsField = append(id.tsField, tsFieldData)
+	id.embeddings = append(id.embeddings, emData)
+	id.rowNum += int64(data.GetRowNum())
+
+	timestamps := tsFieldData.GetRows().([]int64)
+	switch id.pkType {
+	case schemapb.DataType_Int64:
+		pks := pkFieldData.GetRows().([]int64)
+		for idx, pk := range pks {
+			ts, ok := id.intPKTs[pk]
+			if !ok || timestamps[idx] < ts {
+				id.intPKTs[pk] = timestamps[idx]
+			}
+		}
+	case schemapb.DataType_VarChar:
+		pks := pkFieldData.GetRows().([]string)
+		for idx, pk := range pks {
+			ts, ok := id.strPKTs[pk]
+			if !ok || timestamps[idx] < ts {
+				id.strPKTs[pk] = timestamps[idx]
+			}
+		}
+	}
+}
+
+func (id *InsertData) pkExists(pk storage.PrimaryKey, ts uint64) bool {
 	var ok bool
 	var minTs int64
 	switch pk.Type() {
@@ -434,7 +486,7 @@ func (id *inData) pkExists(pk storage.PrimaryKey, ts uint64) bool {
 	return ok && ts > uint64(minTs)
 }
 
-func (id *inData) batchPkExists(pks []storage.PrimaryKey, tss []uint64, hits []bool) []bool {
+func (id *InsertData) batchPkExists(pks []storage.PrimaryKey, tss []uint64, hits []bool) []bool {
 	if len(pks) == 0 {
 		return nil
 	}
@@ -466,9 +518,9 @@ func (wb *writeBufferBase) prepareInsert(insertMsgs []*msgstream.InsertMsg) ([]*
 	groups := lo.GroupBy(insertMsgs, func(msg *msgstream.InsertMsg) int64 { return msg.SegmentID })
 	segmentPartition := lo.SliceToMap(insertMsgs, func(msg *msgstream.InsertMsg) (int64, int64) { return msg.GetSegmentID(), msg.GetPartitionID() })
 
-	result := make([]*inData, 0, len(groups))
+	result := make([]*InsertData, 0, len(groups))
 	for segment, msgs := range groups {
-		inData := &inData{
+		inData := &InsertData{
 			segmentID:   segment,
 			partitionID: segmentPartition[segment],
 			data:        make([]*storage.InsertData, 0, len(msgs)),
@@ -537,7 +589,7 @@ func (wb *writeBufferBase) prepareInsert(insertMsgs []*msgstream.InsertMsg) ([]*
 }
 
 // bufferInsert transform InsertMsg into bufferred InsertData and returns primary key field data for future usage.
-func (wb *writeBufferBase) bufferInsert(inData *inData, startPos, endPos *msgpb.MsgPosition) error {
+func (wb *writeBufferBase) bufferInsert(inData *InsertData, startPos, endPos *msgpb.MsgPosition) error {
 	_, ok := wb.metaCache.GetSegmentByID(inData.segmentID)
 	// new segment
 	if !ok {
@@ -585,7 +637,7 @@ func (wb *writeBufferBase) getSyncTask(ctx context.Context, segmentID int64) (sy
 	var totalMemSize float64 = 0
 	var tsFrom, tsTo uint64
 
-	insert, delta, timeRange, startPos := wb.yieldBuffer(segmentID)
+	insert, embedding, delta, timeRange, startPos := wb.yieldBuffer(segmentID)
 	if timeRange != nil {
 		tsFrom, tsTo = timeRange.timestampMin, timeRange.timestampMax
 	}
@@ -610,6 +662,7 @@ func (wb *writeBufferBase) getSyncTask(ctx context.Context, segmentID int64) (sy
 
 	pack := &syncmgr.SyncPack{}
 	pack.WithInsertData(insert).
+		WithEmbeddingData(embedding).
 		WithDeleteData(delta).
 		WithCollectionID(wb.collectionID).
 		WithPartitionID(segmentInfo.PartitionID()).

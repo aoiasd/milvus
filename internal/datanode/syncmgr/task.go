@@ -75,6 +75,7 @@ type SyncTask struct {
 
 	binlogBlobs     map[int64]*storage.Blob // fieldID => blob
 	binlogMemsize   map[int64]int64         // memory size
+	embeddingBlobs  map[int64]*storage.Blob
 	batchStatsBlob  *storage.Blob
 	mergedStatsBlob *storage.Blob
 	deltaBlob       *storage.Blob

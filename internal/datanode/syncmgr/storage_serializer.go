@@ -43,6 +43,7 @@ type storageV1Serializer struct {
 	pkField      *schemapb.FieldSchema
 
 	inCodec  *storage.InsertCodec
+	emCodec  *storage.EmbeddingCodec
 	delCodec *storage.DeleteCodec
 
 	allocator  allocator.Interface
@@ -100,6 +101,9 @@ func (s *storageV1Serializer) EncodeBuffer(ctx context.Context, pack *SyncPack) 
 			return nil, err
 		}
 		task.binlogBlobs = binlogBlobs
+
+		embeddingBlobs, err := s.serializeEmbedding(ctx, pack)
+		task.embeddingBlobs = embeddingBlobs
 
 		singlePKStats, batchStatsBlob, err := s.serializeStatslog(pack)
 		if err != nil {
@@ -166,6 +170,26 @@ func (s *storageV1Serializer) setTaskMeta(task *SyncTask, pack *SyncPack) {
 func (s *storageV1Serializer) serializeBinlog(ctx context.Context, pack *SyncPack) (map[int64]*storage.Blob, error) {
 	log := log.Ctx(ctx)
 	blobs, err := s.inCodec.Serialize(pack.partitionID, pack.segmentID, pack.insertData...)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[int64]*storage.Blob)
+	for _, blob := range blobs {
+		fieldID, err := strconv.ParseInt(blob.GetKey(), 10, 64)
+		if err != nil {
+			log.Error("serialize buffer failed ... cannot parse string to fieldID ..", zap.Error(err))
+			return nil, err
+		}
+
+		result[fieldID] = blob
+	}
+	return result, nil
+}
+
+func (s *storageV1Serializer) serializeEmbedding(ctx context.Context, pack *SyncPack) (map[int64]*storage.Blob, error) {
+	log := log.Ctx(ctx)
+	blobs, err := s.emCodec.Serialize(pack.collectionID, pack.partitionID, pack.segmentID, pack.embeddingData...)
 	if err != nil {
 		return nil, err
 	}

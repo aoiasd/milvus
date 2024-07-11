@@ -75,6 +75,9 @@ type InsertBuffer struct {
 	collSchema *schemapb.CollectionSchema
 
 	buffers []*storage.InsertData
+
+	hasEmbedding bool
+	embeddings   []*storage.EmbeddingData // embedding data for varchar field which enable match
 }
 
 func NewInsertBuffer(sch *schemapb.CollectionSchema) (*InsertBuffer, error) {
@@ -103,25 +106,37 @@ func NewInsertBuffer(sch *schemapb.CollectionSchema) (*InsertBuffer, error) {
 	return ib, nil
 }
 
-func (ib *InsertBuffer) buffer(inData *storage.InsertData, tr TimeRange, startPos, endPos *msgpb.MsgPosition) {
+func (ib *InsertBuffer) buffer(inData *storage.InsertData, emData *storage.EmbeddingData, tr TimeRange, startPos, endPos *msgpb.MsgPosition) {
 	// buffer := ib.currentBuffer()
 	// storage.MergeInsertData(buffer.buffer, inData)
 	ib.buffers = append(ib.buffers, inData)
+	ib.embeddings = append(ib.embeddings, emData)
 }
 
-func (ib *InsertBuffer) Yield() []*storage.InsertData {
+func (ib *InsertBuffer) Yield() ([]*storage.InsertData, []*storage.EmbeddingData) {
 	result := ib.buffers
 	// set buffer nil to so that fragmented buffer could get GCed
 	ib.buffers = nil
-	return result
+	if !ib.hasEmbedding {
+		return result, nil
+	}
+
+	embeddings := ib.embeddings
+	ib.embeddings = nil
+	return result, embeddings
 }
 
-func (ib *InsertBuffer) Buffer(inData *inData, startPos, endPos *msgpb.MsgPosition) int64 {
+func (ib *InsertBuffer) Buffer(inData *InsertData, startPos, endPos *msgpb.MsgPosition) int64 {
 	bufferedSize := int64(0)
 	for idx, data := range inData.data {
 		tsData := inData.tsField[idx]
+		var emData *storage.EmbeddingData
+		if ib.hasEmbedding {
+			emData = inData.embeddings[idx]
+		}
+
 		tr := ib.getTimestampRange(tsData)
-		ib.buffer(data, tr, startPos, endPos)
+		ib.buffer(data, emData, tr, startPos, endPos)
 
 		// update buffer size
 		ib.UpdateStatistics(int64(data.GetRowNum()), int64(data.GetMemorySize()), tr, startPos, endPos)
