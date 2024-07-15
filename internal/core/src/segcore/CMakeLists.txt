@@ -40,6 +40,8 @@ set(SEGCORE_FILES
         ConcurrentVector.cpp
         ReduceUtils.cpp
         check_vec_index_c.cpp)
+file(GLOB_RECURSE SEGCORE_FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 add_library(milvus_segcore SHARED ${SEGCORE_FILES})
 
 target_link_libraries(milvus_segcore milvus_query milvus_bitset milvus_exec ${OpenMP_CXX_FLAGS} milvus-storage milvus_futures)
