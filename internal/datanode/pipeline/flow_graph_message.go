@@ -48,6 +48,7 @@ type FlowGraphMsg struct {
 	BaseMsg
 	InsertMessages []*msgstream.InsertMsg
 	InsertData     []*writebuffer.InsertData
+	EmbeddingMeta  map[int64]storage.EmbeddingMeta
 
 	DeleteMessages []*msgstream.DeleteMsg
 

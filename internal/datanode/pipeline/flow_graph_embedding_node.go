@@ -45,14 +45,37 @@ type embeddingNode struct {
 	channelName   string
 	embeddingType EmbeddingType
 
-	vectorizer vectorizer.Vectorizer
+	vectorizers map[int64]vectorizer.Vectorizer
 }
 
 func (eNode *embeddingNode) Name() string {
 	return fmt.Sprintf("embeddingNode-%s-%s", eNode.embeddingType, eNode.channelName)
 }
 
-func (eNode *embeddingNode) prepareInsert(insertMsgs []*msgstream.InsertMsg) ([]*writebuffer.InsertData, error) {
+func (eNode *embeddingNode) vectorize(data *storage.InsertData, meta map[int64]storage.EmbeddingMeta) error {
+	for _, field := range eNode.schema.Fields {
+		vectorizer, ok := eNode.vectorizers[field.GetFieldID()]
+		if !ok {
+			continue
+		}
+
+		//TODO Get Relate Field ID
+		embeddingFieldID := int64(0)
+
+		if _, ok := meta[field.GetFieldID()]; !ok {
+			meta[field.GetFieldID()] = storage.NewBM25Meta()
+		}
+
+		fieldData, err := vectorizer.Vectorize(data.Data[embeddingFieldID], meta[field.GetFieldID()])
+		if err != nil {
+			return err
+		}
+		data.Data[field.GetFieldID()] = fieldData
+	}
+	return nil
+}
+
+func (eNode *embeddingNode) prepareInsert(insertMsgs []*msgstream.InsertMsg, meta map[int64]storage.EmbeddingMeta) ([]*writebuffer.InsertData, error) {
 	groups := lo.GroupBy(insertMsgs, func(msg *msgstream.InsertMsg) int64 { return msg.SegmentID })
 	segmentPartition := lo.SliceToMap(insertMsgs, func(msg *msgstream.InsertMsg) (int64, int64) { return msg.GetSegmentID(), msg.GetPartitionID() })
 
@@ -83,12 +106,12 @@ func (eNode *embeddingNode) prepareInsert(insertMsgs []*msgstream.InsertMsg) ([]
 				return nil, merr.WrapErrServiceInternal("timestamp column row num not match")
 			}
 
-			emData, err := eNode.vectorizer.Vectorize(data)
+			err = eNode.vectorize(data, meta)
 			if err != nil {
 				log.Warn("failed to embedding insert data", zap.Error(err))
 				return nil, err
 			}
-			inData.Append(data, emData, pkFieldData, tsFieldData)
+			inData.Append(data, pkFieldData, tsFieldData)
 		}
 		result = append(result, inData)
 	}
@@ -97,5 +120,16 @@ func (eNode *embeddingNode) prepareInsert(insertMsgs []*msgstream.InsertMsg) ([]
 
 func (eNode *embeddingNode) Opearte(in []Msg) []Msg {
 	fgMsg := in[0].(*FlowGraphMsg)
+
+	meta := make(map[int64]storage.EmbeddingMeta)
+	insertData, err := eNode.prepareInsert(fgMsg.InsertMessages, meta)
+	if err != nil {
+		log.Error("failed to prepare insert data", zap.Error(err))
+		panic(err)
+	}
+
+	fgMsg.EmbeddingMeta = meta
+	fgMsg.InsertData = insertData
+	fgMsg.InsertMessages = nil
 	return []Msg{fgMsg}
 }
