@@ -86,29 +86,30 @@ func (wb *bfWriteBuffer) dispatchDeleteMsgs(groups []*InsertData, deleteMsgs []*
 	}
 }
 
-func (wb *bfWriteBuffer) BufferData(insertMsgs []*msgstream.InsertMsg, deleteMsgs []*msgstream.DeleteMsg, startPos, endPos *msgpb.MsgPosition) error {
+func (wb *bfWriteBuffer) BufferData(insertData []*InsertData, deleteMsgs []*msgstream.DeleteMsg, meta map[int64]storage.EmbeddingMeta, startPos, endPos *msgpb.MsgPosition) error {
 	wb.mut.Lock()
 	defer wb.mut.Unlock()
 
-	groups, err := wb.prepareInsert(insertMsgs)
-	if err != nil {
-		return err
-	}
-
 	// buffer insert data and add segment if not exists
-	for _, inData := range groups {
+	for _, inData := range insertData {
 		err := wb.bufferInsert(inData, startPos, endPos)
 		if err != nil {
 			return err
 		}
 	}
 
+	// buffer meta statistic data
+	err := wb.metaBuffer.Buffer(meta, startPos, endPos)
+	if err != nil {
+		return err
+	}
+
 	// distribute delete msg
 	// bf write buffer check bloom filter of segment and current insert batch to decide which segment to write delete data
-	wb.dispatchDeleteMsgs(groups, deleteMsgs, startPos, endPos)
+	wb.dispatchDeleteMsgs(insertData, deleteMsgs, startPos, endPos)
 
 	// update pk oracle
-	for _, inData := range groups {
+	for _, inData := range insertData {
 		// segment shall always exists after buffer insert
 		segments := wb.metaCache.GetSegmentsBy(
 			metacache.WithSegmentIDs(inData.segmentID))

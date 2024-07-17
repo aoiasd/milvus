@@ -16,6 +16,7 @@ import (
 
 type SyncPolicy interface {
 	SelectSegments(buffers []*segmentBuffer, ts typeutil.Timestamp) []int64
+	// SelectMeta()
 	Reason() string
 }
 

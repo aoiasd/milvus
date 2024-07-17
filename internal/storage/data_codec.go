@@ -24,13 +24,11 @@ import (
 	"sort"
 
 	"github.com/milvus-io/milvus-proto/go-api/v2/schemapb"
-	"github.com/milvus-io/milvus-storage/go/common/log"
 	"github.com/milvus-io/milvus/internal/proto/etcdpb"
 	"github.com/milvus-io/milvus/pkg/common"
 	"github.com/milvus-io/milvus/pkg/util/merr"
 	"github.com/milvus-io/milvus/pkg/util/metautil"
 	"github.com/milvus-io/milvus/pkg/util/typeutil"
-	"go.uber.org/zap"
 )
 
 const (
@@ -1015,45 +1013,4 @@ func (dataDefinitionCodec *DataDefinitionCodec) Deserialize(blobs []*Blob) (ts [
 	}
 
 	return resultTs, requestsStrings, nil
-}
-
-type EmbeddingCodec struct {
-	Schema *etcdpb.CollectionMeta
-}
-
-func (embeddingCodec *EmbeddingCodec) Serialize(collectionID UniqueID, partitionID UniqueID, segmentID UniqueID, data ...*EmbeddingData) ([]*Blob, error) {
-	var blobs []*Blob
-	for _, field := range embeddingCodec.Schema.Schema.Fields {
-		// if !field.IsMatch(){
-		// 	continue
-		// }
-		rowNum := 0
-		writer := NewEmbeddingWriter(schemapb.DataType_SparseFloatVector)
-		for _, block := range data {
-			fieldData := block.Data[field.FieldID]
-			rowNum += fieldData.RowNum()
-			_, err := writer.Write(fieldData)
-			if err != nil {
-				log.Info("Searialize embedding data failed",
-					zap.Int64("collectionID", collectionID), zap.Int64("partitionID", partitionID), zap.Int64("segmentID", segmentID), zap.Error(err))
-				return nil, err
-			}
-		}
-
-		writer.Finish()
-
-		buffer, err := writer.GetBuffer()
-		if err != nil {
-			return nil, err
-		}
-
-		blobKey := fmt.Sprintf("%d", field.FieldID)
-		blobs = append(blobs, &Blob{
-			Key:        blobKey,
-			Value:      buffer,
-			RowNum:     int64(rowNum),
-			MemorySize: 0, // TODO Memory Size
-		})
-	}
-	return blobs, nil
 }
