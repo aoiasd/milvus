@@ -86,6 +86,7 @@ type meta struct {
 	indexMeta          *indexMeta
 	analyzeMeta        *analyzeMeta
 	partitionStatsMeta *partitionStatsMeta
+	channelStatsMeta   *channelStatsMeta
 	compactionTaskMeta *compactionTaskMeta
 }
 
@@ -960,6 +961,10 @@ func UpdateIsImporting(segmentID int64, isImporting bool) UpdateOperator {
 		segment.IsImporting = isImporting
 		return true
 	}
+}
+
+func (m *meta) UpdateChannelStatsInfo(collection int64, channel string, checkpoint *datapb.CheckPoint, binlogs []*datapb.FieldBinlog) error {
+	return m.channelStatsMeta.Update(collection, channel, checkpoint, binlogs)
 }
 
 // updateSegmentsInfo update segment infos

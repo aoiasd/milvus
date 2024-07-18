@@ -94,6 +94,9 @@ const (
 	// PartitionStatsPath storage path const for partition stats files
 	PartitionStatsPath = `part_stats`
 
+	//ChannelStatsPath storage path const for channel meta statistic
+	ChannelStatsPath = `channel_stats`
+
 	// AnalyzeStatsPath storage path const for analyze.
 	AnalyzeStatsPath = `analyze_stats`
 	OffsetMapping    = `offset_mapping`

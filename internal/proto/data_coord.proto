@@ -47,6 +47,7 @@ service DataCoord {
   rpc GetSegmentInfoChannel(GetSegmentInfoChannelRequest) returns (milvus.StringResponse){}
 
   rpc SaveBinlogPaths(SaveBinlogPathsRequest) returns (common.Status){}
+  rpc SaveChannelStatslogPaths(SaveChannelStatslogPathsRequest) returns (common.Status){}
   rpc GetRecoveryInfo(GetRecoveryInfoRequest) returns (GetRecoveryInfoResponse){}
   rpc GetRecoveryInfoV2(GetRecoveryInfoRequestV2) returns (GetRecoveryInfoResponseV2){}
   rpc GetFlushedSegments(GetFlushedSegmentsRequest) returns(GetFlushedSegmentsResponse){}
@@ -355,6 +356,14 @@ message SaveBinlogPathsRequest {
   SegmentLevel seg_level =13;
   int64 partitionID =14; // report partitionID for create L0 segment
   int64 storageVersion = 15;
+}
+
+message SaveChannelStatslogPathsRequest {
+  common.MsgBase base = 1;
+  int64 collectionID =2;
+  string channel =3;
+  repeated FieldBinlog statslogs = 4;
+  CheckPoint checkPoint = 5;
 }
 
 message CheckPoint {
@@ -924,6 +933,14 @@ message PartitionStatsInfo {
   repeated int64 segmentIDs = 5;
   int64 analyzeTaskID = 6;
 }
+
+message ChannelStatsInfo {
+  int64 collectionID = 1;
+  string vChannel = 2;
+  repeated FieldBinlog statslogs =3;
+  CheckPoint checkpoint =4;
+}
+
 
 message DropCompactionPlanRequest {
   int64 planID = 1;

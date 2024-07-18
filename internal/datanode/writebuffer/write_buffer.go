@@ -357,7 +357,7 @@ func (wb *writeBufferBase) dropPartitions(partitionIDs []int64) {
 }
 
 func (wb *writeBufferBase) syncEmbeddingMeta(ctx context.Context) *conc.Future[struct{}] {
-	syncTask, err := wb.getSyncMetaTask(ctx)
+	syncTask, err := wb.getSyncChannelStatsTask(ctx)
 	if err != nil {
 		log.Fatal("failed to get sync meta task", zap.String("channel", wb.channelName), zap.Error(err))
 	}
@@ -664,22 +664,22 @@ func (wb *writeBufferBase) bufferDelete(segmentID int64, pks []storage.PrimaryKe
 	metrics.DataNodeFlowGraphBufferDataSize.WithLabelValues(fmt.Sprint(paramtable.GetNodeID()), fmt.Sprint(wb.collectionID)).Add(float64(bufSize))
 }
 
-func (wb *writeBufferBase) getSyncMetaTask(ctx context.Context) (syncmgr.Task, error) {
+func (wb *writeBufferBase) getSyncChannelStatsTask(ctx context.Context) (syncmgr.Task, error) {
 	if wb.metaBuffer == nil {
 		return nil, nil
 	}
 
 	meta, startPos, endPos := wb.metaBuffer.yieldBuffer()
-
-	task := syncmgr.NewSyncMetaTask().
-		WithChannelName(wb.channelName).
+	// TODO SIKP EMPTY BUFFER ?
+	task := syncmgr.NewSyncChannelStatsTask().
 		WithChannelName(wb.channelName).
 		WithCheckpoint(endPos).
 		WithStartPosition(startPos).
 		WithCollectionID(wb.collectionID).
 		WithMetaData(meta).
 		WithSchema(wb.collSchema).
-		WithAllocator(wb.allocator)
+		WithAllocator(wb.allocator).
+		WithMetaWriter(wb.metaWriter)
 
 	return task, nil
 }

@@ -19,96 +19,69 @@ package storage
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 
-	"github.com/cockroachdb/errors"
-	"github.com/milvus-io/milvus-proto/go-api/v2/schemapb"
-	"github.com/milvus-io/milvus/pkg/util/merr"
+	"github.com/milvus-io/milvus/pkg/common"
 )
 
-type EmbeddingData struct {
-	Data map[FieldID]FieldData // ONLY SUPPORT SPARSE VECTOR
-
+type EmbeddingMeta interface {
+	Append(text string, data map[uint32]int32)
+	Merge(meta EmbeddingMeta) error
+	Serialize() ([]byte, error)
+	// LoadBytes([]byte)
 }
 
-func NewEmbeddingData(schema *schemapb.CollectionSchema) (*EmbeddingData, error) {
-	return NewEmbeddingDataWithCap(schema, 0)
+type BM25Meta struct {
+	statistics map[uint32]int32
+	numRow     int64
+	tokenNum   int64
 }
 
-func NewEmbeddingDataWithCap(schema *schemapb.CollectionSchema, cap int) (*EmbeddingData, error) {
-	if schema == nil {
-		return nil, merr.WrapErrParameterMissing("collection schema")
+func NewBM25Meta() *BM25Meta {
+	return &BM25Meta{
+		statistics: map[uint32]int32{},
+	}
+}
+
+func (m *BM25Meta) Append(text string, data map[uint32]int32) {
+	for key, value := range data {
+		m.statistics[key] += value
+	}
+	m.tokenNum += int64(len(text))
+	m.numRow += 1
+}
+
+func (m *BM25Meta) Merge(meta EmbeddingMeta) error {
+	bm25meta, ok := meta.(*BM25Meta)
+	if !ok {
+		return fmt.Errorf("Can't merge BM25 meta from other type meta")
 	}
 
-	edata := &EmbeddingData{
-		Data: make(map[FieldID]FieldData),
+	for key, value := range bm25meta.statistics {
+		m.statistics[key] += value
+	}
+	return nil
+}
+
+func (m *BM25Meta) Serialize() ([]byte, error) {
+	buffer := bytes.NewBuffer(make([]byte, len(m.statistics)*8+18))
+
+	if err := binary.Write(buffer, common.Endian, m.numRow); err != nil {
+		return nil, err
 	}
 
-	for _, field := range schema.GetFields() {
-		// TODO
-		// if !field.IsMatch() {
-		// 	continue
-		// }
-		fieldData, err := NewFieldData(schemapb.DataType_SparseFloatVector, field, cap)
-		if err != nil {
+	if err := binary.Write(buffer, common.Endian, m.tokenNum); err != nil {
+		return nil, err
+	}
+
+	for key, value := range m.statistics {
+		if err := binary.Write(buffer, common.Endian, key); err != nil {
 			return nil, err
 		}
-		edata.Data[field.FieldID] = fieldData
-	}
 
-	return edata, nil
-}
-
-type EmbeddingWriter struct {
-	offset int
-	output *bytes.Buffer
-	// TODO Embedding Type?
-	embeddingType schemapb.DataType
-
-	// size of single pair of indice and values
-	pairSize int
-
-	isFinished bool
-}
-
-func NewEmbeddingWriter(embeddingType schemapb.DataType) *EmbeddingWriter {
-	return &EmbeddingWriter{
-		embeddingType: embeddingType,
-	}
-}
-
-func (writer *EmbeddingWriter) WriteRow(content []byte) {
-	writer.output.Write(binary.LittleEndian.AppendUint32(make([]byte, 4), uint32(len(content)/writer.pairSize)))
-	writer.output.Write(content)
-}
-
-func (writer *EmbeddingWriter) Write(data FieldData) (int, error) {
-	for i := 0; i < data.RowNum(); i++ {
-		row := data.GetRow(i)
-		vectorBytes, ok := row.([]byte)
-		if !ok {
-			return 0, merr.WrapErrParameterInvalid("sparse vector", row, "Wrong row type")
+		if err := binary.Write(buffer, common.Endian, value); err != nil {
+			return nil, err
 		}
-		writer.WriteRow(vectorBytes)
 	}
-	return data.RowNum(), nil
-}
-
-func (writer *EmbeddingWriter) GetBuffer() ([]byte, error) {
-	if !writer.isFinished {
-		return nil, errors.New("please close embedding writer before get buffer")
-	}
-
-	data := writer.output.Bytes()
-	if len(data) == 0 {
-		return nil, errors.New("empty buffer")
-	}
-
-	return data, nil
-}
-
-func (writer *EmbeddingWriter) Finish() {
-	writer.isFinished = true
-}
-
-type EmebddingReader struct {
+	return buffer.Bytes(), nil
 }

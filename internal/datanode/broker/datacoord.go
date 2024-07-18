@@ -123,6 +123,16 @@ func (dc *dataCoordBroker) SaveBinlogPaths(ctx context.Context, req *datapb.Save
 	return nil
 }
 
+func (dc *dataCoordBroker) SaveChannelStatslogPathsRequest(ctx context.Context, req *datapb.SaveChannelStatslogPathsRequest) error {
+	log := log.Ctx(ctx)
+	resp, err := dc.client.SaveChannelStatslogPaths(ctx, req)
+	if err := merr.CheckRPCCall(resp, err); err != nil {
+		log.Warn("failed to SaveChannelStatslogPaths", zap.Error(err))
+		return err
+	}
+	return nil
+}
+
 func (dc *dataCoordBroker) DropVirtualChannel(ctx context.Context, req *datapb.DropVirtualChannelRequest) (*datapb.DropVirtualChannelResponse, error) {
 	log := log.Ctx(ctx)
 

@@ -904,6 +904,40 @@ func (kc *Catalog) DropPartitionStatsInfo(ctx context.Context, info *datapb.Part
 	return kc.MetaKv.Remove(key)
 }
 
+func (kc *Catalog) ListChannelStatsInfo(ctx context.Context) ([]*datapb.ChannelStatsInfo, error) {
+	infos := make([]*datapb.ChannelStatsInfo, 0)
+
+	_, values, err := kc.MetaKv.LoadWithPrefix(ChannelStatsInfoPrefix)
+
+	for _, value := range values {
+		info := &datapb.ChannelStatsInfo{}
+		err = proto.Unmarshal([]byte(value), info)
+		if err != nil {
+			return nil, err
+		}
+		infos = append(infos, info)
+	}
+	return infos, nil
+}
+
+func (kc *Catalog) SaveChannelStatsInfo(ctx context.Context, info *datapb.ChannelStatsInfo) error {
+	if info == nil {
+		return nil
+	}
+	cloned := proto.Clone(info).(*datapb.ChannelStatsInfo)
+	k, v, err := buildChannelStatsInfoKv(cloned)
+	if err != nil {
+		return err
+	}
+	kvs := make(map[string]string)
+	kvs[k] = v
+	return kc.SaveByBatch(kvs)
+}
+func (kv *Catalog) DropChannelStatsInfo(ctx context.Context, info *datapb.ChannelStatsInfo) error {
+	key := buildChannelStatsInfoPath(info)
+	return kv.MetaKv.Remove(key)
+}
+
 func (kc *Catalog) SaveCurrentPartitionStatsVersion(ctx context.Context, collID, partID int64, vChannel string, currentVersion int64) error {
 	key := buildCurrentPartitionStatsVersionPath(collID, partID, vChannel)
 	value := strconv.FormatInt(currentVersion, 10)

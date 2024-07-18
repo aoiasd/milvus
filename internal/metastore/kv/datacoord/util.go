@@ -275,6 +275,21 @@ func buildPartitionStatsInfoPath(info *datapb.PartitionStatsInfo) string {
 	return fmt.Sprintf("%s/%d/%d/%s/%d", PartitionStatsInfoPrefix, info.CollectionID, info.PartitionID, info.VChannel, info.Version)
 }
 
+func buildChannelStatsInfoKv(info *datapb.ChannelStatsInfo) (string, string, error) {
+	valueBytes, err := proto.Marshal(info)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to marshal channel stats info: %d, err: %w", info.CollectionID, err)
+	}
+
+	key := buildChannelStatsInfoPath(info)
+	return key, string(valueBytes), nil
+}
+
+// buildPartitionStatsInfoPath
+func buildChannelStatsInfoPath(info *datapb.ChannelStatsInfo) string {
+	return fmt.Sprintf("%s/%d/%s", ChannelStatsInfoPrefix, info.CollectionID, info.VChannel)
+}
+
 func buildCurrentPartitionStatsVersionPath(collID, partID int64, channel string) string {
 	return fmt.Sprintf("%s/%d/%d/%s", PartitionStatsCurrentVersionPrefix, collID, partID, channel)
 }

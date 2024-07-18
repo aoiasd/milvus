@@ -436,6 +436,33 @@ func (s *Server) GetSegmentInfo(ctx context.Context, req *datapb.GetSegmentInfoR
 	return resp, nil
 }
 
+func (s *Server) SaveChannelStatslogPaths(ctx context.Context, req *datapb.SaveChannelStatslogPathsRequest) (*commonpb.Status, error) {
+	if err := merr.CheckHealthy(s.GetStateCode()); err != nil {
+		return merr.Status(err), nil
+	}
+
+	var (
+		nodeID      = req.GetBase().GetSourceID()
+		channelName = req.GetChannel()
+	)
+
+	log := log.Ctx(ctx).With(
+		zap.Int64("nodeID", nodeID),
+		zap.String("channel", channelName),
+		zap.Int64("collectionID", req.GetCollectionID()),
+	)
+
+	log.Info("receive SaveChannelStatslogPaths request",
+		zap.Any("checkpoint", req.GetCheckPoint()))
+
+	if err := s.meta.UpdateChannelStatsInfo(req.GetCollectionID(), req.GetChannel(), req.GetCheckPoint(), req.GetStatslogs()); err != nil {
+		log.Error("save channel stats binlog path and checkpoints failed", zap.Error(err))
+		return merr.Status(err), nil
+	}
+
+	return merr.Status(nil), nil
+}
+
 // SaveBinlogPaths updates segment related binlog path
 // works for Checkpoints and Flush
 func (s *Server) SaveBinlogPaths(ctx context.Context, req *datapb.SaveBinlogPathsRequest) (*commonpb.Status, error) {

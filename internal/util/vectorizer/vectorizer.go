@@ -30,50 +30,37 @@ import (
 )
 
 type Vectorizer interface {
-	Vectorize(data *storage.InsertData) (*storage.EmbeddingData, error)
+	Vectorize(data storage.FieldData, meta storage.EmbeddingMeta) (storage.FieldData, error)
 }
 
 type HashVectorizer struct {
-	schema    *schemapb.CollectionSchema
+	field     *schemapb.FieldSchema
 	tokenizer tokenizerapi.Tokenizer
-	embedType schemapb.DataType
 }
 
-func (v *HashVectorizer) Vectorize(data *storage.InsertData) (*storage.EmbeddingData, error) {
-	result := &storage.EmbeddingData{
-		Data: make(map[int64]storage.FieldData),
+func (v *HashVectorizer) Vectorize(data storage.FieldData, meta storage.EmbeddingMeta) (storage.FieldData, error) {
+	embedData, err := storage.NewFieldData(v.field.GetDataType(), v.field, data.RowNum())
+	if err != nil {
+		return nil, fmt.Errorf("create field data failed", zap.String("dataType", v.field.GetDataType().String()))
 	}
 
-	for _, field := range v.schema.Fields {
-		// TODO if field not embed
-		if field.DataType != schemapb.DataType_VarChar {
-			continue
+	for i := 0; i < data.RowNum(); i++ {
+		rowData, ok := data.GetRow(i).(string)
+		if !ok {
+			// TODO
+			return nil, fmt.Errorf("")
 		}
 
-		fieldData := data.Data[field.FieldID]
-		embedData, err := storage.NewFieldData(v.embedType, nil, fieldData.RowNum())
-		if err != nil {
-			return nil, fmt.Errorf("create field data failed", zap.String("dataType", v.embedType.String()))
+		embeddingMap := map[uint32]int32{}
+		tokenStream := v.tokenizer.NewTokenStream(rowData)
+		for tokenStream.Advance() {
+			token := tokenStream.Token()
+			// TODO More Hash Option
+			hash := typeutil.HashString2Uint32(token)
+			embeddingMap[hash] += 1
 		}
-
-		for i := 0; i < fieldData.RowNum(); i++ {
-			rowData, ok := fieldData.GetRow(i).(string)
-			if !ok {
-				// TODO
-				return nil, fmt.Errorf("")
-			}
-
-			embeddingMap := map[uint32]float32{}
-			tokenStream := v.tokenizer.NewTokenStream(rowData)
-			for tokenStream.Advance() {
-				token := tokenStream.Token()
-				// TODO More Hash Option
-				hash := typeutil.HashString2Uint32(token)
-				embeddingMap[hash] += 1
-			}
-			embedData.AppendRow(typeutil.CreateSparseFloatRow(lo.Keys(embeddingMap), lo.Values(embeddingMap)))
-		}
-		result.Data[field.FieldID] = embedData
+		meta.Append(rowData, embeddingMap)
+		embedData.AppendRow(typeutil.CreateSparseFloatRow(lo.Keys(embeddingMap), lo.Map(lo.Values(embeddingMap), func(num int32, _ int) float32 { return float32(num) })))
 	}
-	return result, nil
+	return embedData, nil
 }

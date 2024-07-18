@@ -20,6 +20,7 @@ import (
 // MetaWriter is the interface for SyncManager to write segment sync meta.
 type MetaWriter interface {
 	UpdateSync(context.Context, *SyncTask) error
+	UpdateSyncChannelStats(context.Context, *SyncChannelStatsTask) error
 	UpdateSyncV2(*SyncTaskV2) error
 	DropChannel(context.Context, string) error
 }
@@ -136,6 +137,48 @@ func (b *brokerMetaWriter) UpdateSync(ctx context.Context, pack *SyncTask) error
 	pack.metacache.UpdateSegments(metacache.SetStartPosRecorded(true), metacache.WithSegmentIDs(lo.Map(startPos, func(pos *datapb.SegmentStartPosition, _ int) int64 { return pos.GetSegmentID() })...))
 
 	return nil
+}
+
+func (b *brokerMetaWriter) UpdateSyncChannelStats(ctx context.Context, pack *SyncChannelStatsTask) error {
+	log.Info("SaveChannelStatslogPath",
+		zap.Int64("CollectionID", pack.collectionID),
+		zap.String("Channel", pack.channel),
+		zap.Any("Checkpoint", pack.Checkpoint()),
+	)
+
+	req := &datapb.SaveChannelStatslogPathsRequest{
+		CollectionID: pack.collectionID,
+		Channel:      pack.channel,
+		CheckPoint: &datapb.CheckPoint{
+			SegmentID: -1,
+			// NumOfRows:, // TODO NUM OF ROWS
+			Position: pack.checkpoint,
+		},
+		Statslogs: lo.Values(pack.binlog),
+	}
+
+	err := retry.Do(context.Background(), func() error {
+		err := b.broker.SaveChannelStatslogPaths(context.Background(), req)
+		// meta error, datanode handles a virtual channel does not belong here
+		if errors.IsAny(err, merr.ErrChannelNotFound) {
+			log.Warn("meta error found, skip sync and start to drop virtual channel", zap.String("channel", pack.channel))
+			return nil
+		}
+
+		if err != nil {
+			return err
+		}
+
+		return nil
+	}, b.opts...)
+
+	if err != nil {
+		log.Warn("failed to SaveChannelStatslogPath",
+			zap.String("channel", pack.channel),
+			zap.Error(err))
+	}
+
+	return err
 }
 
 func (b *brokerMetaWriter) UpdateSyncV2(pack *SyncTaskV2) error {

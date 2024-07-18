@@ -39,9 +39,8 @@ type SyncPack struct {
 	metacache  metacache.MetaCache
 	metawriter MetaWriter
 	// data
-	insertData    []*storage.InsertData
-	embeddingData []*storage.EmbeddingData
-	deltaData     *storage.DeleteData
+	insertData []*storage.InsertData
+	deltaData  *storage.DeleteData
 	// statistics
 	tsFrom        typeutil.Timestamp
 	tsTo          typeutil.Timestamp
@@ -61,13 +60,6 @@ type SyncPack struct {
 func (p *SyncPack) WithInsertData(insertData []*storage.InsertData) *SyncPack {
 	p.insertData = lo.Filter(insertData, func(inData *storage.InsertData, _ int) bool {
 		return inData != nil
-	})
-	return p
-}
-
-func (p *SyncPack) WithEmbeddingData(embeddingData []*storage.EmbeddingData) *SyncPack {
-	p.embeddingData = lo.Filter(embeddingData, func(emData *storage.EmbeddingData, _ int) bool {
-		return emData != nil
 	})
 	return p
 }
