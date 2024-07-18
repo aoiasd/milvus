@@ -38,10 +38,10 @@ type HashVectorizer struct {
 	tokenizer tokenizerapi.Tokenizer
 }
 
-func NewHashVectorizer(field *schemapb.FieldSchema) *HashVectorizer {
+func NewHashVectorizer(field *schemapb.FieldSchema, tokenizer tokenizerapi.Tokenizer) *HashVectorizer {
 	return &HashVectorizer{
 		field:     field,
-		tokenizer: nil,
+		tokenizer: tokenizer,
 	}
 }
 

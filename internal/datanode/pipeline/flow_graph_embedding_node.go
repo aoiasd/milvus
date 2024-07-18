@@ -22,6 +22,7 @@ import (
 	"github.com/milvus-io/milvus-proto/go-api/v2/schemapb"
 	"github.com/milvus-io/milvus/internal/datanode/writebuffer"
 	"github.com/milvus-io/milvus/internal/storage"
+	"github.com/milvus-io/milvus/internal/util/ctokenizer"
 	"github.com/milvus-io/milvus/internal/util/vectorizer"
 	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/mq/msgstream"
@@ -44,7 +45,7 @@ type embeddingNode struct {
 	vectorizers map[int64]vectorizer.Vectorizer
 }
 
-func newEmbeddingNode(channelName string, schema *schemapb.CollectionSchema) *embeddingNode {
+func newEmbeddingNode(channelName string, schema *schemapb.CollectionSchema) (*embeddingNode, error) {
 	node := &embeddingNode{
 		channelName: channelName,
 		schema:      schema,
@@ -52,10 +53,14 @@ func newEmbeddingNode(channelName string, schema *schemapb.CollectionSchema) *em
 
 	for _, field := range schema.GetFields() {
 		if field.GetName() == "embedding" {
-			node.vectorizers[field.FieldID] = &vectorizer.HashVectorizer{}
+			tokenizer, err := ctokenizer.NewTokenizer(make(map[string]string))
+			if err != nil {
+				return nil, err
+			}
+			node.vectorizers[field.FieldID] = vectorizer.NewHashVectorizer(field, tokenizer)
 		}
 	}
-	return node
+	return node, nil
 }
 
 func (eNode *embeddingNode) Name() string {
