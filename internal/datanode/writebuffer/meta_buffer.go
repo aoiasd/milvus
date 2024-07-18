@@ -49,3 +49,7 @@ func (b *metaBuffer) yieldBuffer() (map[int64]storage.EmbeddingMeta, *msgpb.MsgP
 	b.startPos, b.endPos = nil, nil
 	return result, start, end
 }
+
+func (b *metaBuffer) EarliestPosition() *msgpb.MsgPosition {
+	return b.startPos
+}

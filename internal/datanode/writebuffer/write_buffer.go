@@ -297,6 +297,7 @@ func (wb *writeBufferBase) GetCheckpoint() *msgpb.MsgPosition {
 	candidates := lo.MapToSlice(wb.buffers, func(_ int64, buf *segmentBuffer) *checkpointCandidate {
 		return &checkpointCandidate{buf.segmentID, buf.EarliestPosition(), "segment buffer"}
 	})
+	candidates = append(candidates, &checkpointCandidate{-1, wb.metaBuffer.EarliestPosition(), "channel stats buffer"})
 	candidates = lo.Filter(candidates, func(candidate *checkpointCandidate, _ int) bool {
 		return candidate.position != nil
 	})
@@ -671,6 +672,11 @@ func (wb *writeBufferBase) getSyncChannelStatsTask(ctx context.Context) (syncmgr
 
 	meta, startPos, endPos := wb.metaBuffer.yieldBuffer()
 	// TODO SIKP EMPTY BUFFER ?
+
+	if startPos != nil {
+		wb.syncCheckpoint.AddChannel(wb.channelName, startPos, "syncing channel stats task")
+	}
+
 	task := syncmgr.NewSyncChannelStatsTask().
 		WithChannelName(wb.channelName).
 		WithCheckpoint(endPos).
@@ -771,6 +777,7 @@ func (wb *writeBufferBase) Close(ctx context.Context, drop bool) {
 		switch t := syncTask.(type) {
 		case *syncmgr.SyncTask:
 			t.WithDrop()
+		// TODO DROP SYNC CHANNEL STASTS TASK
 		case *syncmgr.SyncTaskV2:
 			t.WithDrop()
 		}
