@@ -27,6 +27,7 @@ import (
 type EmbeddingMeta interface {
 	Append(text string, data map[uint32]int32)
 	Merge(meta EmbeddingMeta) error
+	NumRow() int64
 	Serialize() ([]byte, error)
 	// LoadBytes([]byte)
 }
@@ -49,6 +50,10 @@ func (m *BM25Meta) Append(text string, data map[uint32]int32) {
 	}
 	m.tokenNum += int64(len(text))
 	m.numRow += 1
+}
+
+func (m *BM25Meta) NumRow() int64 {
+	return m.numRow
 }
 
 func (m *BM25Meta) Merge(meta EmbeddingMeta) error {

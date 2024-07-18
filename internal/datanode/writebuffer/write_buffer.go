@@ -319,6 +319,14 @@ func (wb *writeBufferBase) GetCheckpoint() *msgpb.MsgPosition {
 	return checkpoint.position
 }
 
+func (wb *writeBufferBase) checkEmbeddingMetaSync() bool {
+	// TODO SUPPORT SYNC CHANNEL STATS POLICY OPTION
+	if wb.metaBuffer.numRow >= 10000 {
+		return true
+	}
+	return false
+}
+
 func (wb *writeBufferBase) triggerSync() (segmentIDs []int64) {
 	segmentsToSync := wb.getSegmentsToSync(wb.checkpoint.GetTimestamp(), wb.syncPolicies...)
 	if len(segmentsToSync) > 0 {
@@ -327,7 +335,7 @@ func (wb *writeBufferBase) triggerSync() (segmentIDs []int64) {
 		wb.syncSegments(context.Background(), segmentsToSync)
 	}
 
-	if wb.metaBuffer != nil {
+	if wb.metaBuffer != nil && wb.checkEmbeddingMetaSync() {
 		wb.syncEmbeddingMeta(context.Background())
 	}
 

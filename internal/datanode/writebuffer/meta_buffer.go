@@ -19,6 +19,7 @@ package writebuffer
 import (
 	"github.com/milvus-io/milvus-proto/go-api/v2/msgpb"
 	"github.com/milvus-io/milvus/internal/storage"
+	"github.com/milvus-io/milvus/pkg/util/merr"
 )
 
 type metaBuffer struct {
@@ -26,9 +27,27 @@ type metaBuffer struct {
 
 	startPos *msgpb.MsgPosition
 	endPos   *msgpb.MsgPosition
+	numRow   int64
 }
 
-func (b *metaBuffer) Buffer(metaMap map[int64]storage.EmbeddingMeta, starPos, endPos *msgpb.MsgPosition) error {
+func getNumRow(metaMap map[int64]storage.EmbeddingMeta) (int64, error) {
+	var numRow = int64(-1)
+	for _, meta := range metaMap {
+		if numRow == -1 {
+			numRow = meta.NumRow()
+		} else if meta.NumRow() != numRow {
+			return 0, merr.WrapErrParameterInvalid(numRow, meta.NumRow(), "check embedding stats num row failed")
+		}
+	}
+	return numRow, nil
+}
+
+func (b *metaBuffer) Buffer(metaMap map[int64]storage.EmbeddingMeta, startPos, endPos *msgpb.MsgPosition) error {
+	numRow, err := getNumRow(metaMap)
+	if err != nil {
+		return err
+	}
+
 	for fieldID, meta := range metaMap {
 		if fieldMeta, ok := b.meta[fieldID]; ok {
 			err := fieldMeta.Merge(meta)
@@ -38,6 +57,15 @@ func (b *metaBuffer) Buffer(metaMap map[int64]storage.EmbeddingMeta, starPos, en
 		} else {
 			b.meta[fieldID] = meta
 		}
+	}
+
+	b.numRow += numRow
+	if b.startPos == nil || startPos.GetTimestamp() < b.startPos.GetTimestamp() {
+		b.startPos = startPos
+	}
+
+	if b.endPos == nil || endPos.GetTimestamp() > b.endPos.GetTimestamp() {
+		b.endPos = endPos
 	}
 	return nil
 }
