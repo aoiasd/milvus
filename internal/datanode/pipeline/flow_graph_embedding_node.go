@@ -38,9 +38,10 @@ import (
 type embeddingNode struct {
 	BaseNode
 
-	schema      *schemapb.CollectionSchema
-	pkField     *schemapb.FieldSchema
-	channelName string
+	schema        *schemapb.CollectionSchema
+	pkField       *schemapb.FieldSchema
+	channelName   string
+	embeddingFrom int64
 
 	// embeddingType EmbeddingType
 	vectorizers map[int64]vectorizer.Vectorizer
@@ -61,6 +62,16 @@ func newEmbeddingNode(channelName string, schema *schemapb.CollectionSchema) (*e
 	for _, field := range schema.GetFields() {
 		if field.IsPrimaryKey == true {
 			node.pkField = field
+		}
+
+		if field.GetName() == "embedding" {
+			tokenizer, err := ctokenizer.NewTokenizer(make(map[string]string))
+			if err != nil {
+				return nil, err
+			}
+			node.vectorizers[field.FieldID] = vectorizer.NewHashVectorizer(field, tokenizer)
+		} else if field.GetName() == "text" {
+			node.embeddingFrom = field.GetFieldID()
 		}
 
 		// TODO AOIASD SCHEMA
@@ -85,8 +96,8 @@ func (eNode *embeddingNode) vectorize(data *storage.InsertData, meta map[int64]*
 			continue
 		}
 
-		//TODO AOIASD Get Relate Field ID
-		embeddingFieldID := int64(0)
+		//TODO Get Relate Field ID
+		embeddingFieldID := eNode.embeddingFrom
 
 		if _, ok := meta[field.GetFieldID()]; !ok {
 			meta[field.GetFieldID()] = storage.NewBM25Stats()
