@@ -38,6 +38,13 @@ type HashVectorizer struct {
 	tokenizer tokenizerapi.Tokenizer
 }
 
+func NewHashVectorizer(field *schemapb.FieldSchema) *HashVectorizer {
+	return &HashVectorizer{
+		field:     field,
+		tokenizer: nil,
+	}
+}
+
 func (v *HashVectorizer) Vectorize(data storage.FieldData, meta storage.EmbeddingMeta) (storage.FieldData, error) {
 	embedData, err := storage.NewFieldData(v.field.GetDataType(), v.field, data.RowNum())
 	if err != nil {

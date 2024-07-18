@@ -259,13 +259,15 @@ func getServiceWithChannel(initCtx context.Context, params *util.PipelineParams,
 		return nil, err
 	}
 
+	// TODO not init emNode when no filed need it.
+	emNode := newEmbeddingNode(channelName, info.GetSchema())
 	writeNode := newWriteNode(params.Ctx, params.WriteBufferManager, ds.timetickSender, config)
 	ttNode, err := newTTNode(config, params.WriteBufferManager, params.CheckpointUpdater)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := fg.AssembleNodes(dmStreamNode, ddNode, writeNode, ttNode); err != nil {
+	if err := fg.AssembleNodes(dmStreamNode, ddNode, emNode, writeNode, ttNode); err != nil {
 		return nil, err
 	}
 	ds.fg = fg

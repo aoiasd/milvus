@@ -30,26 +30,35 @@ import (
 	"go.uber.org/zap"
 )
 
-// TODO Support String and move type to proto
-type EmbeddingType int32
-
-const (
-	Hash = 0
-)
+// TODO support set EmbddingType
+// type EmbeddingType int32
 
 type embeddingNode struct {
 	BaseNode
 
-	schema        *schemapb.CollectionSchema
-	pkField       *schemapb.FieldSchema
-	channelName   string
-	embeddingType EmbeddingType
+	schema      *schemapb.CollectionSchema
+	pkField     *schemapb.FieldSchema
+	channelName string
 
+	// embeddingType EmbeddingType
 	vectorizers map[int64]vectorizer.Vectorizer
 }
 
+func newEmbeddingNode(channelName string, schema *schemapb.CollectionSchema) *embeddingNode {
+	node := &embeddingNode{
+		channelName: channelName,
+		schema:      schema,
+	}
+
+	for _, field := range schema.GetFields() {
+		if field.GetName() == "embedding" {
+			node.vectorizers[field.FieldID] = &vectorizer.HashVectorizer{}
+		}
+	}
+}
+
 func (eNode *embeddingNode) Name() string {
-	return fmt.Sprintf("embeddingNode-%s-%s", eNode.embeddingType, eNode.channelName)
+	return fmt.Sprintf("embeddingNode-%s-%s", "BM25test", eNode.channelName)
 }
 
 func (eNode *embeddingNode) vectorize(data *storage.InsertData, meta map[int64]storage.EmbeddingMeta) error {
