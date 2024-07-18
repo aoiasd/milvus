@@ -55,6 +55,7 @@ func newEmbeddingNode(channelName string, schema *schemapb.CollectionSchema) *em
 			node.vectorizers[field.FieldID] = &vectorizer.HashVectorizer{}
 		}
 	}
+	return node
 }
 
 func (eNode *embeddingNode) Name() string {
