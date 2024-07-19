@@ -22,6 +22,7 @@ import (
 	"github.com/milvus-io/milvus-proto/go-api/v2/schemapb"
 	"github.com/milvus-io/milvus/internal/datanode/writebuffer"
 	"github.com/milvus-io/milvus/internal/storage"
+	"github.com/milvus-io/milvus/internal/util/ctokenizer"
 	"github.com/milvus-io/milvus/internal/util/vectorizer"
 	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/mq/msgstream"
@@ -69,7 +70,8 @@ func newEmbeddingNode(channelName string, schema *schemapb.CollectionSchema) (*e
 			if err != nil {
 				return nil, err
 			}
-			node.vectorizers[field.FieldID] = vectorizer.NewHashVectorizer(field, tokenizer)
+			log.Info("test--", zap.Any("field", field))
+			node.vectorizers[field.GetFieldID()] = vectorizer.NewHashVectorizer(field, tokenizer)
 		} else if field.GetName() == "text" {
 			node.embeddingFrom = field.GetFieldID()
 		}
