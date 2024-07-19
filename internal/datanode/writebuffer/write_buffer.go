@@ -219,6 +219,7 @@ func newWriteBufferBase(channel string, metacache metacache.MetaCache, storageV2
 		flushTimestamp:   flushTs,
 		storagev2Cache:   storageV2Cache,
 		allocator:        option.idAllocator,
+		metaBuffer:       newMetaBuffer(),
 	}
 
 	wb.logger = log.With(zap.Int64("collectionID", wb.collectionID),

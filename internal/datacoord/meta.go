@@ -153,6 +153,11 @@ func newMeta(ctx context.Context, catalog metastore.DataCoordCatalog, chunkManag
 		return nil, err
 	}
 
+	csm, err := newChannelStatsMeta(ctx, catalog)
+	if err != nil {
+		return nil, err
+	}
+
 	ctm, err := newCompactionTaskMeta(ctx, catalog)
 	if err != nil {
 		return nil, err
@@ -167,6 +172,7 @@ func newMeta(ctx context.Context, catalog metastore.DataCoordCatalog, chunkManag
 		analyzeMeta:        am,
 		chunkManager:       chunkManager,
 		partitionStatsMeta: psm,
+		channelStatsMeta:   csm,
 		compactionTaskMeta: ctm,
 	}
 	err = mt.reloadFromKV()

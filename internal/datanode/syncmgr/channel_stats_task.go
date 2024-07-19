@@ -70,12 +70,16 @@ func (t *SyncChannelStatsTask) ChannelName() string {
 }
 
 func (t *SyncChannelStatsTask) Run(ctx context.Context) error {
+	t.binlog = make(map[int64]*datapb.FieldBinlog)
 	data := map[string][]byte{}
+
 	for _, field := range t.schema.Fields {
-		// TODO if field was embedding field
-		meta, ok := t.metaData[field.FieldID]
+		// TODO SCHEMA RELATE if field was embedding field
+
+		meta, ok := t.metaData[field.GetFieldID()]
 		if !ok {
 			log.Warn("Failed to get embedding field meta data", zap.Int64("fieldID", field.GetFieldID()), zap.String("fieldName", field.GetName()))
+			return fmt.Errorf("get embedding field meta data failed")
 		}
 
 		logId, err := t.allocator.AllocOne()
@@ -83,7 +87,7 @@ func (t *SyncChannelStatsTask) Run(ctx context.Context) error {
 			return err
 		}
 
-		path := path.Join(t.chunkManager.RootPath(), common.SegmentInsertLogPath, fmt.Sprint(t.collectionID), t.channel, fmt.Sprint(logId))
+		path := path.Join(t.chunkManager.RootPath(), common.ChannelStatsPath, fmt.Sprint(t.collectionID), t.channel, fmt.Sprint(logId))
 
 		bytes, err := meta.Serialize()
 		if err != nil {

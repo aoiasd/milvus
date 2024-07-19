@@ -26,6 +26,7 @@ import (
 	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/mq/msgstream"
 	"github.com/milvus-io/milvus/pkg/util/merr"
+	"github.com/milvus-io/milvus/pkg/util/paramtable"
 	"github.com/samber/lo"
 	"go.uber.org/zap"
 )
@@ -45,19 +46,29 @@ type embeddingNode struct {
 }
 
 func newEmbeddingNode(channelName string, schema *schemapb.CollectionSchema) (*embeddingNode, error) {
+	baseNode := BaseNode{}
+	baseNode.SetMaxQueueLength(paramtable.Get().DataNodeCfg.FlowGraphMaxQueueLength.GetAsInt32())
+	baseNode.SetMaxParallelism(paramtable.Get().DataNodeCfg.FlowGraphMaxParallelism.GetAsInt32())
+
 	node := &embeddingNode{
+		BaseNode:    baseNode,
 		channelName: channelName,
 		schema:      schema,
+		vectorizers: make(map[int64]vectorizer.Vectorizer),
 	}
 
 	for _, field := range schema.GetFields() {
-		if field.GetName() == "embedding" {
-			// tokenizer, err := ctokenizer.NewTokenizer(make(map[string]string))
-			// if err != nil {
-			// 	return nil, err
-			// }
-			node.vectorizers[field.FieldID] = vectorizer.NewHashVectorizer(field, nil)
+		if field.IsPrimaryKey == true {
+			node.pkField = field
 		}
+
+		// TODO SCHEMA
+		// tokenizer, err := ctokenizer.NewTokenizer(make(map[string]string))
+		// if err != nil {
+		// 	return nil, err
+		// }
+		// node.vectorizers[field.GetFieldID()] = vectorizer.NewHashVectorizer(field, tokenizer)
+
 	}
 	return node, nil
 }
@@ -132,8 +143,12 @@ func (eNode *embeddingNode) prepareInsert(insertMsgs []*msgstream.InsertMsg, met
 	return result, nil
 }
 
-func (eNode *embeddingNode) Opearte(in []Msg) []Msg {
+func (eNode *embeddingNode) Operate(in []Msg) []Msg {
 	fgMsg := in[0].(*FlowGraphMsg)
+
+	if fgMsg.IsCloseMsg() {
+		return []Msg{fgMsg}
+	}
 
 	meta := make(map[int64]storage.EmbeddingMeta)
 	insertData, err := eNode.prepareInsert(fgMsg.InsertMessages, meta)
