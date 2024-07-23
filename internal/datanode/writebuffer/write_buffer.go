@@ -38,7 +38,7 @@ type WriteBuffer interface {
 	// HasSegment checks whether certain segment exists in this buffer.
 	HasSegment(segmentID int64) bool
 	// BufferData is the method to buffer dml data msgs.
-	BufferData(insertMsgs []*InsertData, deleteMsgs []*msgstream.DeleteMsg, meta map[int64]storage.EmbeddingMeta, startPos, endPos *msgpb.MsgPosition) error
+	BufferData(insertMsgs []*InsertData, deleteMsgs []*msgstream.DeleteMsg, meta map[int64]storage.ChannelStats, startPos, endPos *msgpb.MsgPosition) error
 	// FlushTimestamp set flush timestamp for write buffer
 	SetFlushTimestamp(flushTs uint64)
 	// GetFlushTimestamp get current flush timestamp
@@ -143,8 +143,8 @@ type writeBufferBase struct {
 	estSizePerRecord int
 	metaCache        metacache.MetaCache
 
-	buffers    map[int64]*segmentBuffer // segmentID => segmentBuffer
-	metaBuffer *metaBuffer
+	buffers            map[int64]*segmentBuffer // segmentID => segmentBuffer
+	channelStatsBuffer *statsBuffer
 
 	syncPolicies   []SyncPolicy
 	syncCheckpoint *checkpointCandidates
@@ -203,23 +203,23 @@ func newWriteBufferBase(channel string, metacache metacache.MetaCache, storageV2
 	}
 
 	wb := &writeBufferBase{
-		channelName:      channel,
-		collectionID:     metacache.Collection(),
-		collSchema:       schema,
-		helper:           helper,
-		pkField:          pkField,
-		estSizePerRecord: estSize,
-		syncMgr:          syncMgr,
-		metaWriter:       option.metaWriter,
-		buffers:          make(map[int64]*segmentBuffer),
-		metaCache:        metacache,
-		serializer:       serializer,
-		syncCheckpoint:   newCheckpointCandiates(),
-		syncPolicies:     option.syncPolicies,
-		flushTimestamp:   flushTs,
-		storagev2Cache:   storageV2Cache,
-		allocator:        option.idAllocator,
-		metaBuffer:       newMetaBuffer(),
+		channelName:        channel,
+		collectionID:       metacache.Collection(),
+		collSchema:         schema,
+		helper:             helper,
+		pkField:            pkField,
+		estSizePerRecord:   estSize,
+		syncMgr:            syncMgr,
+		metaWriter:         option.metaWriter,
+		buffers:            make(map[int64]*segmentBuffer),
+		metaCache:          metacache,
+		serializer:         serializer,
+		syncCheckpoint:     newCheckpointCandiates(),
+		syncPolicies:       option.syncPolicies,
+		flushTimestamp:     flushTs,
+		storagev2Cache:     storageV2Cache,
+		allocator:          option.idAllocator,
+		channelStatsBuffer: newStatsBuffer(),
 	}
 
 	wb.logger = log.With(zap.Int64("collectionID", wb.collectionID),
@@ -298,7 +298,7 @@ func (wb *writeBufferBase) GetCheckpoint() *msgpb.MsgPosition {
 	candidates := lo.MapToSlice(wb.buffers, func(_ int64, buf *segmentBuffer) *checkpointCandidate {
 		return &checkpointCandidate{buf.segmentID, buf.EarliestPosition(), "segment buffer"}
 	})
-	candidates = append(candidates, &checkpointCandidate{-1, wb.metaBuffer.EarliestPosition(), "channel stats buffer"})
+	candidates = append(candidates, &checkpointCandidate{-1, wb.channelStatsBuffer.EarliestPosition(), "channel stats buffer"})
 	candidates = lo.Filter(candidates, func(candidate *checkpointCandidate, _ int) bool {
 		return candidate.position != nil
 	})
@@ -320,9 +320,9 @@ func (wb *writeBufferBase) GetCheckpoint() *msgpb.MsgPosition {
 	return checkpoint.position
 }
 
-func (wb *writeBufferBase) checkEmbeddingMetaSync() bool {
+func (wb *writeBufferBase) checkChannelStatsSync() bool {
 	// TODO SUPPORT SYNC CHANNEL STATS POLICY OPTION
-	if wb.metaBuffer.numRow >= 10000 {
+	if wb.channelStatsBuffer.numRow >= 10000 {
 		return true
 	}
 	return false
@@ -336,8 +336,8 @@ func (wb *writeBufferBase) triggerSync() (segmentIDs []int64) {
 		wb.syncSegments(context.Background(), segmentsToSync)
 	}
 
-	if wb.metaBuffer != nil && wb.checkEmbeddingMetaSync() {
-		wb.syncEmbeddingMeta(context.Background())
+	if wb.channelStatsBuffer != nil && wb.checkChannelStatsSync() {
+		wb.syncChannelStats(context.Background())
 	}
 
 	return segmentsToSync
@@ -366,7 +366,7 @@ func (wb *writeBufferBase) dropPartitions(partitionIDs []int64) {
 	)
 }
 
-func (wb *writeBufferBase) syncEmbeddingMeta(ctx context.Context) *conc.Future[struct{}] {
+func (wb *writeBufferBase) syncChannelStats(ctx context.Context) *conc.Future[struct{}] {
 	syncTask, err := wb.getSyncChannelStatsTask(ctx)
 	if err != nil {
 		log.Fatal("failed to get sync meta task", zap.String("channel", wb.channelName), zap.Error(err))
@@ -675,11 +675,11 @@ func (wb *writeBufferBase) bufferDelete(segmentID int64, pks []storage.PrimaryKe
 }
 
 func (wb *writeBufferBase) getSyncChannelStatsTask(ctx context.Context) (syncmgr.Task, error) {
-	if wb.metaBuffer == nil {
+	if wb.channelStatsBuffer == nil {
 		return nil, nil
 	}
 
-	meta, startPos, endPos := wb.metaBuffer.yieldBuffer()
+	meta, startPos, endPos := wb.channelStatsBuffer.yieldBuffer()
 	// TODO SIKP EMPTY BUFFER ?
 
 	if startPos != nil {

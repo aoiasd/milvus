@@ -77,7 +77,7 @@ func (eNode *embeddingNode) Name() string {
 	return fmt.Sprintf("embeddingNode-%s-%s", "BM25test", eNode.channelName)
 }
 
-func (eNode *embeddingNode) vectorize(data *storage.InsertData, meta map[int64]storage.EmbeddingMeta) error {
+func (eNode *embeddingNode) vectorize(data *storage.InsertData, meta map[int64]storage.ChannelStats) error {
 	for _, field := range eNode.schema.Fields {
 		vectorizer, ok := eNode.vectorizers[field.GetFieldID()]
 		if !ok {
@@ -88,19 +88,25 @@ func (eNode *embeddingNode) vectorize(data *storage.InsertData, meta map[int64]s
 		embeddingFieldID := int64(0)
 
 		if _, ok := meta[field.GetFieldID()]; !ok {
-			meta[field.GetFieldID()] = storage.NewBM25Meta()
+			meta[field.GetFieldID()] = storage.NewBM25Stats()
 		}
 
-		fieldData, err := vectorizer.Vectorize(data.Data[embeddingFieldID], meta[field.GetFieldID()])
+		embeddingData, ok := data.Data[embeddingFieldID].GetRows().([]string)
+		if !ok {
+			// TODO
+			return fmt.Errorf("")
+		}
+
+		dim, sparseVector, err := vectorizer.Vectorize(meta[field.GetFieldID()], embeddingData...)
 		if err != nil {
 			return err
 		}
-		data.Data[field.GetFieldID()] = fieldData
+		data.Data[field.GetFieldID()] = BuildSparseFieldData(dim, sparseVector)
 	}
 	return nil
 }
 
-func (eNode *embeddingNode) prepareInsert(insertMsgs []*msgstream.InsertMsg, meta map[int64]storage.EmbeddingMeta) ([]*writebuffer.InsertData, error) {
+func (eNode *embeddingNode) prepareInsert(insertMsgs []*msgstream.InsertMsg, meta map[int64]storage.ChannelStats) ([]*writebuffer.InsertData, error) {
 	groups := lo.GroupBy(insertMsgs, func(msg *msgstream.InsertMsg) int64 { return msg.SegmentID })
 	segmentPartition := lo.SliceToMap(insertMsgs, func(msg *msgstream.InsertMsg) (int64, int64) { return msg.GetSegmentID(), msg.GetPartitionID() })
 
@@ -150,15 +156,24 @@ func (eNode *embeddingNode) Operate(in []Msg) []Msg {
 		return []Msg{fgMsg}
 	}
 
-	meta := make(map[int64]storage.EmbeddingMeta)
+	meta := make(map[int64]storage.ChannelStats)
 	insertData, err := eNode.prepareInsert(fgMsg.InsertMessages, meta)
 	if err != nil {
 		log.Error("failed to prepare insert data", zap.Error(err))
 		panic(err)
 	}
 
-	fgMsg.EmbeddingMeta = meta
+	fgMsg.ChannelStats = meta
 	fgMsg.InsertData = insertData
 	fgMsg.InsertMessages = nil
 	return []Msg{fgMsg}
+}
+
+func BuildSparseFieldData(dim int64, data [][]byte) storage.FieldData {
+	return &storage.SparseFloatVectorFieldData{
+		SparseFloatArray: schemapb.SparseFloatArray{
+			Contents: data,
+			Dim:      dim,
+		},
+	}
 }

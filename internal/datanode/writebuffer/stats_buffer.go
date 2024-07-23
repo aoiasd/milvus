@@ -22,15 +22,15 @@ import (
 	"github.com/milvus-io/milvus/pkg/util/merr"
 )
 
-type metaBuffer struct {
-	meta map[int64]storage.EmbeddingMeta
+type statsBuffer struct {
+	meta map[int64]storage.ChannelStats
 
 	startPos *msgpb.MsgPosition
 	endPos   *msgpb.MsgPosition
 	numRow   int64
 }
 
-func getNumRow(metaMap map[int64]storage.EmbeddingMeta) (int64, error) {
+func getNumRow(metaMap map[int64]storage.ChannelStats) (int64, error) {
 	var numRow = int64(-1)
 	for _, meta := range metaMap {
 		if numRow == -1 {
@@ -42,7 +42,7 @@ func getNumRow(metaMap map[int64]storage.EmbeddingMeta) (int64, error) {
 	return numRow, nil
 }
 
-func (b *metaBuffer) Buffer(metaMap map[int64]storage.EmbeddingMeta, startPos, endPos *msgpb.MsgPosition) error {
+func (b *statsBuffer) Buffer(metaMap map[int64]storage.ChannelStats, startPos, endPos *msgpb.MsgPosition) error {
 	numRow, err := getNumRow(metaMap)
 	if err != nil {
 		return err
@@ -70,21 +70,21 @@ func (b *metaBuffer) Buffer(metaMap map[int64]storage.EmbeddingMeta, startPos, e
 	return nil
 }
 
-func (b *metaBuffer) yieldBuffer() (map[int64]storage.EmbeddingMeta, *msgpb.MsgPosition, *msgpb.MsgPosition) {
+func (b *statsBuffer) yieldBuffer() (map[int64]storage.ChannelStats, *msgpb.MsgPosition, *msgpb.MsgPosition) {
 	result := b.meta
 	start, end := b.startPos, b.endPos
-	b.meta = make(map[int64]storage.EmbeddingMeta)
+	b.meta = make(map[int64]storage.ChannelStats)
 	b.startPos, b.endPos = nil, nil
 	b.numRow = 0
 	return result, start, end
 }
 
-func (b *metaBuffer) EarliestPosition() *msgpb.MsgPosition {
+func (b *statsBuffer) EarliestPosition() *msgpb.MsgPosition {
 	return b.startPos
 }
 
-func newMetaBuffer() *metaBuffer {
-	return &metaBuffer{
-		meta: make(map[int64]storage.EmbeddingMeta),
+func newStatsBuffer() *statsBuffer {
+	return &statsBuffer{
+		meta: make(map[int64]storage.ChannelStats),
 	}
 }

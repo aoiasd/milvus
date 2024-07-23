@@ -976,6 +976,21 @@ func (sd *shardDelegator) SyncTargetVersion(newVersion int64, growingInTarget []
 	sd.deleteBuffer.TryDiscard(checkpoint.GetTimestamp())
 }
 
+func (sd *shardDelegator) UpdateChannelStats(newStats map[int64]storage.ChannelStats) error {
+	sd.channelStatsMut.Lock()
+	defer sd.channelStatsMut.Unlock()
+
+	// TODO AOIASD: RANGE BM25 FIELD
+	for fieldID, stats := range newStats {
+		if _, ok := sd.channelStats[fieldID]; !ok {
+			sd.channelStats[fieldID] = stats
+		} else {
+			sd.channelStats[fieldID].Merge(stats)
+		}
+	}
+	return nil
+}
+
 func (sd *shardDelegator) GetTargetVersion() int64 {
 	return sd.distribution.getTargetVersion()
 }

@@ -76,7 +76,7 @@ func (wNode *writeNode) Operate(in []Msg) []Msg {
 
 	start, end := fgMsg.StartPositions[0], fgMsg.EndPositions[0]
 
-	err := wNode.wbManager.BufferData(wNode.channelName, fgMsg.InsertData, fgMsg.DeleteMessages, fgMsg.EmbeddingMeta, start, end)
+	err := wNode.wbManager.BufferData(wNode.channelName, fgMsg.InsertData, fgMsg.DeleteMessages, fgMsg.ChannelStats, start, end)
 	if err != nil {
 		log.Error("failed to buffer data", zap.Error(err))
 		panic(err)

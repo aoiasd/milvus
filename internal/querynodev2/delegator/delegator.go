@@ -86,6 +86,10 @@ type ShardDelegator interface {
 	VerifyExcludedSegments(segmentID int64, ts uint64) bool
 	TryCleanExcludedSegments(ts uint64)
 
+	// channel stats
+	UpdateChannelStats(stats map[int64]storage.ChannelStats) error
+	// LoadChannelStats(ctx context.Context)
+
 	// control
 	Serviceable() bool
 	Start()
@@ -133,6 +137,10 @@ type shardDelegator struct {
 	// in order to make add/remove growing be atomic, need lock before modify these meta info
 	growingSegmentLock sync.RWMutex
 	partitionStatsMut  sync.RWMutex
+
+	//channel stats
+	channelStats    map[UniqueID]storage.ChannelStats
+	channelStatsMut sync.RWMutex
 }
 
 // getLogger returns the zap logger with pre-defined shard attributes.

@@ -138,7 +138,7 @@ func (wb *l0WriteBuffer) dispatchDeleteMsgs(groups []*InsertData, deleteMsgs []*
 	})
 }
 
-func (wb *l0WriteBuffer) BufferData(insertData []*InsertData, deleteMsgs []*msgstream.DeleteMsg, meta map[int64]storage.EmbeddingMeta, startPos, endPos *msgpb.MsgPosition) error {
+func (wb *l0WriteBuffer) BufferData(insertData []*InsertData, deleteMsgs []*msgstream.DeleteMsg, meta map[int64]storage.ChannelStats, startPos, endPos *msgpb.MsgPosition) error {
 	wb.mut.Lock()
 	defer wb.mut.Unlock()
 
@@ -150,8 +150,8 @@ func (wb *l0WriteBuffer) BufferData(insertData []*InsertData, deleteMsgs []*msgs
 		}
 	}
 
-	// buffer meta statistic data
-	err := wb.metaBuffer.Buffer(meta, startPos, endPos)
+	// buffer channel statistic data
+	err := wb.channelStatsBuffer.Buffer(meta, startPos, endPos)
 	if err != nil {
 		return err
 	}

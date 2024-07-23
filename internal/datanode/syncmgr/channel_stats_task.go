@@ -36,7 +36,7 @@ type SyncChannelStatsTask struct {
 	metaWriter   MetaWriter
 	allocator    allocator.Interface
 
-	metaData      map[int64]storage.EmbeddingMeta
+	metaData      map[int64]storage.ChannelStats
 	startPosition *msgpb.MsgPosition
 	checkpoint    *msgpb.MsgPosition
 
@@ -154,7 +154,7 @@ func (t *SyncChannelStatsTask) WithChannelName(chanName string) *SyncChannelStat
 	return t
 }
 
-func (t *SyncChannelStatsTask) WithMetaData(data map[int64]storage.EmbeddingMeta) *SyncChannelStatsTask {
+func (t *SyncChannelStatsTask) WithMetaData(data map[int64]storage.ChannelStats) *SyncChannelStatsTask {
 	t.metaData = data
 	return t
 }

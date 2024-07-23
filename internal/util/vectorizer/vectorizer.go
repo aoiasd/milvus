@@ -19,18 +19,16 @@
 package vectorizer
 
 import (
-	"fmt"
-
 	"github.com/milvus-io/milvus-proto/go-api/v2/schemapb"
 	"github.com/milvus-io/milvus/internal/storage"
 	"github.com/milvus-io/milvus/internal/util/tokenizerapi"
 	"github.com/milvus-io/milvus/pkg/util/typeutil"
 	"github.com/samber/lo"
-	"go.uber.org/zap"
 )
 
 type Vectorizer interface {
-	Vectorize(data storage.FieldData, meta storage.EmbeddingMeta) (storage.FieldData, error)
+	Vectorize(meta storage.ChannelStats, data ...string) (int64, [][]byte, error)
+	GetField() *schemapb.FieldSchema
 }
 
 type HashVectorizer struct {
@@ -45,19 +43,13 @@ func NewHashVectorizer(field *schemapb.FieldSchema, tokenizer tokenizerapi.Token
 	}
 }
 
-func (v *HashVectorizer) Vectorize(data storage.FieldData, meta storage.EmbeddingMeta) (storage.FieldData, error) {
-	embedData, err := storage.NewFieldData(v.field.GetDataType(), v.field, data.RowNum())
-	if err != nil {
-		return nil, fmt.Errorf("create field data failed", zap.String("dataType", v.field.GetDataType().String()))
-	}
+func (v *HashVectorizer) Vectorize(meta storage.ChannelStats, data ...string) (int64, [][]byte, error) {
+	row := len(data)
 
-	for i := 0; i < data.RowNum(); i++ {
-		rowData, ok := data.GetRow(i).(string)
-		if !ok {
-			// TODO
-			return nil, fmt.Errorf("")
-		}
-
+	dim := int64(0)
+	embedData := make([][]byte, row)
+	for i := 0; i < row; i++ {
+		rowData := data[i]
 		embeddingMap := map[uint32]int32{}
 		tokenStream := v.tokenizer.NewTokenStream(rowData)
 		for tokenStream.Advance() {
@@ -67,7 +59,15 @@ func (v *HashVectorizer) Vectorize(data storage.FieldData, meta storage.Embeddin
 			embeddingMap[hash] += 1
 		}
 		meta.Append(rowData, embeddingMap)
-		embedData.AppendRow(typeutil.CreateSparseFloatRow(lo.Keys(embeddingMap), lo.Map(lo.Values(embeddingMap), func(num int32, _ int) float32 { return float32(num) })))
+		if vectorDim := int64(len(embeddingMap)); vectorDim > dim {
+			dim = vectorDim
+		}
+
+		embedData[i] = typeutil.CreateSparseFloatRow(lo.Keys(embeddingMap), lo.Map(lo.Values(embeddingMap), func(num int32, _ int) float32 { return float32(num) }))
 	}
-	return embedData, nil
+	return dim, embedData, nil
+}
+
+func (v *HashVectorizer) GetField() *schemapb.FieldSchema {
+	return v.field
 }

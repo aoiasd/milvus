@@ -24,27 +24,27 @@ import (
 	"github.com/milvus-io/milvus/pkg/common"
 )
 
-type EmbeddingMeta interface {
+type ChannelStats interface {
 	Append(text string, data map[uint32]int32)
-	Merge(meta EmbeddingMeta) error
+	Merge(meta ChannelStats) error
 	NumRow() int64
 	Serialize() ([]byte, error)
 	// LoadBytes([]byte)
 }
 
-type BM25Meta struct {
+type BM25Stats struct {
 	statistics map[uint32]int32
 	numRow     int64
 	tokenNum   int64
 }
 
-func NewBM25Meta() *BM25Meta {
-	return &BM25Meta{
+func NewBM25Stats() *BM25Stats {
+	return &BM25Stats{
 		statistics: map[uint32]int32{},
 	}
 }
 
-func (m *BM25Meta) Append(text string, data map[uint32]int32) {
+func (m *BM25Stats) Append(text string, data map[uint32]int32) {
 	for key, value := range data {
 		m.statistics[key] += value
 	}
@@ -52,12 +52,12 @@ func (m *BM25Meta) Append(text string, data map[uint32]int32) {
 	m.numRow += 1
 }
 
-func (m *BM25Meta) NumRow() int64 {
+func (m *BM25Stats) NumRow() int64 {
 	return m.numRow
 }
 
-func (m *BM25Meta) Merge(meta EmbeddingMeta) error {
-	bm25meta, ok := meta.(*BM25Meta)
+func (m *BM25Stats) Merge(meta ChannelStats) error {
+	bm25meta, ok := meta.(*BM25Stats)
 	if !ok {
 		return fmt.Errorf("Can't merge BM25 meta from other type meta")
 	}
@@ -68,7 +68,7 @@ func (m *BM25Meta) Merge(meta EmbeddingMeta) error {
 	return nil
 }
 
-func (m *BM25Meta) Serialize() ([]byte, error) {
+func (m *BM25Stats) Serialize() ([]byte, error) {
 	buffer := bytes.NewBuffer(make([]byte, len(m.statistics)*8+18))
 
 	if err := binary.Write(buffer, common.Endian, m.numRow); err != nil {
