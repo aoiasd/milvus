@@ -306,14 +306,14 @@ func (c *Client) SaveBinlogPaths(ctx context.Context, req *datapb.SaveBinlogPath
 }
 
 func (c *Client) SaveChannelStatslogPaths(ctx context.Context, req *datapb.SaveChannelStatslogPathsRequest, opts ...grpc.CallOption) (*commonpb.Status, error) {
-	// use Call here on purpose
-	req = typeutil.Clone(req)
-	commonpbutil.UpdateMsgBase(
-		req.GetBase(),
-		commonpbutil.FillMsgBaseFromClient(paramtable.GetNodeID(), commonpbutil.WithTargetID(c.grpcClient.GetNodeID())),
-	)
 	return wrapGrpcCall(ctx, c, func(client datapb.DataCoordClient) (*commonpb.Status, error) {
 		return client.SaveChannelStatslogPaths(ctx, req)
+	})
+}
+
+func (c *Client) GetChannelStatsInfo(ctx context.Context, req *datapb.GetChannelStatsInfoRequset, opts ...grpc.CallOption) (*datapb.GetChannelStatsInfoResponse, error) {
+	return wrapGrpcCall(ctx, c, func(client datapb.DataCoordClient) (*datapb.GetChannelStatsInfoResponse, error) {
+		return client.GetChannelStatsInfo(ctx, req)
 	})
 }
 

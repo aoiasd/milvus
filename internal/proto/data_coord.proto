@@ -47,7 +47,6 @@ service DataCoord {
   rpc GetSegmentInfoChannel(GetSegmentInfoChannelRequest) returns (milvus.StringResponse){}
 
   rpc SaveBinlogPaths(SaveBinlogPathsRequest) returns (common.Status){}
-  rpc SaveChannelStatslogPaths(SaveChannelStatslogPathsRequest) returns (common.Status){}
   rpc GetRecoveryInfo(GetRecoveryInfoRequest) returns (GetRecoveryInfoResponse){}
   rpc GetRecoveryInfoV2(GetRecoveryInfoRequestV2) returns (GetRecoveryInfoResponseV2){}
   rpc GetFlushedSegments(GetFlushedSegmentsRequest) returns(GetFlushedSegmentsResponse){}
@@ -98,6 +97,9 @@ service DataCoord {
   rpc ImportV2(internal.ImportRequestInternal) returns(internal.ImportResponse){}
   rpc GetImportProgress(internal.GetImportProgressRequest) returns(internal.GetImportProgressResponse){}
   rpc ListImports(internal.ListImportsRequestInternal) returns(internal.ListImportsResponse){}
+
+  rpc SaveChannelStatslogPaths(SaveChannelStatslogPathsRequest) returns (common.Status){}
+  rpc GetChannelStatsInfo(GetChannelStatsInfoRequset) returns (GetChannelStatsInfoResponse){}
 }
 
 service DataNode {
@@ -364,6 +366,17 @@ message SaveChannelStatslogPathsRequest {
   string channel =3;
   repeated FieldBinlog statslogs = 4;
   CheckPoint checkPoint = 5;
+}
+
+message GetChannelStatsInfoRequset{
+  common.MsgBase base = 1;
+  int64 collectionID =2;
+  string channel =3;
+}
+
+message GetChannelStatsInfoResponse{
+  common.Status status = 1;
+  ChannelStatsInfo info = 2;
 }
 
 message CheckPoint {

@@ -54,8 +54,8 @@ func NewBM25StatsWithBytes(bytes []byte) (*BM25Stats, error) {
 }
 
 func (m *BM25Stats) Append(text string, data map[uint32]int32) {
-	for key, value := range data {
-		m.statistics[key] += value
+	for key, _ := range data {
+		m.statistics[key] += 1
 	}
 	m.tokenNum += int64(len(text))
 	m.numRow += 1
@@ -68,7 +68,7 @@ func (m *BM25Stats) NumRow() int64 {
 func (m *BM25Stats) Merge(meta ChannelStats) error {
 	bm25meta, ok := meta.(*BM25Stats)
 	if !ok {
-		return fmt.Errorf("Can't merge BM25 meta from other type meta")
+		return fmt.Errorf("can't merge BM25 meta from other type meta")
 	}
 
 	for key, value := range bm25meta.statistics {

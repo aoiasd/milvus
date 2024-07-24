@@ -98,3 +98,16 @@ func (m *channelStatsMeta) Update(collectionID int64, channel string, checkpoint
 	log.Debug("DataCoord channelStatsMeta update done", zap.Duration("duration", record.ElapseSpan()), zap.Any("checkpoint", checkpoint), zap.Any("new binlog", binlogs))
 	return nil
 }
+
+func (m *channelStatsMeta) Get(collectionID int64, channel string) *datapb.ChannelStatsInfo {
+	m.RLock()
+	defer m.RUnlock()
+
+	if info, ok := m.channelStatsInfos[channel]; ok {
+		return info
+	}
+
+	return nil
+}
+
+//TDDO AOIASD SUPPORT CLEAN COLLECTION CHANNEL META

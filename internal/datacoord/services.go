@@ -463,6 +463,20 @@ func (s *Server) SaveChannelStatslogPaths(ctx context.Context, req *datapb.SaveC
 	return merr.Status(nil), nil
 }
 
+func (s *Server) GetChannelStatsInfo(ctx context.Context, req *datapb.GetChannelStatsInfoRequset) (*datapb.GetChannelStatsInfoResponse, error) {
+	if err := merr.CheckHealthy(s.GetStateCode()); err != nil {
+		return &datapb.GetChannelStatsInfoResponse{
+			Status: merr.Status(err),
+		}, nil
+	}
+
+	info := s.meta.GetChannelStatsInfo(req.GetCollectionID(), req.GetChannel())
+	return &datapb.GetChannelStatsInfoResponse{
+		Status: merr.Status(nil),
+		Info:   info,
+	}, nil
+}
+
 // SaveBinlogPaths updates segment related binlog path
 // works for Checkpoints and Flush
 func (s *Server) SaveBinlogPaths(ctx context.Context, req *datapb.SaveBinlogPathsRequest) (*commonpb.Status, error) {
