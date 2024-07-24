@@ -278,6 +278,12 @@ func (node *QueryNode) WatchDmChannels(ctx context.Context, req *querypb.WatchDm
 		}
 	}()
 
+	err = delegator.ReloadChannelStats(ctx, req.GetChannelStatsInfo())
+	if err != nil {
+		log.Warn("failed to reload channel stats", zap.Error(err))
+		return merr.Status(err), nil
+	}
+
 	pipeline, err := node.pipelineManager.Add(req.GetCollectionID(), channel.GetChannelName())
 	if err != nil {
 		msg := "failed to create pipeline"

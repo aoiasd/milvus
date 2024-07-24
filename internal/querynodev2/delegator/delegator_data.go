@@ -976,19 +976,48 @@ func (sd *shardDelegator) SyncTargetVersion(newVersion int64, growingInTarget []
 	sd.deleteBuffer.TryDiscard(checkpoint.GetTimestamp())
 }
 
-func (sd *shardDelegator) UpdateChannelStats(newStats map[int64]storage.ChannelStats) error {
+func (sd *shardDelegator) UpdateChannelStats(fieldID int64, newStats storage.ChannelStats) {
 	sd.channelStatsMut.Lock()
 	defer sd.channelStatsMut.Unlock()
 
-	// TODO AOIASD: RANGE BM25 FIELD
-	for fieldID, stats := range newStats {
-		if _, ok := sd.channelStats[fieldID]; !ok {
-			sd.channelStats[fieldID] = stats
-		} else {
-			sd.channelStats[fieldID].Merge(stats)
+	// TODO AOIASD: Check NumRow
+
+	if _, ok := sd.channelStats[fieldID]; !ok {
+		sd.channelStats[fieldID] = newStats
+	} else {
+		sd.channelStats[fieldID].Merge(newStats)
+	}
+}
+
+func (sd *shardDelegator) ReloadChannelStats(ctx context.Context, info *datapb.ChannelStatsInfo) error {
+	for _, field := range info.Statslogs {
+		err := sd.LoadChannelStats(ctx, field.GetFieldID(), field.GetBinlogs())
+		if err != nil {
+			return err
 		}
 	}
+
+	sd.channelStatsCheckpoint = info.Checkpoint.GetPosition()
 	return nil
+}
+
+func (sd *shardDelegator) LoadChannelStats(ctx context.Context, fieldID int64, binlogs []*datapb.Binlog) error {
+	newStats := storage.NewBM25Stats()
+	for _, binlog := range binlogs {
+		// TODO AOIASD DOWNLOAD POOL?
+		bytes, err := sd.chunkManager.Read(ctx, binlog.GetLogPath())
+		if err != nil {
+			return err
+		}
+		newStats.Deserialize(bytes)
+	}
+
+	sd.UpdateChannelStats(fieldID, newStats)
+	return nil
+}
+
+func (sd *shardDelegator) GetChannelStatsStartCheckpoint() *msgpb.MsgPosition {
+	return sd.channelStatsCheckpoint
 }
 
 func (sd *shardDelegator) GetTargetVersion() int64 {

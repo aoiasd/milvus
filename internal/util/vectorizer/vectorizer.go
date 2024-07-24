@@ -58,7 +58,10 @@ func (v *HashVectorizer) Vectorize(meta storage.ChannelStats, data ...string) (i
 			hash := typeutil.HashString2Uint32(token)
 			embeddingMap[hash] += 1
 		}
-		meta.Append(rowData, embeddingMap)
+		if meta != nil {
+			meta.Append(rowData, embeddingMap)
+		}
+
 		if vectorDim := int64(len(embeddingMap)); vectorDim > dim {
 			dim = vectorDim
 		}

@@ -18,6 +18,7 @@ package binlog
 
 import (
 	"fmt"
+	"path"
 	"strconv"
 	"strings"
 
@@ -152,6 +153,17 @@ func DecompressBinLog(binlogType storage.BinlogType, collectionID, partitionID,
 		}
 	}
 	return nil
+}
+
+func DecompressChannelStatsBinLog(collectionID typeutil.UniqueID, channelName string, fieldBinlogs []*datapb.FieldBinlog) {
+	for _, field := range fieldBinlogs {
+		binlogs := field.GetBinlogs()
+		for _, binlog := range binlogs {
+			if binlog.GetLogPath() == "" {
+				binlog.LogPath = path.Join(fmt.Sprint(collectionID), channelName, fmt.Sprint(field.GetFieldID()), fmt.Sprint(binlog.GetLogID()))
+			}
+		}
+	}
 }
 
 // build a binlog path on the storage by metadata

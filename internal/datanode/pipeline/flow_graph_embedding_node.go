@@ -62,7 +62,7 @@ func newEmbeddingNode(channelName string, schema *schemapb.CollectionSchema) (*e
 			node.pkField = field
 		}
 
-		// TODO SCHEMA
+		// TODO AOIASD SCHEMA
 		// tokenizer, err := ctokenizer.NewTokenizer(make(map[string]string))
 		// if err != nil {
 		// 	return nil, err
@@ -84,7 +84,7 @@ func (eNode *embeddingNode) vectorize(data *storage.InsertData, meta map[int64]s
 			continue
 		}
 
-		//TODO Get Relate Field ID
+		//TODO AOIASD Get Relate Field ID
 		embeddingFieldID := int64(0)
 
 		if _, ok := meta[field.GetFieldID()]; !ok {
@@ -137,11 +137,14 @@ func (eNode *embeddingNode) prepareInsert(insertMsgs []*msgstream.InsertMsg, met
 				return nil, merr.WrapErrServiceInternal("timestamp column row num not match")
 			}
 
+			// TODO FILETER OUT DATA ERALY THAN CHANNEL STATS CHECKPOINT
 			err = eNode.vectorize(data, meta)
 			if err != nil {
 				log.Warn("failed to embedding insert data", zap.Error(err))
 				return nil, err
 			}
+
+			// TODO FILETER OUT DATA ERALY THAN SEGMENT CHECKPOINT
 			inData.Append(data, pkFieldData, tsFieldData)
 		}
 		result = append(result, inData)

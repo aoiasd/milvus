@@ -34,6 +34,7 @@ import (
 
 	"github.com/milvus-io/milvus-proto/go-api/v2/commonpb"
 	"github.com/milvus-io/milvus-proto/go-api/v2/msgpb"
+	"github.com/milvus-io/milvus/internal/proto/datapb"
 	"github.com/milvus-io/milvus/internal/proto/internalpb"
 	"github.com/milvus-io/milvus/internal/proto/querypb"
 	"github.com/milvus-io/milvus/internal/querynodev2/cluster"
@@ -87,8 +88,10 @@ type ShardDelegator interface {
 	TryCleanExcludedSegments(ts uint64)
 
 	// channel stats
-	UpdateChannelStats(stats map[int64]storage.ChannelStats) error
-	// LoadChannelStats(ctx context.Context)
+	UpdateChannelStats(fieldID int64, newStats storage.ChannelStats)
+	LoadChannelStats(ctx context.Context, fieldID int64, binlogs []*datapb.Binlog) error
+	ReloadChannelStats(ctx context.Context, info *datapb.ChannelStatsInfo) error
+	GetChannelStatsStartCheckpoint() *msgpb.MsgPosition
 
 	// control
 	Serviceable() bool
@@ -139,8 +142,9 @@ type shardDelegator struct {
 	partitionStatsMut  sync.RWMutex
 
 	//channel stats
-	channelStats    map[UniqueID]storage.ChannelStats
-	channelStatsMut sync.RWMutex
+	channelStats           map[UniqueID]storage.ChannelStats
+	channelStatsCheckpoint *msgpb.MsgPosition
+	channelStatsMut        sync.RWMutex
 }
 
 // getLogger returns the zap logger with pre-defined shard attributes.

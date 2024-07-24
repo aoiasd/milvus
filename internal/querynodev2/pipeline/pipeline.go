@@ -31,7 +31,8 @@ type Pipeline interface {
 type pipeline struct {
 	base.StreamPipeline
 
-	collectionID UniqueID
+	collectionID  UniqueID
+	embeddingNode embeddingNode
 }
 
 func (p *pipeline) Close() {

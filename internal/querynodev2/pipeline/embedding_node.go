@@ -19,7 +19,9 @@ package pipeline
 import (
 	"fmt"
 
+	"github.com/milvus-io/milvus-proto/go-api/v2/msgpb"
 	"github.com/milvus-io/milvus-proto/go-api/v2/schemapb"
+	"github.com/milvus-io/milvus/internal/querynodev2/delegator"
 	"github.com/milvus-io/milvus/internal/storage"
 	base "github.com/milvus-io/milvus/internal/util/pipeline"
 	"github.com/milvus-io/milvus/internal/util/vectorizer"
@@ -40,14 +42,19 @@ type embeddingNode struct {
 
 	// embeddingType EmbeddingType
 	vectorizers map[int64]vectorizer.Vectorizer
+
+	delegator     delegator.ShardDelegator
+	StartPosition *msgpb.MsgPosition
 }
 
-func newEmbeddingNode(channelName string, schema *schemapb.CollectionSchema, maxQueueLength int32) (*embeddingNode, error) {
+func newEmbeddingNode(channelName string, schema *schemapb.CollectionSchema, delegator delegator.ShardDelegator, maxQueueLength int32) (*embeddingNode, error) {
 	node := &embeddingNode{
-		BaseNode:    base.NewBaseNode(fmt.Sprintf("EmbeddingNode-%s", channelName), maxQueueLength),
-		channelName: channelName,
-		schema:      schema,
-		vectorizers: make(map[int64]vectorizer.Vectorizer),
+		BaseNode:      base.NewBaseNode(fmt.Sprintf("EmbeddingNode-%s", channelName), maxQueueLength),
+		channelName:   channelName,
+		schema:        schema,
+		delegator:     delegator,
+		vectorizers:   make(map[int64]vectorizer.Vectorizer),
+		StartPosition: delegator.GetChannelStatsStartCheckpoint(),
 	}
 
 	for _, field := range schema.GetFields() {
@@ -70,8 +77,13 @@ func (eNode *embeddingNode) Name() string {
 	return fmt.Sprintf("embeddingNode-%s-%s", "BM25test", eNode.channelName)
 }
 
-func (eNode *embeddingNode) vectorize(msgs []*msgstream.InsertMsg, meta map[int64]storage.ChannelStats) error {
+func (eNode *embeddingNode) vectorize(msgs []*msgstream.InsertMsg, stats map[int64]storage.ChannelStats) error {
 	for _, msg := range msgs {
+		var skipStats bool
+		if msg.EndTimestamp < eNode.StartPosition.GetTimestamp() {
+			skipStats = true
+		}
+
 		for fieldID, vectorizer := range eNode.vectorizers {
 			field := vectorizer.GetField()
 			// TODO REMOVE CODE FOR TEST
@@ -81,8 +93,15 @@ func (eNode *embeddingNode) vectorize(msgs []*msgstream.InsertMsg, meta map[int6
 			//TODO Get Embedding From
 			embeddingFieldID := int64(0)
 
-			if _, ok := meta[fieldID]; !ok {
-				meta[fieldID] = storage.NewBM25Stats()
+			// if msg checkpoint early than stats checkpoint skip update stats
+			var fieldStats storage.ChannelStats
+			if skipStats {
+				fieldStats = nil
+			} else {
+				if _, ok := stats[fieldID]; !ok {
+					stats[fieldID] = storage.NewBM25Stats()
+				}
+				fieldStats = stats[fieldID]
 			}
 
 			data, err := GetEmbeddingFieldData(msg.GetFieldsData(), embeddingFieldID)
@@ -90,7 +109,7 @@ func (eNode *embeddingNode) vectorize(msgs []*msgstream.InsertMsg, meta map[int6
 				return merr.WrapErrFieldNotFound(fmt.Sprint(embeddingFieldID))
 			}
 
-			dim, sparseVector, err := vectorizer.Vectorize(meta[fieldID], data...)
+			dim, sparseVector, err := vectorizer.Vectorize(fieldStats, data...)
 			if err != nil {
 				return err
 			}

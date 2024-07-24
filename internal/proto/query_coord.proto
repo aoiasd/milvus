@@ -331,6 +331,7 @@ message WatchDmChannelsRequest {
     int64 offlineNodeID = 11;
     int64 version = 12;
     repeated index.IndexInfo index_info_list = 13;
+    data.ChannelStatsInfo channel_stats_info = 14;
 }
 
 message UnsubDmChannelRequest {
