@@ -45,6 +45,7 @@ import (
 	"github.com/milvus-io/milvus/internal/querynodev2/tsafe"
 	"github.com/milvus-io/milvus/internal/storage"
 	"github.com/milvus-io/milvus/internal/util/streamrpc"
+	"github.com/milvus-io/milvus/internal/util/vectorizer"
 	"github.com/milvus-io/milvus/pkg/common"
 	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/metrics"
@@ -54,6 +55,7 @@ import (
 	"github.com/milvus-io/milvus/pkg/util/lifetime"
 	"github.com/milvus-io/milvus/pkg/util/merr"
 	"github.com/milvus-io/milvus/pkg/util/metautil"
+	"github.com/milvus-io/milvus/pkg/util/metric"
 	"github.com/milvus-io/milvus/pkg/util/paramtable"
 	"github.com/milvus-io/milvus/pkg/util/timerecord"
 	"github.com/milvus-io/milvus/pkg/util/tsoutil"
@@ -145,6 +147,7 @@ type shardDelegator struct {
 	channelStats           map[UniqueID]storage.ChannelStats
 	channelStatsCheckpoint *msgpb.MsgPosition
 	channelStatsMut        sync.RWMutex
+	vectorizers            map[UniqueID]vectorizer.Vectorizer
 }
 
 // getLogger returns the zap logger with pre-defined shard attributes.
@@ -308,6 +311,11 @@ func (sd *shardDelegator) Search(ctx context.Context, req *querypb.SearchRequest
 	metrics.QueryNodeSQLatencyWaitTSafe.WithLabelValues(
 		fmt.Sprint(paramtable.GetNodeID()), metrics.SearchLabel).
 		Observe(float64(waitTr.ElapseSpan().Milliseconds()))
+
+	// build idf for bm25 search
+	if req.GetReq().GetMetricType() == metric.BM25 {
+		sd.buildBM25IDF(req.GetReq())
+	}
 
 	sealed, growing, version, err := sd.distribution.PinReadableSegments(req.GetReq().GetPartitionIDs()...)
 	if err != nil {

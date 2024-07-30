@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/errors"
+	"github.com/golang/protobuf/proto"
 	"github.com/samber/lo"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -31,6 +32,7 @@ import (
 	"github.com/milvus-io/milvus-proto/go-api/v2/commonpb"
 	"github.com/milvus-io/milvus-proto/go-api/v2/msgpb"
 	"github.com/milvus-io/milvus/internal/proto/datapb"
+	"github.com/milvus-io/milvus/internal/proto/internalpb"
 	"github.com/milvus-io/milvus/internal/proto/querypb"
 	"github.com/milvus-io/milvus/internal/proto/segcorepb"
 	"github.com/milvus-io/milvus/internal/querynodev2/cluster"
@@ -990,6 +992,11 @@ func (sd *shardDelegator) UpdateChannelStats(fieldID int64, newStats storage.Cha
 }
 
 func (sd *shardDelegator) ReloadChannelStats(ctx context.Context, info *datapb.ChannelStatsInfo) error {
+	// TODO AOIASD: INIT STATS FOR BM25 FIELD
+
+	// init vectorizer
+	// TODO AOIASD: ONLY FOR BM25 FIELD
+
 	for _, field := range info.Statslogs {
 		err := sd.LoadChannelStats(ctx, field.GetFieldID(), field.GetBinlogs())
 		if err != nil {
@@ -1036,4 +1043,55 @@ func (sd *shardDelegator) TryCleanExcludedSegments(ts uint64) {
 	if sd.excludedSegments.ShouldClean() {
 		sd.excludedSegments.CleanInvalid(ts)
 	}
+}
+
+func (sd *shardDelegator) buildBM25IDF(req *internalpb.SearchRequest) error {
+	pb := &commonpb.PlaceholderGroup{}
+	proto.Unmarshal(req.GetPlaceholderGroup(), pb)
+	holder := pb.Placeholders[0]
+	if holder.Type != commonpb.PlaceholderType_VarChar {
+		return fmt.Errorf("can't build BM25 IDF for data not varchar")
+	}
+
+	// get search text term frequency
+	_, tfMaps, err := sd.vectorizers[req.GetFieldID()].Vectorize(funcutil.GetVarCharFromPlaceholder(holder)...)
+	if err != nil {
+		return err
+	}
+
+	sd.channelStatsMut.RLock()
+	defer sd.channelStatsMut.RUnlock()
+
+	stats, ok := sd.channelStats[req.GetFieldID()]
+	if !ok {
+		return fmt.Errorf("get field channel stats failed")
+	}
+
+	bm25stats, ok := stats.(*storage.BM25Stats)
+	if !ok {
+		return fmt.Errorf("get field BM25 stats failed")
+	}
+
+	dim := 0
+	idfSparseVector := make([][]byte, len(tfMaps))
+	for i, tf := range tfMaps {
+		idf := bm25stats.BuildIDF(tf)
+		idfSparseVector[i] = typeutil.CreateSparseFloatRow(lo.Keys(idf), lo.Values(idf))
+		if len(idf) > dim {
+			dim = len(idf)
+		}
+	}
+
+	newPlaceholder, err := funcutil.FieldDataToPlaceholderGroupBytes(BuildSparseFieldData(sd.vectorizers[req.GetFieldID()].GetField(), int64(dim), idfSparseVector))
+	if err != nil {
+		return err
+	}
+
+	err = SetBM25Params(req, bm25stats.GetAvgdl())
+	if err != nil {
+		return err
+	}
+
+	req.PlaceholderGroup = newPlaceholder
+	return nil
 }

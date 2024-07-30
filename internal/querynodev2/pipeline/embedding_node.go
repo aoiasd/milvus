@@ -28,6 +28,7 @@ import (
 	"github.com/milvus-io/milvus/pkg/mq/msgstream"
 	"github.com/milvus-io/milvus/pkg/util/merr"
 	"github.com/milvus-io/milvus/pkg/util/typeutil"
+	"github.com/samber/lo"
 )
 
 // TODO support set EmbddingType
@@ -93,28 +94,28 @@ func (eNode *embeddingNode) vectorize(msgs []*msgstream.InsertMsg, stats map[int
 			//TODO Get Embedding From
 			embeddingFieldID := int64(0)
 
-			// if msg checkpoint early than stats checkpoint skip update stats
-			var fieldStats storage.ChannelStats
-			if skipStats {
-				fieldStats = nil
-			} else {
-				if _, ok := stats[fieldID]; !ok {
-					stats[fieldID] = storage.NewBM25Stats()
-				}
-				fieldStats = stats[fieldID]
-			}
-
 			data, err := GetEmbeddingFieldData(msg.GetFieldsData(), embeddingFieldID)
 			if data == nil || err != nil {
 				return merr.WrapErrFieldNotFound(fmt.Sprint(embeddingFieldID))
 			}
 
-			dim, sparseVector, err := vectorizer.Vectorize(fieldStats, data...)
+			dim, sparseMaps, err := vectorizer.Vectorize(data...)
 			if err != nil {
 				return err
 			}
 
-			msg.FieldsData = append(msg.FieldsData, BuildSparseFieldData(field, dim, sparseVector))
+			// if msg checkpoint early than stats checkpoint skip update stats
+			if !skipStats {
+				if _, ok := stats[fieldID]; !ok {
+					stats[fieldID] = storage.NewBM25Stats()
+				}
+				stats[fieldID].Append(sparseMaps...)
+			}
+
+			sparseVector := lo.Map(sparseMaps, func(sparseMap map[uint32]float32, _ int) []byte {
+				return typeutil.CreateSparseFloatRow(lo.Keys(sparseMap), lo.Values(sparseMap))
+			})
+			msg.FieldsData = append(msg.FieldsData, delegator.BuildSparseFieldData(field, dim, sparseVector))
 		}
 	}
 
@@ -150,22 +151,6 @@ func GetSparseVectorDim(data [][]byte) int64 {
 		}
 	}
 	return result
-}
-
-func BuildSparseFieldData(field *schemapb.FieldSchema, dim int64, data [][]byte) *schemapb.FieldData {
-	return &schemapb.FieldData{
-		Type:      field.GetDataType(),
-		FieldName: field.GetName(),
-		Field: &schemapb.FieldData_Vectors{
-			Vectors: &schemapb.VectorField{
-				Dim: dim,
-				Data: &schemapb.VectorField_SparseFloatVector{
-					SparseFloatVector: &schemapb.SparseFloatArray{
-						Dim:      dim,
-						Contents: data,
-					}}}},
-		FieldId: field.GetFieldID(),
-	}
 }
 
 func RemoveFieldData(datas []*schemapb.FieldData, fieldID int64) []*schemapb.FieldData {

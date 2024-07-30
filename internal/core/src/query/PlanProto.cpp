@@ -21,6 +21,7 @@
 #include "common/EasyAssert.h"
 #include "generated/ExtractInfoExprVisitor.h"
 #include "generated/ExtractInfoPlanNodeVisitor.h"
+#include "knowhere/comp/index_param.h"
 #include "pb/plan.pb.h"
 #include "query/Utils.h"
 #include "knowhere/comp/materialized_view.h"
@@ -205,6 +206,10 @@ ProtoParser::PlanNodeFromProto(const planpb::PlanNode& plan_node_proto) {
         nlohmann::json::parse(query_info_proto.search_params());
     search_info.materialized_view_involved =
         query_info_proto.materialized_view_involved();
+
+    if (query_info_proto.avgdl() > 0) {
+        search_info.search_params_[knowhere::meta::BM25_AVGDL] = query_info_proto.avgdl();
+    }
 
     if (query_info_proto.group_by_field_id() > 0) {
         auto group_by_field_id = FieldId(query_info_proto.group_by_field_id());

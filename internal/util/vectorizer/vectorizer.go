@@ -20,14 +20,12 @@ package vectorizer
 
 import (
 	"github.com/milvus-io/milvus-proto/go-api/v2/schemapb"
-	"github.com/milvus-io/milvus/internal/storage"
 	"github.com/milvus-io/milvus/internal/util/tokenizerapi"
 	"github.com/milvus-io/milvus/pkg/util/typeutil"
-	"github.com/samber/lo"
 )
 
 type Vectorizer interface {
-	Vectorize(meta storage.ChannelStats, data ...string) (int64, [][]byte, error)
+	Vectorize(data ...string) (int64, []map[uint32]float32, error)
 	GetField() *schemapb.FieldSchema
 }
 
@@ -43,14 +41,16 @@ func NewHashVectorizer(field *schemapb.FieldSchema, tokenizer tokenizerapi.Token
 	}
 }
 
-func (v *HashVectorizer) Vectorize(meta storage.ChannelStats, data ...string) (int64, [][]byte, error) {
+func (v *HashVectorizer) Vectorize(data ...string) (int64, []map[uint32]float32, error) {
 	row := len(data)
 
+	// TODO AOIASD: TOKENIZER CONCURRENT SAFE AND REMOVE INIT TOKENIZER
+
 	dim := int64(0)
-	embedData := make([][]byte, row)
+	embedData := make([]map[uint32]float32, row)
 	for i := 0; i < row; i++ {
 		rowData := data[i]
-		embeddingMap := map[uint32]int32{}
+		embeddingMap := map[uint32]float32{}
 		tokenStream := v.tokenizer.NewTokenStream(rowData)
 		for tokenStream.Advance() {
 			token := tokenStream.Token()
@@ -58,15 +58,12 @@ func (v *HashVectorizer) Vectorize(meta storage.ChannelStats, data ...string) (i
 			hash := typeutil.HashString2Uint32(token)
 			embeddingMap[hash] += 1
 		}
-		if meta != nil {
-			meta.Append(rowData, embeddingMap)
-		}
 
 		if vectorDim := int64(len(embeddingMap)); vectorDim > dim {
 			dim = vectorDim
 		}
 
-		embedData[i] = typeutil.CreateSparseFloatRow(lo.Keys(embeddingMap), lo.Map(lo.Values(embeddingMap), func(num int32, _ int) float32 { return float32(num) }))
+		embedData[i] = embeddingMap
 	}
 	return dim, embedData, nil
 }

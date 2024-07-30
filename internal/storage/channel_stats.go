@@ -20,16 +20,17 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"math"
 
 	"github.com/milvus-io/milvus/pkg/common"
 )
 
 type ChannelStats interface {
-	Append(text string, data map[uint32]int32)
+	Append(datas ...map[uint32]float32)
 	Merge(meta ChannelStats) error
 	NumRow() int64
 	Serialize() ([]byte, error)
-	// LoadBytes([]byte)
+	Deserialize([]byte) error
 }
 
 type BM25Stats struct {
@@ -53,12 +54,15 @@ func NewBM25StatsWithBytes(bytes []byte) (*BM25Stats, error) {
 	return stats, nil
 }
 
-func (m *BM25Stats) Append(text string, data map[uint32]int32) {
-	for key, _ := range data {
-		m.statistics[key] += 1
+func (m *BM25Stats) Append(datas ...map[uint32]float32) {
+	for _, data := range datas {
+		for key, value := range data {
+			m.statistics[key] += 1
+			m.tokenNum += int64(value)
+		}
+
+		m.numRow += 1
 	}
-	m.tokenNum += int64(len(text))
-	m.numRow += 1
 }
 
 func (m *BM25Stats) NumRow() int64 {
@@ -131,4 +135,17 @@ func (m *BM25Stats) Deserialize(bs []byte) error {
 		m.statistics[keys[i]] += values[i]
 	}
 	return nil
+}
+
+func (m *BM25Stats) BuildIDF(tf map[uint32]float32) map[uint32]float32 {
+	vector := make(map[uint32]float32)
+	for key, value := range tf {
+		nq := m.statistics[key]
+		vector[key] = value * float32(math.Log((float64(m.numRow)-float64(nq)+0.5)/(float64(nq)+0.5)))
+	}
+	return vector
+}
+
+func (m *BM25Stats) GetAvgdl() float64 {
+	return float64(m.tokenNum) / float64(m.numRow)
 }

@@ -27,6 +27,7 @@ import (
 	"github.com/milvus-io/milvus/pkg/mq/msgstream"
 	"github.com/milvus-io/milvus/pkg/util/merr"
 	"github.com/milvus-io/milvus/pkg/util/paramtable"
+	"github.com/milvus-io/milvus/pkg/util/typeutil"
 	"github.com/samber/lo"
 	"go.uber.org/zap"
 )
@@ -97,10 +98,15 @@ func (eNode *embeddingNode) vectorize(data *storage.InsertData, meta map[int64]s
 			return fmt.Errorf("")
 		}
 
-		dim, sparseVector, err := vectorizer.Vectorize(meta[field.GetFieldID()], embeddingData...)
+		dim, sparseMaps, err := vectorizer.Vectorize(embeddingData...)
 		if err != nil {
 			return err
 		}
+		meta[field.GetFieldID()].Append(sparseMaps...)
+
+		sparseVector := lo.Map(sparseMaps, func(sparseMap map[uint32]float32, _ int) []byte {
+			return typeutil.CreateSparseFloatRow(lo.Keys(sparseMap), lo.Values(sparseMap))
+		})
 		data.Data[field.GetFieldID()] = BuildSparseFieldData(dim, sparseVector)
 	}
 	return nil

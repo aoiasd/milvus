@@ -7,6 +7,7 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/golang/protobuf/proto"
+	"github.com/samber/lo"
 
 	"github.com/milvus-io/milvus-proto/go-api/v2/commonpb"
 	"github.com/milvus-io/milvus-proto/go-api/v2/schemapb"
@@ -156,4 +157,8 @@ func flattenedBFloat16VectorsToByteVectors(flattenedVectors []byte, dimension in
 	}
 
 	return result
+}
+
+func GetVarCharFromPlaceholder(holder *commonpb.PlaceholderValue) []string {
+	return lo.Map(holder.Values, func(bytes []byte, _ int) string { return string(bytes) })
 }
