@@ -87,7 +87,7 @@ func (t *SyncChannelStatsTask) Run(ctx context.Context) error {
 			return err
 		}
 
-		path := path.Join(t.chunkManager.RootPath(), common.ChannelStatsPath, fmt.Sprint(t.collectionID), t.channel, fmt.Sprint(logId))
+		path := path.Join(t.chunkManager.RootPath(), common.ChannelStatsPath, fmt.Sprint(t.collectionID), t.channel, fmt.Sprint(field.GetFieldID()), fmt.Sprint(logId))
 
 		bytes, err := meta.Serialize()
 		if err != nil {

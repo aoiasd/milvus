@@ -166,7 +166,8 @@ IsFloatMetricType(const knowhere::MetricType& metric_type) {
 inline bool
 PositivelyRelated(const knowhere::MetricType& metric_type) {
     return IsMetricType(metric_type, knowhere::metric::IP) ||
-           IsMetricType(metric_type, knowhere::metric::COSINE);
+           IsMetricType(metric_type, knowhere::metric::COSINE) ||
+           IsMetricType(metric_type, knowhere::metric::BM25);
 }
 
 inline std::string

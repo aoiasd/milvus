@@ -31,6 +31,7 @@ import (
 
 	"github.com/milvus-io/milvus-proto/go-api/v2/commonpb"
 	"github.com/milvus-io/milvus-proto/go-api/v2/msgpb"
+	"github.com/milvus-io/milvus/internal/metastore/kv/binlog"
 	"github.com/milvus-io/milvus/internal/proto/datapb"
 	"github.com/milvus-io/milvus/internal/proto/internalpb"
 	"github.com/milvus-io/milvus/internal/proto/querypb"
@@ -40,6 +41,8 @@ import (
 	"github.com/milvus-io/milvus/internal/querynodev2/pkoracle"
 	"github.com/milvus-io/milvus/internal/querynodev2/segments"
 	"github.com/milvus-io/milvus/internal/storage"
+	"github.com/milvus-io/milvus/internal/util/ctokenizer"
+	"github.com/milvus-io/milvus/internal/util/vectorizer"
 	"github.com/milvus-io/milvus/pkg/common"
 	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/metrics"
@@ -992,12 +995,27 @@ func (sd *shardDelegator) UpdateChannelStats(fieldID int64, newStats storage.Cha
 }
 
 func (sd *shardDelegator) ReloadChannelStats(ctx context.Context, info *datapb.ChannelStatsInfo) error {
+	if info == nil {
+		return nil
+	}
 	// TODO AOIASD: INIT STATS FOR BM25 FIELD
 
 	// init vectorizer
 	// TODO AOIASD: ONLY FOR BM25 FIELD
+	for _, field := range sd.collection.Schema().Fields {
+		if field.GetName() == "embedding" {
+			tokenizer, err := ctokenizer.NewTokenizer(make(map[string]string))
+			if err != nil {
+				return err
+			}
+			log.Info("test--", zap.Any("field", field))
+			sd.vectorizers[field.GetFieldID()] = vectorizer.NewHashVectorizer(field, tokenizer)
+		}
+	}
 
-	for _, field := range info.Statslogs {
+	binlog.DecompressChannelStatsBinLog(info.GetCollectionID(), info.GetVChannel(), info.GetStatslogs())
+	log.Info("test-- reload channel stats", zap.Any("stats", info.GetStatslogs()))
+	for _, field := range info.GetStatslogs() {
 		err := sd.LoadChannelStats(ctx, field.GetFieldID(), field.GetBinlogs())
 		if err != nil {
 			return err
@@ -1012,11 +1030,17 @@ func (sd *shardDelegator) LoadChannelStats(ctx context.Context, fieldID int64, b
 	newStats := storage.NewBM25Stats()
 	for _, binlog := range binlogs {
 		// TODO AOIASD DOWNLOAD POOL?
+		log.Info("test-- load channel stats", zap.Any("binlog", binlog))
 		bytes, err := sd.chunkManager.Read(ctx, binlog.GetLogPath())
 		if err != nil {
 			return err
 		}
-		newStats.Deserialize(bytes)
+
+		log.Info("test-- load channel stats", zap.Int("len", len(bytes)))
+		err = newStats.Deserialize(bytes)
+		if err != nil {
+			return err
+		}
 	}
 
 	sd.UpdateChannelStats(fieldID, newStats)
@@ -1049,12 +1073,20 @@ func (sd *shardDelegator) buildBM25IDF(req *internalpb.SearchRequest) error {
 	pb := &commonpb.PlaceholderGroup{}
 	proto.Unmarshal(req.GetPlaceholderGroup(), pb)
 	holder := pb.Placeholders[0]
+	log.Info("test-- fetch bm25 search", zap.Any("group", holder))
 	if holder.Type != commonpb.PlaceholderType_VarChar {
 		return fmt.Errorf("can't build BM25 IDF for data not varchar")
 	}
 
+	str := funcutil.GetVarCharFromPlaceholder(holder)
+	log.Info("test-- fetch bm25 search", zap.Strings("strs", str))
+	vectorizer, ok := sd.vectorizers[req.GetFieldID()]
+	if !ok {
+		return fmt.Errorf("vectorizer not found for field: %d", req.GetFieldID())
+	}
+
 	// get search text term frequency
-	_, tfMaps, err := sd.vectorizers[req.GetFieldID()].Vectorize(funcutil.GetVarCharFromPlaceholder(holder)...)
+	_, tfMaps, err := vectorizer.Vectorize(str...)
 	if err != nil {
 		return err
 	}
@@ -1076,13 +1108,14 @@ func (sd *shardDelegator) buildBM25IDF(req *internalpb.SearchRequest) error {
 	idfSparseVector := make([][]byte, len(tfMaps))
 	for i, tf := range tfMaps {
 		idf := bm25stats.BuildIDF(tf)
-		idfSparseVector[i] = typeutil.CreateSparseFloatRow(lo.Keys(idf), lo.Values(idf))
+		idfSparseVector[i] = typeutil.CreateAndSortSparseFloatRow(lo.Keys(idf), lo.Values(idf))
+		log.Info("test-- build bm25 idf", zap.Any("idf", idf))
 		if len(idf) > dim {
 			dim = len(idf)
 		}
 	}
 
-	newPlaceholder, err := funcutil.FieldDataToPlaceholderGroupBytes(BuildSparseFieldData(sd.vectorizers[req.GetFieldID()].GetField(), int64(dim), idfSparseVector))
+	newPlaceholder, err := funcutil.SparseVectorDataToPlaceholderGroupBytes(idfSparseVector)
 	if err != nil {
 		return err
 	}

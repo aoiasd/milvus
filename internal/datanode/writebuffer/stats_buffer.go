@@ -31,6 +31,9 @@ type statsBuffer struct {
 }
 
 func getNumRow(metaMap map[int64]storage.ChannelStats) (int64, error) {
+	if len(metaMap) == 0 {
+		return 0, nil
+	}
 	var numRow = int64(-1)
 	for _, meta := range metaMap {
 		if numRow == -1 {
@@ -46,6 +49,10 @@ func (b *statsBuffer) Buffer(metaMap map[int64]storage.ChannelStats, startPos, e
 	numRow, err := getNumRow(metaMap)
 	if err != nil {
 		return err
+	}
+
+	if numRow == 0 {
+		return nil
 	}
 
 	for fieldID, meta := range metaMap {
@@ -74,7 +81,8 @@ func (b *statsBuffer) yieldBuffer() (map[int64]storage.ChannelStats, *msgpb.MsgP
 	result := b.meta
 	start, end := b.startPos, b.endPos
 	b.meta = make(map[int64]storage.ChannelStats)
-	b.startPos, b.endPos = nil, nil
+	b.startPos = nil
+	b.endPos = nil
 	b.numRow = 0
 	return result, start, end
 }

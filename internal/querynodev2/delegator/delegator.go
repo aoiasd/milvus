@@ -313,8 +313,13 @@ func (sd *shardDelegator) Search(ctx context.Context, req *querypb.SearchRequest
 		Observe(float64(waitTr.ElapseSpan().Milliseconds()))
 
 	// build idf for bm25 search
+
+	log.Info("test-- fetch search", zap.String("metric type", req.GetReq().GetMetricType()))
 	if req.GetReq().GetMetricType() == metric.BM25 {
-		sd.buildBM25IDF(req.GetReq())
+		err := sd.buildBM25IDF(req.GetReq())
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	sealed, growing, version, err := sd.distribution.PinReadableSegments(req.GetReq().GetPartitionIDs()...)
@@ -892,6 +897,8 @@ func NewShardDelegator(ctx context.Context, collectionID UniqueID, replicaID Uni
 		chunkManager:     chunkManager,
 		partitionStats:   make(map[UniqueID]*storage.PartitionStatsSnapshot),
 		excludedSegments: excludedSegments,
+		channelStats:     make(map[int64]storage.ChannelStats),
+		vectorizers:      make(map[int64]vectorizer.Vectorizer),
 	}
 	m := sync.Mutex{}
 	sd.tsCond = sync.NewCond(&m)

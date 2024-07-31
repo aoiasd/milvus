@@ -24,6 +24,7 @@ import (
 
 	"github.com/milvus-io/milvus/internal/proto/datapb"
 	"github.com/milvus-io/milvus/internal/storage"
+	"github.com/milvus-io/milvus/pkg/common"
 	"github.com/milvus-io/milvus/pkg/util/merr"
 	"github.com/milvus-io/milvus/pkg/util/metautil"
 	"github.com/milvus-io/milvus/pkg/util/paramtable"
@@ -156,11 +157,16 @@ func DecompressBinLog(binlogType storage.BinlogType, collectionID, partitionID,
 }
 
 func DecompressChannelStatsBinLog(collectionID typeutil.UniqueID, channelName string, fieldBinlogs []*datapb.FieldBinlog) {
+	chunkManagerRootPath := paramtable.Get().MinioCfg.RootPath.GetValue()
+	if paramtable.Get().CommonCfg.StorageType.GetValue() == "local" {
+		chunkManagerRootPath = paramtable.Get().LocalStorageCfg.Path.GetValue()
+	}
+
 	for _, field := range fieldBinlogs {
 		binlogs := field.GetBinlogs()
 		for _, binlog := range binlogs {
 			if binlog.GetLogPath() == "" {
-				binlog.LogPath = path.Join(fmt.Sprint(collectionID), channelName, fmt.Sprint(field.GetFieldID()), fmt.Sprint(binlog.GetLogID()))
+				binlog.LogPath = path.Join(chunkManagerRootPath, common.ChannelStatsPath, fmt.Sprint(collectionID), channelName, fmt.Sprint(field.GetFieldID()), fmt.Sprint(binlog.GetLogID()))
 			}
 		}
 	}

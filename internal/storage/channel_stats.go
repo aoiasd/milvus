@@ -23,6 +23,8 @@ import (
 	"math"
 
 	"github.com/milvus-io/milvus/pkg/common"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 )
 
 type ChannelStats interface {
@@ -78,11 +80,13 @@ func (m *BM25Stats) Merge(meta ChannelStats) error {
 	for key, value := range bm25meta.statistics {
 		m.statistics[key] += value
 	}
+	m.numRow += bm25meta.NumRow()
+	m.tokenNum += bm25meta.tokenNum
 	return nil
 }
 
 func (m *BM25Stats) Serialize() ([]byte, error) {
-	buffer := bytes.NewBuffer(make([]byte, len(m.statistics)*8+16))
+	buffer := bytes.NewBuffer(make([]byte, 0, len(m.statistics)*8+16))
 
 	if err := binary.Write(buffer, common.Endian, m.numRow); err != nil {
 		return nil, err
@@ -101,30 +105,31 @@ func (m *BM25Stats) Serialize() ([]byte, error) {
 			return nil, err
 		}
 	}
+
+	log.Info("test-- serialize", zap.Int64("numrow", m.numRow), zap.Int64("tokenNum", m.tokenNum), zap.Int("dim", len(m.statistics)), zap.Int("len", buffer.Len()))
 	return buffer.Bytes(), nil
 }
 
 func (m *BM25Stats) Deserialize(bs []byte) error {
 	buffer := bytes.NewBuffer(bs)
 	var dim = (len(bs) - 16) / 8
-
 	var numRow, tokenNum int64
-	if err := binary.Read(buffer, common.Endian, numRow); err != nil {
+	if err := binary.Read(buffer, common.Endian, &numRow); err != nil {
 		return err
 	}
 
-	if err := binary.Read(buffer, common.Endian, tokenNum); err != nil {
+	if err := binary.Read(buffer, common.Endian, &tokenNum); err != nil {
 		return err
 	}
 
 	var keys []uint32 = make([]uint32, dim)
 	var values []int32 = make([]int32, dim)
 	for i := 0; i < dim; i++ {
-		if err := binary.Read(buffer, common.Endian, keys[i]); err != nil {
+		if err := binary.Read(buffer, common.Endian, &keys[i]); err != nil {
 			return err
 		}
 
-		if err := binary.Read(buffer, common.Endian, values[i]); err != nil {
+		if err := binary.Read(buffer, common.Endian, &values[i]); err != nil {
 			return err
 		}
 	}
@@ -134,6 +139,8 @@ func (m *BM25Stats) Deserialize(bs []byte) error {
 	for i := 0; i < dim; i++ {
 		m.statistics[keys[i]] += values[i]
 	}
+
+	log.Info("test-- deserialize", zap.Int64("numrow", m.numRow), zap.Int64("tokenNum", m.tokenNum))
 	return nil
 }
 
@@ -141,7 +148,7 @@ func (m *BM25Stats) BuildIDF(tf map[uint32]float32) map[uint32]float32 {
 	vector := make(map[uint32]float32)
 	for key, value := range tf {
 		nq := m.statistics[key]
-		vector[key] = value * float32(math.Log((float64(m.numRow)-float64(nq)+0.5)/(float64(nq)+0.5)))
+		vector[key] = value * float32(math.Log(1+(float64(m.numRow)-float64(nq)+0.5)/(float64(nq)+0.5)))
 	}
 	return vector
 }

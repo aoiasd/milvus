@@ -13,6 +13,19 @@ import (
 	"github.com/milvus-io/milvus-proto/go-api/v2/schemapb"
 )
 
+func SparseVectorDataToPlaceholderGroupBytes(contents [][]byte) ([]byte, error) {
+	placeholderGroup := &commonpb.PlaceholderGroup{
+		Placeholders: []*commonpb.PlaceholderValue{{
+			Tag:    "$0",
+			Type:   commonpb.PlaceholderType_SparseFloatVector,
+			Values: contents,
+		}},
+	}
+
+	bytes, _ := proto.Marshal(placeholderGroup)
+	return bytes, nil
+}
+
 func FieldDataToPlaceholderGroupBytes(fieldData *schemapb.FieldData) ([]byte, error) {
 	placeholderValue, err := fieldDataToPlaceholderValue(fieldData)
 	if err != nil {
@@ -92,6 +105,14 @@ func fieldDataToPlaceholderValue(fieldData *schemapb.FieldData) (*commonpb.Place
 			Tag:    "$0",
 			Type:   commonpb.PlaceholderType_SparseFloatVector,
 			Values: [][]byte{bytes},
+		}
+		return placeholderValue, nil
+	case schemapb.DataType_VarChar:
+		strs := fieldData.GetScalars().GetStringData().GetData()
+		placeholderValue := &commonpb.PlaceholderValue{
+			Tag:    "$0",
+			Type:   commonpb.PlaceholderType_VarChar,
+			Values: lo.Map(strs, func(str string, _ int) []byte { return []byte(str) }),
 		}
 		return placeholderValue, nil
 	default:
