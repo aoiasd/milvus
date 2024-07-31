@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -178,13 +179,35 @@ func (t *searchTask) PreExecute(ctx context.Context) error {
 	var ignoreGrowing bool
 	// parse common search params
 	for i, kv := range t.request.GetSearchParams() {
+		log.Info("test--", zap.String("key", kv.GetKey()), zap.String("value", kv.GetValue()))
 		if kv.GetKey() == IgnoreGrowingKey {
 			ignoreGrowing, err = strconv.ParseBool(kv.GetValue())
 			if err != nil {
 				return errors.New("parse search growing failed")
 			}
 			t.request.SearchParams = append(t.request.GetSearchParams()[:i], t.request.GetSearchParams()[i+1:]...)
-			break
+			// break
+		} else if kv.GetKey() == "params" {
+			param := map[string]string{}
+			err := json.Unmarshal([]byte(kv.GetValue()), &param)
+			if err != nil {
+				return err
+			}
+
+			if text, ok := param["text"]; ok {
+				log.Info("test-- receive search", zap.String("Text", text))
+				newholder, err := funcutil.FieldDataToPlaceholderGroupBytes(
+					&schemapb.FieldData{
+						Type:      schemapb.DataType_VarChar,
+						FieldName: "text",
+						Field:     &schemapb.FieldData_Scalars{Scalars: &schemapb.ScalarField{Data: &schemapb.ScalarField_StringData{StringData: &schemapb.StringArray{Data: []string{text}}}}},
+					},
+				)
+				if err != nil {
+					return err
+				}
+				t.request.PlaceholderGroup = newholder
+			}
 		}
 	}
 	t.SearchRequest.IgnoreGrowing = ignoreGrowing

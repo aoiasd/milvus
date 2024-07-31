@@ -20,6 +20,7 @@ package vectorizer
 
 import (
 	"github.com/milvus-io/milvus-proto/go-api/v2/schemapb"
+	"github.com/milvus-io/milvus/internal/util/ctokenizer"
 	"github.com/milvus-io/milvus/internal/util/tokenizerapi"
 	"github.com/milvus-io/milvus/pkg/util/typeutil"
 )
@@ -45,13 +46,17 @@ func (v *HashVectorizer) Vectorize(data ...string) (int64, []map[uint32]float32,
 	row := len(data)
 
 	// TODO AOIASD: TOKENIZER CONCURRENT SAFE AND REMOVE INIT TOKENIZER
+	tokenizer, err := ctokenizer.NewTokenizer(make(map[string]string))
+	if err != nil {
+		return 0, nil, err
+	}
 
 	dim := int64(0)
 	embedData := make([]map[uint32]float32, row)
 	for i := 0; i < row; i++ {
 		rowData := data[i]
 		embeddingMap := map[uint32]float32{}
-		tokenStream := v.tokenizer.NewTokenStream(rowData)
+		tokenStream := tokenizer.NewTokenStream(rowData)
 		for tokenStream.Advance() {
 			token := tokenStream.Token()
 			// TODO More Hash Option

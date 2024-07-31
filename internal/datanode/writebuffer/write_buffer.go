@@ -85,6 +85,7 @@ func (c *checkpointCandidates) Remove(segmentID int64, timestamp uint64) {
 func (c *checkpointCandidates) RemoveChannel(channel string, timestamp uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	log.Info("test-- delete", zap.String("key", fmt.Sprintf("%s-%d", channel, timestamp)))
 	delete(c.candidates, fmt.Sprintf("%s-%d", channel, timestamp))
 }
 
@@ -97,6 +98,7 @@ func (c *checkpointCandidates) Add(segmentID int64, position *msgpb.MsgPosition,
 func (c *checkpointCandidates) AddChannel(channel string, position *msgpb.MsgPosition, source string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	log.Info("test-- add", zap.String("key", fmt.Sprintf("%s-%d", channel, position.GetTimestamp())))
 	c.candidates[fmt.Sprintf("%s-%d", channel, position.GetTimestamp())] = &checkpointCandidate{-1, position, source}
 }
 
@@ -311,7 +313,7 @@ func (wb *writeBufferBase) GetCheckpoint() *msgpb.MsgPosition {
 		return wb.checkpoint
 	}
 
-	log.RatedDebug(20, "checkpoint evaluated",
+	log.Info("checkpoint evaluated",
 		zap.String("cpSource", checkpoint.source),
 		zap.Int64("segmentID", checkpoint.segmentID),
 		zap.Uint64("cpTimestamp", checkpoint.position.GetTimestamp()))

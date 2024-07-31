@@ -24,6 +24,7 @@ import (
 	"github.com/milvus-io/milvus/internal/querynodev2/delegator"
 	"github.com/milvus-io/milvus/internal/querynodev2/segments"
 	"github.com/milvus-io/milvus/internal/storage"
+	"github.com/milvus-io/milvus/internal/util/ctokenizer"
 	base "github.com/milvus-io/milvus/internal/util/pipeline"
 	"github.com/milvus-io/milvus/internal/util/vectorizer"
 	"github.com/milvus-io/milvus/pkg/log"
@@ -50,6 +51,8 @@ type embeddingNode struct {
 
 	// embeddingType EmbeddingType
 	vectorizers map[int64]vectorizer.Vectorizer
+
+	embeddingFrom int64 // FOR TEST
 }
 
 func newEmbeddingNode(collectionID int64, channelName string, manager *DataManager, maxQueueLength int32) (*embeddingNode, error) {
@@ -72,13 +75,17 @@ func newEmbeddingNode(collectionID int64, channelName string, manager *DataManag
 			node.pkField = field
 		}
 
-		// TODO SCHEMA
-		// tokenizer, err := ctokenizer.NewTokenizer(make(map[string]string))
-		// if err != nil {
-		// 	return nil, err
-		// }
-		// node.vectorizers[field.GetFieldID()] = vectorizer.NewHashVectorizer(field, tokenizer)
+		if field.GetName() == "embedding" {
+			tokenizer, err := ctokenizer.NewTokenizer(make(map[string]string))
+			if err != nil {
+				return nil, err
+			}
 
+			log.Info("test--", zap.Any("field", field))
+			node.vectorizers[field.GetFieldID()] = vectorizer.NewHashVectorizer(field, tokenizer)
+		} else if field.GetName() == "text" {
+			node.embeddingFrom = field.GetFieldID()
+		}
 	}
 	return node, nil
 }
