@@ -1108,7 +1108,7 @@ func (sd *shardDelegator) buildBM25IDF(req *internalpb.SearchRequest) error {
 	idfSparseVector := make([][]byte, len(tfMaps))
 	for i, tf := range tfMaps {
 		idf := bm25stats.BuildIDF(tf)
-		idfSparseVector[i] = typeutil.CreateAndSortSparseFloatRow(lo.Keys(idf), lo.Values(idf))
+		idfSparseVector[i] = typeutil.CreateAndSortSparseFloatRow(idf)
 		log.Info("test-- build bm25 idf", zap.Any("idf", idf))
 		if len(idf) > dim {
 			dim = len(idf)

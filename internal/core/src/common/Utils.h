@@ -160,7 +160,8 @@ inline bool
 IsFloatMetricType(const knowhere::MetricType& metric_type) {
     return IsMetricType(metric_type, knowhere::metric::L2) ||
            IsMetricType(metric_type, knowhere::metric::IP) ||
-           IsMetricType(metric_type, knowhere::metric::COSINE);
+           IsMetricType(metric_type, knowhere::metric::COSINE)||
+           IsMetricType(metric_type, knowhere::metric::BM25);
 }
 
 inline bool

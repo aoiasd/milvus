@@ -105,7 +105,7 @@ func (eNode *embeddingNode) vectorize(data *storage.InsertData, meta map[int64]s
 		meta[field.GetFieldID()].Append(sparseMaps...)
 
 		sparseVector := lo.Map(sparseMaps, func(sparseMap map[uint32]float32, _ int) []byte {
-			return typeutil.CreateAndSortSparseFloatRow(lo.Keys(sparseMap), lo.Values(sparseMap))
+			return typeutil.CreateAndSortSparseFloatRow(sparseMap)
 		})
 		data.Data[field.GetFieldID()] = BuildSparseFieldData(dim, sparseVector)
 	}

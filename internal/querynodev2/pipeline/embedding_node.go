@@ -113,7 +113,7 @@ func (eNode *embeddingNode) vectorize(msgs []*msgstream.InsertMsg, stats map[int
 			}
 
 			sparseVector := lo.Map(sparseMaps, func(sparseMap map[uint32]float32, _ int) []byte {
-				return typeutil.CreateAndSortSparseFloatRow(lo.Keys(sparseMap), lo.Values(sparseMap))
+				return typeutil.CreateAndSortSparseFloatRow(sparseMap)
 			})
 			msg.FieldsData = append(msg.FieldsData, delegator.BuildSparseFieldData(field, dim, sparseVector))
 		}

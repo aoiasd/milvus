@@ -1607,9 +1607,11 @@ func SortSparseFloatRow(indices []uint32, values []float32) ([]uint32, []float32
 	return sortedIndices, sortedValues
 }
 
-func CreateAndSortSparseFloatRow(indices []uint32, values []float32) []byte {
-	row := make([]byte, len(indices)*8)
-	data := lo.Map(indices, func(indices uint32, id int) Pair[uint32, float32] { return Pair[uint32, float32]{indices, values[id]} })
+func CreateAndSortSparseFloatRow(sparse map[uint32]float32) []byte {
+	row := make([]byte, len(sparse)*8)
+	data := lo.MapToSlice(sparse, func(indices uint32, value float32) Pair[uint32, float32] {
+		return Pair[uint32, float32]{indices, value}
+	})
 	sort.Slice(data, func(i, j int) bool { return data[i].A < data[j].A })
 	for i := 0; i < len(data); i++ {
 		SparseFloatRowSetAt(row, i, data[i].A, data[i].B)
