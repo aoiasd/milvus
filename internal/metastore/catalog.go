@@ -163,10 +163,6 @@ type DataCoordCatalog interface {
 	SavePartitionStatsInfo(ctx context.Context, info *datapb.PartitionStatsInfo) error
 	DropPartitionStatsInfo(ctx context.Context, info *datapb.PartitionStatsInfo) error
 
-	ListChannelStatsInfo(ctx context.Context) ([]*datapb.ChannelStatsInfo, error)
-	SaveChannelStatsInfo(ctx context.Context, info *datapb.ChannelStatsInfo) error
-	DropChannelStatsInfo(ctx context.Context, info *datapb.ChannelStatsInfo) error
-
 	SaveCurrentPartitionStatsVersion(ctx context.Context, collID, partID int64, vChannel string, currentVersion int64) error
 	GetCurrentPartitionStatsVersion(ctx context.Context, collID, partID int64, vChannel string) (int64, error)
 	DropCurrentPartitionStatsVersion(ctx context.Context, collID, partID int64, vChannel string) error

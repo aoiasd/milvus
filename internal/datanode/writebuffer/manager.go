@@ -10,7 +10,6 @@ import (
 	"github.com/milvus-io/milvus-proto/go-api/v2/msgpb"
 	"github.com/milvus-io/milvus/internal/datanode/metacache"
 	"github.com/milvus-io/milvus/internal/datanode/syncmgr"
-	"github.com/milvus-io/milvus/internal/storage"
 	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/mq/msgstream"
 	"github.com/milvus-io/milvus/pkg/util/hardware"
@@ -34,7 +33,7 @@ type BufferManager interface {
 	DropChannel(channel string)
 	DropPartitions(channel string, partitionIDs []int64)
 	// BufferData put data into channel write buffer.
-	BufferData(channel string, insertData []*InsertData, deleteMsgs []*msgstream.DeleteMsg, meta map[int64]storage.ChannelStats, startPos, endPos *msgpb.MsgPosition) error
+	BufferData(channel string, insertData []*InsertData, deleteMsgs []*msgstream.DeleteMsg, startPos, endPos *msgpb.MsgPosition) error
 	// GetCheckpoint returns checkpoint for provided channel.
 	GetCheckpoint(channel string) (*msgpb.MsgPosition, bool, error)
 	// NotifyCheckpointUpdated notify write buffer checkpoint updated to reset flushTs.
@@ -187,7 +186,7 @@ func (m *bufferManager) FlushChannel(ctx context.Context, channel string, flushT
 }
 
 // BufferData put data into channel write buffer.
-func (m *bufferManager) BufferData(channel string, insertData []*InsertData, deleteMsgs []*msgstream.DeleteMsg, meta map[int64]storage.ChannelStats, startPos, endPos *msgpb.MsgPosition) error {
+func (m *bufferManager) BufferData(channel string, insertData []*InsertData, deleteMsgs []*msgstream.DeleteMsg, startPos, endPos *msgpb.MsgPosition) error {
 	m.mut.RLock()
 	buf, ok := m.buffers[channel]
 	m.mut.RUnlock()
@@ -198,7 +197,7 @@ func (m *bufferManager) BufferData(channel string, insertData []*InsertData, del
 		return merr.WrapErrChannelNotFound(channel)
 	}
 
-	return buf.BufferData(insertData, deleteMsgs, meta, startPos, endPos)
+	return buf.BufferData(insertData, deleteMsgs, startPos, endPos)
 }
 
 // GetCheckpoint returns checkpoint for provided channel.

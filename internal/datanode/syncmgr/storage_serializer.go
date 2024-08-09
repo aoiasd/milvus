@@ -111,6 +111,14 @@ func (s *storageV1Serializer) EncodeBuffer(ctx context.Context, pack *SyncPack) 
 		s.metacache.UpdateSegments(metacache.RollStats(singlePKStats), metacache.WithSegmentIDs(pack.segmentID))
 	}
 
+	if len(pack.bm25Stats) > 0 {
+		statsBlobs, err := s.serializeBM25Stats(pack)
+		if err != nil {
+			return nil, err
+		}
+		task.bm25Blobs = statsBlobs
+	}
+
 	if pack.isFlush {
 		if pack.level != datapb.SegmentLevel_L0 {
 			mergedStatsBlob, err := s.serializeMergedPkStats(pack)
@@ -181,6 +189,23 @@ func (s *storageV1Serializer) serializeBinlog(ctx context.Context, pack *SyncPac
 		result[fieldID] = blob
 	}
 	return result, nil
+}
+
+func (s *storageV1Serializer) serializeBM25Stats(pack *SyncPack) (map[int64]*storage.Blob, error) {
+	blobs := make(map[int64]*storage.Blob)
+	for fieldID, stats := range pack.bm25Stats {
+		bytes, err := stats.Serialize()
+		if err != nil {
+			return nil, err
+		}
+
+		blobs[fieldID] = &storage.Blob{
+			Value: bytes,
+			// TODO AOIASD ADD MEMSIZE
+			RowNum: stats.NumRow(),
+		}
+	}
+	return blobs, nil
 }
 
 func (s *storageV1Serializer) serializeStatslog(pack *SyncPack) (*storage.PrimaryKeyStats, *storage.Blob, error) {

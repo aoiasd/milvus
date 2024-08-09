@@ -51,7 +51,6 @@ type Broker interface {
 	GetRecoveryInfoV2(ctx context.Context, collectionID UniqueID, partitionIDs ...UniqueID) ([]*datapb.VchannelInfo, []*datapb.SegmentInfo, error)
 	DescribeDatabase(ctx context.Context, dbName string) (*rootcoordpb.DescribeDatabaseResponse, error)
 	GetCollectionLoadInfo(ctx context.Context, collectionID UniqueID) ([]string, int64, error)
-	GetChannelStatsInfo(ctx context.Context, collectionID int64, channel string) (*datapb.ChannelStatsInfo, error)
 }
 
 type CoordinatorBroker struct {
@@ -238,26 +237,6 @@ func (broker *CoordinatorBroker) GetRecoveryInfoV2(ctx context.Context, collecti
 	}
 
 	return recoveryInfo.Channels, recoveryInfo.Segments, nil
-}
-
-func (broker *CoordinatorBroker) GetChannelStatsInfo(ctx context.Context, collectionID int64, channel string) (*datapb.ChannelStatsInfo, error) {
-	ctx, cancel := context.WithTimeout(ctx, paramtable.Get().QueryCoordCfg.BrokerTimeout.GetAsDuration(time.Millisecond))
-	defer cancel()
-	log := log.Ctx(ctx).With(
-		zap.Int64("collectionID", collectionID),
-		zap.String("channel", channel),
-	)
-
-	response, err := broker.dataCoord.GetChannelStatsInfo(ctx, &datapb.GetChannelStatsInfoRequset{
-		CollectionID: collectionID,
-		Channel:      channel,
-	})
-	if err != nil {
-		log.Warn("failed to get channel stats info from DataCoord", zap.Error(err))
-		return nil, err
-	}
-
-	return response.GetInfo(), nil
 }
 
 func (broker *CoordinatorBroker) GetSegmentInfo(ctx context.Context, ids ...UniqueID) (*datapb.GetSegmentInfoResponse, error) {

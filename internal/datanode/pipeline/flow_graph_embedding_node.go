@@ -78,7 +78,7 @@ func (eNode *embeddingNode) Name() string {
 	return fmt.Sprintf("embeddingNode-%s-%s", "BM25test", eNode.channelName)
 }
 
-func (eNode *embeddingNode) vectorize(data *storage.InsertData, meta map[int64]storage.ChannelStats) error {
+func (eNode *embeddingNode) vectorize(data *storage.InsertData, meta map[int64]*storage.BM25Stats) error {
 	for _, field := range eNode.schema.Fields {
 		vectorizer, ok := eNode.vectorizers[field.GetFieldID()]
 		if !ok {
@@ -112,14 +112,14 @@ func (eNode *embeddingNode) vectorize(data *storage.InsertData, meta map[int64]s
 	return nil
 }
 
-func (eNode *embeddingNode) prepareInsert(insertMsgs []*msgstream.InsertMsg, meta map[int64]storage.ChannelStats) ([]*writebuffer.InsertData, error) {
+func (eNode *embeddingNode) prepareInsert(insertMsgs []*msgstream.InsertMsg) ([]*writebuffer.InsertData, error) {
 	groups := lo.GroupBy(insertMsgs, func(msg *msgstream.InsertMsg) int64 { return msg.SegmentID })
 	segmentPartition := lo.SliceToMap(insertMsgs, func(msg *msgstream.InsertMsg) (int64, int64) { return msg.GetSegmentID(), msg.GetPartitionID() })
 
 	result := make([]*writebuffer.InsertData, 0, len(groups))
 	for segment, msgs := range groups {
 		inData := writebuffer.NewInsertData(segment, segmentPartition[segment], len(msgs), eNode.pkField.GetDataType())
-
+		stats := make(map[int64]*storage.BM25Stats)
 		for _, msg := range msgs {
 			data, err := storage.InsertMsgToInsertData(msg, eNode.schema)
 			if err != nil {
@@ -144,7 +144,7 @@ func (eNode *embeddingNode) prepareInsert(insertMsgs []*msgstream.InsertMsg, met
 			}
 
 			// TODO FILETER OUT DATA ERALY THAN CHANNEL STATS CHECKPOINT
-			err = eNode.vectorize(data, meta)
+			err = eNode.vectorize(data, stats)
 			if err != nil {
 				log.Warn("failed to embedding insert data", zap.Error(err))
 				return nil, err
@@ -153,6 +153,7 @@ func (eNode *embeddingNode) prepareInsert(insertMsgs []*msgstream.InsertMsg, met
 			// TODO FILETER OUT DATA ERALY THAN SEGMENT CHECKPOINT
 			inData.Append(data, pkFieldData, tsFieldData)
 		}
+		inData.SetStats(stats)
 		result = append(result, inData)
 	}
 	return result, nil
@@ -165,16 +166,13 @@ func (eNode *embeddingNode) Operate(in []Msg) []Msg {
 		return []Msg{fgMsg}
 	}
 
-	meta := make(map[int64]storage.ChannelStats)
-	insertData, err := eNode.prepareInsert(fgMsg.InsertMessages, meta)
+	insertData, err := eNode.prepareInsert(fgMsg.InsertMessages)
 	if err != nil {
 		log.Error("failed to prepare insert data", zap.Error(err))
 		panic(err)
 	}
 
-	fgMsg.ChannelStats = meta
 	fgMsg.InsertData = insertData
-	fgMsg.InsertMessages = nil
 	return []Msg{fgMsg}
 }
 

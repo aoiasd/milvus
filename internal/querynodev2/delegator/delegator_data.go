@@ -31,7 +31,6 @@ import (
 
 	"github.com/milvus-io/milvus-proto/go-api/v2/commonpb"
 	"github.com/milvus-io/milvus-proto/go-api/v2/msgpb"
-	"github.com/milvus-io/milvus/internal/metastore/kv/binlog"
 	"github.com/milvus-io/milvus/internal/proto/datapb"
 	"github.com/milvus-io/milvus/internal/proto/internalpb"
 	"github.com/milvus-io/milvus/internal/proto/querypb"
@@ -41,8 +40,6 @@ import (
 	"github.com/milvus-io/milvus/internal/querynodev2/pkoracle"
 	"github.com/milvus-io/milvus/internal/querynodev2/segments"
 	"github.com/milvus-io/milvus/internal/storage"
-	"github.com/milvus-io/milvus/internal/util/ctokenizer"
-	"github.com/milvus-io/milvus/internal/util/vectorizer"
 	"github.com/milvus-io/milvus/pkg/common"
 	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/metrics"
@@ -979,76 +976,6 @@ func (sd *shardDelegator) SyncTargetVersion(newVersion int64, growingInTarget []
 	}
 	sd.distribution.SyncTargetVersion(newVersion, growingInTarget, sealedInTarget, redundantGrowingIDs)
 	sd.deleteBuffer.TryDiscard(checkpoint.GetTimestamp())
-}
-
-func (sd *shardDelegator) UpdateChannelStats(fieldID int64, newStats storage.ChannelStats) {
-	sd.channelStatsMut.Lock()
-	defer sd.channelStatsMut.Unlock()
-
-	// TODO AOIASD: Check NumRow
-
-	if _, ok := sd.channelStats[fieldID]; !ok {
-		sd.channelStats[fieldID] = newStats
-	} else {
-		sd.channelStats[fieldID].Merge(newStats)
-	}
-}
-
-func (sd *shardDelegator) ReloadChannelStats(ctx context.Context, info *datapb.ChannelStatsInfo) error {
-	if info == nil {
-		return nil
-	}
-	// TODO AOIASD: INIT STATS FOR BM25 FIELD
-
-	// init vectorizer
-	// TODO AOIASD: ONLY FOR BM25 FIELD
-	for _, field := range sd.collection.Schema().Fields {
-		if field.GetName() == "embedding" {
-			tokenizer, err := ctokenizer.NewTokenizer(make(map[string]string))
-			if err != nil {
-				return err
-			}
-			log.Info("test--", zap.Any("field", field))
-			sd.vectorizers[field.GetFieldID()] = vectorizer.NewHashVectorizer(field, tokenizer)
-		}
-	}
-
-	binlog.DecompressChannelStatsBinLog(info.GetCollectionID(), info.GetVChannel(), info.GetStatslogs())
-	log.Info("test-- reload channel stats", zap.Any("stats", info.GetStatslogs()))
-	for _, field := range info.GetStatslogs() {
-		err := sd.LoadChannelStats(ctx, field.GetFieldID(), field.GetBinlogs())
-		if err != nil {
-			return err
-		}
-	}
-
-	sd.channelStatsCheckpoint = info.Checkpoint.GetPosition()
-	return nil
-}
-
-func (sd *shardDelegator) LoadChannelStats(ctx context.Context, fieldID int64, binlogs []*datapb.Binlog) error {
-	newStats := storage.NewBM25Stats()
-	for _, binlog := range binlogs {
-		// TODO AOIASD DOWNLOAD POOL?
-		log.Info("test-- load channel stats", zap.Any("binlog", binlog))
-		bytes, err := sd.chunkManager.Read(ctx, binlog.GetLogPath())
-		if err != nil {
-			return err
-		}
-
-		log.Info("test-- load channel stats", zap.Int("len", len(bytes)))
-		err = newStats.Deserialize(bytes)
-		if err != nil {
-			return err
-		}
-	}
-
-	sd.UpdateChannelStats(fieldID, newStats)
-	return nil
-}
-
-func (sd *shardDelegator) GetChannelStatsStartCheckpoint() *msgpb.MsgPosition {
-	return sd.channelStatsCheckpoint
 }
 
 func (sd *shardDelegator) GetTargetVersion() int64 {

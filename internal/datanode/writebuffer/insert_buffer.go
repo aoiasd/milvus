@@ -74,7 +74,8 @@ type InsertBuffer struct {
 	BufferBase
 	collSchema *schemapb.CollectionSchema
 
-	buffers []*storage.InsertData
+	buffers     []*storage.InsertData
+	statsBuffer *statsBuffer
 }
 
 func NewInsertBuffer(sch *schemapb.CollectionSchema) (*InsertBuffer, error) {
@@ -100,6 +101,8 @@ func NewInsertBuffer(sch *schemapb.CollectionSchema) (*InsertBuffer, error) {
 		collSchema: sch,
 	}
 
+	// TODO AOIASD: IF BM25 FIELD
+	ib.statsBuffer = newStatsBuffer()
 	return ib, nil
 }
 
@@ -123,11 +126,12 @@ func (ib *InsertBuffer) Buffer(inData *InsertData, startPos, endPos *msgpb.MsgPo
 
 		tr := ib.getTimestampRange(tsData)
 		ib.buffer(data, tr, startPos, endPos)
-
 		// update buffer size
 		ib.UpdateStatistics(int64(data.GetRowNum()), int64(data.GetMemorySize()), tr, startPos, endPos)
 		bufferedSize += int64(data.GetMemorySize())
 	}
+	// TODO AOIASD CHECK STATS NUMROW?
+	ib.statsBuffer.Buffer(inData.stats)
 	return bufferedSize
 }
 

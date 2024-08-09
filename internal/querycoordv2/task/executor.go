@@ -382,13 +382,6 @@ func (ex *Executor) subscribeChannel(task *ChannelTask, step int) error {
 		return err
 	}
 
-	// TODO AOIASD ASSERT IF NEED GET CHANNEL STATS INFO
-	statsInfo, err := ex.broker.GetChannelStatsInfo(ctx, req.GetCollectionID(), dmChannel.ChannelName)
-	if err != nil {
-		return err
-	}
-	req.ChannelStatsInfo = statsInfo
-
 	ts := dmChannel.GetSeekPosition().GetTimestamp()
 	log.Info("subscribe channel...",
 		zap.Uint64("checkpoint", ts),

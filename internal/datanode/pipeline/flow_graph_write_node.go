@@ -6,6 +6,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/samber/lo"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 
 	"github.com/milvus-io/milvus-proto/go-api/v2/commonpb"
@@ -62,21 +63,21 @@ func (wNode *writeNode) Operate(in []Msg) []Msg {
 		return []Msg{}
 	}
 
-	// var spans []trace.Span
-	// for _, msg := range fgMsg.InsertMessages {
-	// 	ctx, sp := util.StartTracer(msg, "WriteNode")
-	// 	spans = append(spans, sp)
-	// 	msg.SetTraceCtx(ctx)
-	// }
-	// defer func() {
-	// 	for _, sp := range spans {
-	// 		sp.End()
-	// 	}
-	// }()
+	var spans []trace.Span
+	for _, msg := range fgMsg.InsertMessages {
+		ctx, sp := util.StartTracer(msg, "WriteNode")
+		spans = append(spans, sp)
+		msg.SetTraceCtx(ctx)
+	}
+	defer func() {
+		for _, sp := range spans {
+			sp.End()
+		}
+	}()
 
 	start, end := fgMsg.StartPositions[0], fgMsg.EndPositions[0]
 
-	err := wNode.wbManager.BufferData(wNode.channelName, fgMsg.InsertData, fgMsg.DeleteMessages, fgMsg.ChannelStats, start, end)
+	err := wNode.wbManager.BufferData(wNode.channelName, fgMsg.InsertData, fgMsg.DeleteMessages, start, end)
 	if err != nil {
 		log.Error("failed to buffer data", zap.Error(err))
 		panic(err)

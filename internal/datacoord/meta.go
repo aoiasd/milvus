@@ -969,14 +969,6 @@ func UpdateIsImporting(segmentID int64, isImporting bool) UpdateOperator {
 	}
 }
 
-func (m *meta) UpdateChannelStatsInfo(collection int64, channel string, checkpoint *datapb.CheckPoint, binlogs []*datapb.FieldBinlog) error {
-	return m.channelStatsMeta.Update(collection, channel, checkpoint, binlogs)
-}
-
-func (m *meta) GetChannelStatsInfo(collection int64, channel string) *datapb.ChannelStatsInfo {
-	return m.channelStatsMeta.Get(collection, channel)
-}
-
 // updateSegmentsInfo update segment infos
 // will exec all operators, and update all changed segments
 func (m *meta) UpdateSegmentsInfo(operators ...UpdateOperator) error {
