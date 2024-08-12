@@ -19,7 +19,6 @@ package pipeline
 import (
 	"fmt"
 
-	"github.com/milvus-io/milvus-proto/go-api/v2/msgpb"
 	"github.com/milvus-io/milvus-proto/go-api/v2/schemapb"
 	"github.com/milvus-io/milvus/internal/querynodev2/delegator"
 	"github.com/milvus-io/milvus/internal/storage"
@@ -44,18 +43,16 @@ type embeddingNode struct {
 	// embeddingType EmbeddingType
 	vectorizers map[int64]vectorizer.Vectorizer
 
-	delegator     delegator.ShardDelegator
-	StartPosition *msgpb.MsgPosition
+	delegator delegator.ShardDelegator
 }
 
 func newEmbeddingNode(channelName string, schema *schemapb.CollectionSchema, delegator delegator.ShardDelegator, maxQueueLength int32) (*embeddingNode, error) {
 	node := &embeddingNode{
-		BaseNode:      base.NewBaseNode(fmt.Sprintf("EmbeddingNode-%s", channelName), maxQueueLength),
-		channelName:   channelName,
-		schema:        schema,
-		delegator:     delegator,
-		vectorizers:   make(map[int64]vectorizer.Vectorizer),
-		StartPosition: delegator.GetChannelStatsStartCheckpoint(),
+		BaseNode:    base.NewBaseNode(fmt.Sprintf("EmbeddingNode-%s", channelName), maxQueueLength),
+		channelName: channelName,
+		schema:      schema,
+		delegator:   delegator,
+		vectorizers: make(map[int64]vectorizer.Vectorizer),
 	}
 
 	for _, field := range schema.GetFields() {
@@ -78,13 +75,8 @@ func (eNode *embeddingNode) Name() string {
 	return fmt.Sprintf("embeddingNode-%s-%s", "BM25test", eNode.channelName)
 }
 
-func (eNode *embeddingNode) vectorize(msgs []*msgstream.InsertMsg, stats map[int64]storage.ChannelStats) error {
+func (eNode *embeddingNode) vectorize(msgs []*msgstream.InsertMsg, stats map[int64]*storage.BM25Stats) error {
 	for _, msg := range msgs {
-		var skipStats bool
-		if msg.EndTimestamp < eNode.StartPosition.GetTimestamp() {
-			skipStats = true
-		}
-
 		for fieldID, vectorizer := range eNode.vectorizers {
 			field := vectorizer.GetField()
 			// TODO REMOVE CODE FOR TEST
@@ -104,14 +96,10 @@ func (eNode *embeddingNode) vectorize(msgs []*msgstream.InsertMsg, stats map[int
 				return err
 			}
 
-			// if msg checkpoint early than stats checkpoint skip update stats
-			if !skipStats {
-				if _, ok := stats[fieldID]; !ok {
-					stats[fieldID] = storage.NewBM25Stats()
-				}
-				stats[fieldID].Append(sparseMaps...)
+			if _, ok := stats[fieldID]; !ok {
+				stats[fieldID] = storage.NewBM25Stats()
 			}
-
+			stats[fieldID].Append(sparseMaps...)
 			sparseVector := lo.Map(sparseMaps, func(sparseMap map[uint32]float32, _ int) []byte {
 				return typeutil.CreateAndSortSparseFloatRow(sparseMap)
 			})
@@ -124,8 +112,8 @@ func (eNode *embeddingNode) vectorize(msgs []*msgstream.InsertMsg, stats map[int
 
 func (eNode *embeddingNode) Operate(in []Msg) []Msg {
 	nodeMsg := in[0].(*insertNodeMsg)
-	nodeMsg.channelStats = make(map[int64]storage.ChannelStats)
-	err := eNode.vectorize(nodeMsg.insertMsgs, nodeMsg.channelStats)
+	channelStats := make(map[int64]*storage.BM25Stats)
+	err := eNode.vectorize(nodeMsg.insertMsgs, channelStats)
 	if err != nil {
 		panic(err)
 	}

@@ -107,9 +107,9 @@ func (iNode *insertNode) Operate(in Msg) Msg {
 	}
 
 	iNode.delegator.ProcessInsert(insertDatas)
-	for fieldID, stats := range nodeMsg.channelStats {
-		iNode.delegator.UpdateChannelStats(fieldID, stats)
-	}
+	// for fieldID, stats := range nodeMsg.channelStats {
+	// 	iNode.delegator.UpdateChannelStats(fieldID, stats)
+	// }
 
 	metrics.QueryNodeWaitProcessingMsgCount.WithLabelValues(fmt.Sprint(paramtable.GetNodeID()), metrics.DeleteLabel).Inc()
 

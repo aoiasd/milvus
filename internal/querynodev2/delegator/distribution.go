@@ -23,6 +23,7 @@ import (
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 
+	"github.com/milvus-io/milvus/internal/storage"
 	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/util/merr"
 	"github.com/milvus-io/milvus/pkg/util/typeutil"
@@ -73,6 +74,8 @@ type distribution struct {
 	// current is the snapshot for quick usage for search/query
 	// generated for each change of distribution
 	current *atomic.Pointer[snapshot]
+
+	bm25Stats *storage.BM25Stats
 	// protects current & segments
 	mut sync.RWMutex
 }

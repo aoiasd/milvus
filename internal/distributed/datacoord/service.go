@@ -325,16 +325,6 @@ func (s *Server) SaveBinlogPaths(ctx context.Context, req *datapb.SaveBinlogPath
 	return s.dataCoord.SaveBinlogPaths(ctx, req)
 }
 
-// SaveChannelStatslogPaths implement DataCoordServer, saves channel statslog according to datanode request
-func (s *Server) SaveChannelStatslogPaths(ctx context.Context, req *datapb.SaveChannelStatslogPathsRequest) (*commonpb.Status, error) {
-	return s.dataCoord.SaveChannelStatslogPaths(ctx, req)
-}
-
-// GetChannelStatsInfo implement DataCoordServer, return channel stats info
-func (s *Server) GetChannelStatsInfo(ctx context.Context, req *datapb.GetChannelStatsInfoRequset) (*datapb.GetChannelStatsInfoResponse, error) {
-	return s.dataCoord.GetChannelStatsInfo(ctx, req)
-}
-
 // GetRecoveryInfo gets information for recovering channels
 func (s *Server) GetRecoveryInfo(ctx context.Context, req *datapb.GetRecoveryInfoRequest) (*datapb.GetRecoveryInfoResponse, error) {
 	return s.dataCoord.GetRecoveryInfo(ctx, req)

@@ -436,47 +436,6 @@ func (s *Server) GetSegmentInfo(ctx context.Context, req *datapb.GetSegmentInfoR
 	return resp, nil
 }
 
-func (s *Server) SaveChannelStatslogPaths(ctx context.Context, req *datapb.SaveChannelStatslogPathsRequest) (*commonpb.Status, error) {
-	if err := merr.CheckHealthy(s.GetStateCode()); err != nil {
-		return merr.Status(err), nil
-	}
-
-	var (
-		nodeID      = req.GetBase().GetSourceID()
-		channelName = req.GetChannel()
-	)
-
-	log := log.Ctx(ctx).With(
-		zap.Int64("nodeID", nodeID),
-		zap.String("channel", channelName),
-		zap.Int64("collectionID", req.GetCollectionID()),
-	)
-
-	log.Info("receive SaveChannelStatslogPaths request",
-		zap.Any("checkpoint", req.GetCheckPoint()))
-
-	if err := s.meta.UpdateChannelStatsInfo(req.GetCollectionID(), req.GetChannel(), req.GetCheckPoint(), req.GetStatslogs()); err != nil {
-		log.Error("save channel stats binlog path and checkpoints failed", zap.Error(err))
-		return merr.Status(err), nil
-	}
-
-	return merr.Status(nil), nil
-}
-
-func (s *Server) GetChannelStatsInfo(ctx context.Context, req *datapb.GetChannelStatsInfoRequset) (*datapb.GetChannelStatsInfoResponse, error) {
-	if err := merr.CheckHealthy(s.GetStateCode()); err != nil {
-		return &datapb.GetChannelStatsInfoResponse{
-			Status: merr.Status(err),
-		}, nil
-	}
-
-	info := s.meta.GetChannelStatsInfo(req.GetCollectionID(), req.GetChannel())
-	return &datapb.GetChannelStatsInfoResponse{
-		Status: merr.Status(nil),
-		Info:   info,
-	}, nil
-}
-
 // SaveBinlogPaths updates segment related binlog path
 // works for Checkpoints and Flush
 func (s *Server) SaveBinlogPaths(ctx context.Context, req *datapb.SaveBinlogPathsRequest) (*commonpb.Status, error) {
@@ -557,7 +516,7 @@ func (s *Server) SaveBinlogPaths(ctx context.Context, req *datapb.SaveBinlogPath
 
 	// save binlogs, start positions and checkpoints
 	operators = append(operators,
-		AddBinlogsOperator(req.GetSegmentID(), req.GetField2BinlogPaths(), req.GetField2StatslogPaths(), req.GetDeltalogs()),
+		AddBinlogsOperator(req.GetSegmentID(), req.GetField2BinlogPaths(), req.GetField2StatslogPaths(), req.GetField2Bm25LogPaths(), req.GetDeltalogs()),
 		UpdateStartPosition(req.GetStartPositions()),
 		UpdateCheckPointOperator(req.GetSegmentID(), req.GetCheckPoints()),
 	)

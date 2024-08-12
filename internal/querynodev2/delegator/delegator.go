@@ -34,7 +34,6 @@ import (
 
 	"github.com/milvus-io/milvus-proto/go-api/v2/commonpb"
 	"github.com/milvus-io/milvus-proto/go-api/v2/msgpb"
-	"github.com/milvus-io/milvus/internal/proto/datapb"
 	"github.com/milvus-io/milvus/internal/proto/internalpb"
 	"github.com/milvus-io/milvus/internal/proto/querypb"
 	"github.com/milvus-io/milvus/internal/querynodev2/cluster"
@@ -89,12 +88,6 @@ type ShardDelegator interface {
 	VerifyExcludedSegments(segmentID int64, ts uint64) bool
 	TryCleanExcludedSegments(ts uint64)
 
-	// channel stats
-	UpdateChannelStats(fieldID int64, newStats storage.ChannelStats)
-	LoadChannelStats(ctx context.Context, fieldID int64, binlogs []*datapb.Binlog) error
-	ReloadChannelStats(ctx context.Context, info *datapb.ChannelStatsInfo) error
-	GetChannelStatsStartCheckpoint() *msgpb.MsgPosition
-
 	// control
 	Serviceable() bool
 	Start()
@@ -143,11 +136,8 @@ type shardDelegator struct {
 	growingSegmentLock sync.RWMutex
 	partitionStatsMut  sync.RWMutex
 
-	//channel stats
-	channelStats           map[UniqueID]storage.ChannelStats
-	channelStatsCheckpoint *msgpb.MsgPosition
-	channelStatsMut        sync.RWMutex
-	vectorizers            map[UniqueID]vectorizer.Vectorizer
+	//text vectorizer
+	vectorizers map[UniqueID]vectorizer.Vectorizer
 }
 
 // getLogger returns the zap logger with pre-defined shard attributes.
@@ -897,7 +887,6 @@ func NewShardDelegator(ctx context.Context, collectionID UniqueID, replicaID Uni
 		chunkManager:     chunkManager,
 		partitionStats:   make(map[UniqueID]*storage.PartitionStatsSnapshot),
 		excludedSegments: excludedSegments,
-		channelStats:     make(map[int64]storage.ChannelStats),
 		vectorizers:      make(map[int64]vectorizer.Vectorizer),
 	}
 	m := sync.Mutex{}

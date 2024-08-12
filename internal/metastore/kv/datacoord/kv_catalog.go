@@ -302,7 +302,7 @@ func (kc *Catalog) AlterSegments(ctx context.Context, segments []*datapb.Segment
 		segment := b.Segment
 
 		binlogKvs, err := buildBinlogKvsWithLogID(segment.GetCollectionID(), segment.GetPartitionID(), segment.GetID(),
-			cloneLogs(segment.GetBinlogs()), cloneLogs(segment.GetDeltalogs()), cloneLogs(segment.GetStatslogs()))
+			cloneLogs(segment.GetBinlogs()), cloneLogs(segment.GetDeltalogs()), cloneLogs(segment.GetStatslogs()), cloneLogs(segment.GetBm25Statslogs()))
 		if err != nil {
 			return err
 		}
@@ -321,7 +321,7 @@ func (kc *Catalog) handleDroppedSegment(segment *datapb.SegmentInfo) (kvs map[st
 	}
 	// To be compatible with previous implementation, we have to write binlogs on etcd for correct gc.
 	if !has {
-		kvs, err = buildBinlogKvsWithLogID(segment.GetCollectionID(), segment.GetPartitionID(), segment.GetID(), cloneLogs(segment.GetBinlogs()), cloneLogs(segment.GetDeltalogs()), cloneLogs(segment.GetStatslogs()))
+		kvs, err = buildBinlogKvsWithLogID(segment.GetCollectionID(), segment.GetPartitionID(), segment.GetID(), cloneLogs(segment.GetBinlogs()), cloneLogs(segment.GetDeltalogs()), cloneLogs(segment.GetStatslogs()), cloneLogs(segment.GetBm25Statslogs()))
 		if err != nil {
 			return
 		}
@@ -391,7 +391,7 @@ func (kc *Catalog) SaveDroppedSegmentsInBatch(ctx context.Context, segments []*d
 	kvs := make(map[string]string)
 	for _, s := range segments {
 		key := buildSegmentPath(s.GetCollectionID(), s.GetPartitionID(), s.GetID())
-		noBinlogsSegment, _, _, _ := CloneSegmentWithExcludeBinlogs(s)
+		noBinlogsSegment, _, _, _, _ := CloneSegmentWithExcludeBinlogs(s)
 		// `s` is not mutated above. Also, `noBinlogsSegment` is a cloned version of `s`.
 		segmentutil.ReCalcRowCount(s, noBinlogsSegment)
 		segBytes, err := proto.Marshal(noBinlogsSegment)
@@ -902,40 +902,6 @@ func (kc *Catalog) SavePartitionStatsInfo(ctx context.Context, coll *datapb.Part
 func (kc *Catalog) DropPartitionStatsInfo(ctx context.Context, info *datapb.PartitionStatsInfo) error {
 	key := buildPartitionStatsInfoPath(info)
 	return kc.MetaKv.Remove(key)
-}
-
-func (kc *Catalog) ListChannelStatsInfo(ctx context.Context) ([]*datapb.ChannelStatsInfo, error) {
-	infos := make([]*datapb.ChannelStatsInfo, 0)
-
-	_, values, err := kc.MetaKv.LoadWithPrefix(ChannelStatsInfoPrefix)
-
-	for _, value := range values {
-		info := &datapb.ChannelStatsInfo{}
-		err = proto.Unmarshal([]byte(value), info)
-		if err != nil {
-			return nil, err
-		}
-		infos = append(infos, info)
-	}
-	return infos, nil
-}
-
-func (kc *Catalog) SaveChannelStatsInfo(ctx context.Context, info *datapb.ChannelStatsInfo) error {
-	if info == nil {
-		return nil
-	}
-	cloned := proto.Clone(info).(*datapb.ChannelStatsInfo)
-	k, v, err := buildChannelStatsInfoKv(cloned)
-	if err != nil {
-		return err
-	}
-	kvs := make(map[string]string)
-	kvs[k] = v
-	return kc.SaveByBatch(kvs)
-}
-func (kv *Catalog) DropChannelStatsInfo(ctx context.Context, info *datapb.ChannelStatsInfo) error {
-	key := buildChannelStatsInfoPath(info)
-	return kv.MetaKv.Remove(key)
 }
 
 func (kc *Catalog) SaveCurrentPartitionStatsVersion(ctx context.Context, collID, partID int64, vChannel string, currentVersion int64) error {

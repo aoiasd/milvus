@@ -19,17 +19,15 @@ package pipeline
 import (
 	"github.com/milvus-io/milvus-proto/go-api/v2/commonpb"
 	"github.com/milvus-io/milvus/internal/querynodev2/collector"
-	"github.com/milvus-io/milvus/internal/storage"
 	"github.com/milvus-io/milvus/pkg/mq/msgstream"
 	"github.com/milvus-io/milvus/pkg/util/merr"
 	"github.com/milvus-io/milvus/pkg/util/metricsinfo"
 )
 
 type insertNodeMsg struct {
-	insertMsgs   []*InsertMsg
-	deleteMsgs   []*DeleteMsg
-	channelStats map[int64]storage.ChannelStats
-	timeRange    TimeRange
+	insertMsgs []*InsertMsg
+	deleteMsgs []*DeleteMsg
+	timeRange  TimeRange
 }
 
 type deleteNodeMsg struct {

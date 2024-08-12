@@ -20,7 +20,6 @@ import (
 // MetaWriter is the interface for SyncManager to write segment sync meta.
 type MetaWriter interface {
 	UpdateSync(context.Context, *SyncTask) error
-	UpdateSyncChannelStats(context.Context, *SyncChannelStatsTask) error
 	UpdateSyncV2(*SyncTaskV2) error
 	DropChannel(context.Context, string) error
 }
@@ -41,8 +40,9 @@ func BrokerMetaWriter(broker broker.Broker, serverID int64, opts ...retry.Option
 
 func (b *brokerMetaWriter) UpdateSync(ctx context.Context, pack *SyncTask) error {
 	var (
-		checkPoints       = []*datapb.CheckPoint{}
-		deltaFieldBinlogs = []*datapb.FieldBinlog{}
+		checkPoints                                 = []*datapb.CheckPoint{}
+		deltaFieldBinlogs                           = []*datapb.FieldBinlog{}
+		deltaBm25StatsBinlogs []*datapb.FieldBinlog = nil
 	)
 
 	insertFieldBinlogs := lo.MapToSlice(pack.insertBinlogs, func(_ int64, fieldBinlog *datapb.FieldBinlog) *datapb.FieldBinlog { return fieldBinlog })
@@ -51,6 +51,9 @@ func (b *brokerMetaWriter) UpdateSync(ctx context.Context, pack *SyncTask) error
 		deltaFieldBinlogs = append(deltaFieldBinlogs, pack.deltaBinlog)
 	}
 
+	if len(pack.bm25Binlogs) > 0 {
+		deltaBm25StatsBinlogs = lo.MapToSlice(pack.bm25Binlogs, func(_ int64, fieldBinlog *datapb.FieldBinlog) *datapb.FieldBinlog { return fieldBinlog })
+	}
 	// only current segment checkpoint info
 	segment, ok := pack.metacache.GetSegmentByID(pack.segmentID)
 	if !ok {
@@ -79,6 +82,7 @@ func (b *brokerMetaWriter) UpdateSync(ctx context.Context, pack *SyncTask) error
 		zap.Int("binlogNum", lo.SumBy(insertFieldBinlogs, getBinlogNum)),
 		zap.Int("statslogNum", lo.SumBy(statsFieldBinlogs, getBinlogNum)),
 		zap.Int("deltalogNum", lo.SumBy(deltaFieldBinlogs, getBinlogNum)),
+		zap.Int("bm25logNum", lo.SumBy(deltaBm25StatsBinlogs, getBinlogNum)),
 		zap.String("vChannelName", pack.channelName),
 	)
 
@@ -93,6 +97,7 @@ func (b *brokerMetaWriter) UpdateSync(ctx context.Context, pack *SyncTask) error
 		PartitionID:         pack.partitionID,
 		Field2BinlogPaths:   insertFieldBinlogs,
 		Field2StatslogPaths: statsFieldBinlogs,
+		Field2Bm25LogPaths:  deltaBm25StatsBinlogs,
 		Deltalogs:           deltaFieldBinlogs,
 
 		CheckPoints: checkPoints,
@@ -137,48 +142,6 @@ func (b *brokerMetaWriter) UpdateSync(ctx context.Context, pack *SyncTask) error
 	pack.metacache.UpdateSegments(metacache.SetStartPosRecorded(true), metacache.WithSegmentIDs(lo.Map(startPos, func(pos *datapb.SegmentStartPosition, _ int) int64 { return pos.GetSegmentID() })...))
 
 	return nil
-}
-
-func (b *brokerMetaWriter) UpdateSyncChannelStats(ctx context.Context, pack *SyncChannelStatsTask) error {
-	log.Info("SaveChannelStatslogPath",
-		zap.Int64("CollectionID", pack.collectionID),
-		zap.String("Channel", pack.channel),
-		zap.Any("Checkpoint", pack.Checkpoint()),
-	)
-
-	req := &datapb.SaveChannelStatslogPathsRequest{
-		CollectionID: pack.collectionID,
-		Channel:      pack.channel,
-		CheckPoint: &datapb.CheckPoint{
-			SegmentID: -1,
-			// NumOfRows:, // TODO NUM OF ROWS
-			Position: pack.checkpoint,
-		},
-		Statslogs: lo.Values(pack.binlog),
-	}
-
-	err := retry.Do(context.Background(), func() error {
-		err := b.broker.SaveChannelStatslogPaths(context.Background(), req)
-		// meta error, datanode handles a virtual channel does not belong here
-		if errors.IsAny(err, merr.ErrChannelNotFound) {
-			log.Warn("meta error found, skip sync and start to drop virtual channel", zap.String("channel", pack.channel))
-			return nil
-		}
-
-		if err != nil {
-			return err
-		}
-
-		return nil
-	}, b.opts...)
-
-	if err != nil {
-		log.Warn("failed to SaveChannelStatslogPath",
-			zap.String("channel", pack.channel),
-			zap.Error(err))
-	}
-
-	return err
 }
 
 func (b *brokerMetaWriter) UpdateSyncV2(pack *SyncTaskV2) error {

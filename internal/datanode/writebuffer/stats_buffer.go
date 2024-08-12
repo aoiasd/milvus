@@ -17,82 +17,33 @@
 package writebuffer
 
 import (
-	"github.com/milvus-io/milvus-proto/go-api/v2/msgpb"
 	"github.com/milvus-io/milvus/internal/storage"
-	"github.com/milvus-io/milvus/pkg/util/merr"
 )
 
 type statsBuffer struct {
-	meta map[int64]storage.ChannelStats
-
-	startPos *msgpb.MsgPosition
-	endPos   *msgpb.MsgPosition
-	numRow   int64
+	meta map[int64]*storage.BM25Stats
 }
 
-func getNumRow(metaMap map[int64]storage.ChannelStats) (int64, error) {
-	if len(metaMap) == 0 {
-		return 0, nil
-	}
-	var numRow = int64(-1)
-	for _, meta := range metaMap {
-		if numRow == -1 {
-			numRow = meta.NumRow()
-		} else if meta.NumRow() != numRow {
-			return 0, merr.WrapErrParameterInvalid(numRow, meta.NumRow(), "check embedding stats num row failed")
-		}
-	}
-	return numRow, nil
-}
-
-func (b *statsBuffer) Buffer(metaMap map[int64]storage.ChannelStats, startPos, endPos *msgpb.MsgPosition) error {
-	numRow, err := getNumRow(metaMap)
-	if err != nil {
-		return err
-	}
-
-	if numRow == 0 {
-		return nil
-	}
-
+func (b *statsBuffer) Buffer(metaMap map[int64]*storage.BM25Stats) {
 	for fieldID, meta := range metaMap {
 		if fieldMeta, ok := b.meta[fieldID]; ok {
-			err := fieldMeta.Merge(meta)
-			if err != nil {
-				return err
-			}
+			fieldMeta.Merge(meta)
 		} else {
 			b.meta[fieldID] = meta
 		}
 	}
 
-	b.numRow += numRow
-	if b.startPos == nil || startPos.GetTimestamp() < b.startPos.GetTimestamp() {
-		b.startPos = startPos
-	}
-
-	if b.endPos == nil || endPos.GetTimestamp() > b.endPos.GetTimestamp() {
-		b.endPos = endPos
-	}
-	return nil
+	return
 }
 
-func (b *statsBuffer) yieldBuffer() (map[int64]storage.ChannelStats, *msgpb.MsgPosition, *msgpb.MsgPosition) {
+func (b *statsBuffer) yieldBuffer() map[int64]*storage.BM25Stats {
 	result := b.meta
-	start, end := b.startPos, b.endPos
-	b.meta = make(map[int64]storage.ChannelStats)
-	b.startPos = nil
-	b.endPos = nil
-	b.numRow = 0
-	return result, start, end
-}
-
-func (b *statsBuffer) EarliestPosition() *msgpb.MsgPosition {
-	return b.startPos
+	b.meta = make(map[int64]*storage.BM25Stats)
+	return result
 }
 
 func newStatsBuffer() *statsBuffer {
 	return &statsBuffer{
-		meta: make(map[int64]storage.ChannelStats),
+		meta: make(map[int64]*storage.BM25Stats),
 	}
 }

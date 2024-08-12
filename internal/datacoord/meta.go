@@ -86,7 +86,6 @@ type meta struct {
 	indexMeta          *indexMeta
 	analyzeMeta        *analyzeMeta
 	partitionStatsMeta *partitionStatsMeta
-	channelStatsMeta   *channelStatsMeta
 	compactionTaskMeta *compactionTaskMeta
 }
 
@@ -153,11 +152,6 @@ func newMeta(ctx context.Context, catalog metastore.DataCoordCatalog, chunkManag
 		return nil, err
 	}
 
-	csm, err := newChannelStatsMeta(ctx, catalog)
-	if err != nil {
-		return nil, err
-	}
-
 	ctm, err := newCompactionTaskMeta(ctx, catalog)
 	if err != nil {
 		return nil, err
@@ -172,7 +166,6 @@ func newMeta(ctx context.Context, catalog metastore.DataCoordCatalog, chunkManag
 		analyzeMeta:        am,
 		chunkManager:       chunkManager,
 		partitionStatsMeta: psm,
-		channelStatsMeta:   csm,
 		compactionTaskMeta: ctm,
 	}
 	err = mt.reloadFromKV()
@@ -827,7 +820,7 @@ func RevertSegmentPartitionStatsVersionOperator(segmentID int64) UpdateOperator 
 }
 
 // Add binlogs in segmentInfo
-func AddBinlogsOperator(segmentID int64, binlogs, statslogs, deltalogs []*datapb.FieldBinlog) UpdateOperator {
+func AddBinlogsOperator(segmentID int64, binlogs, statslogs, bm25logs, deltalogs []*datapb.FieldBinlog) UpdateOperator {
 	return func(modPack *updateSegmentPack) bool {
 		segment := modPack.Get(segmentID)
 		if segment == nil {
@@ -839,6 +832,7 @@ func AddBinlogsOperator(segmentID int64, binlogs, statslogs, deltalogs []*datapb
 		segment.Binlogs = mergeFieldBinlogs(segment.GetBinlogs(), binlogs)
 		segment.Statslogs = mergeFieldBinlogs(segment.GetStatslogs(), statslogs)
 		segment.Deltalogs = mergeFieldBinlogs(segment.GetDeltalogs(), deltalogs)
+		segment.Bm25Statslogs = mergeFieldBinlogs(segment.GetBm25Statslogs(), bm25logs)
 		modPack.increments[segmentID] = metastore.BinlogsIncrement{
 			Segment: segment.SegmentInfo,
 		}
@@ -967,14 +961,6 @@ func UpdateIsImporting(segmentID int64, isImporting bool) UpdateOperator {
 		segment.IsImporting = isImporting
 		return true
 	}
-}
-
-func (m *meta) UpdateChannelStatsInfo(collection int64, channel string, checkpoint *datapb.CheckPoint, binlogs []*datapb.FieldBinlog) error {
-	return m.channelStatsMeta.Update(collection, channel, checkpoint, binlogs)
-}
-
-func (m *meta) GetChannelStatsInfo(collection int64, channel string) *datapb.ChannelStatsInfo {
-	return m.channelStatsMeta.Get(collection, channel)
 }
 
 // updateSegmentsInfo update segment infos

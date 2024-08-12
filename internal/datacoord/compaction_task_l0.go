@@ -371,7 +371,7 @@ func (t *l0CompactionTask) saveSegmentMeta() bool {
 	plan := t.GetPlan()
 	var operators []UpdateOperator
 	for _, seg := range result.GetSegments() {
-		operators = append(operators, AddBinlogsOperator(seg.GetSegmentID(), nil, nil, seg.GetDeltalogs()))
+		operators = append(operators, AddBinlogsOperator(seg.GetSegmentID(), nil, nil, seg.GetDeltalogs(), nil))
 	}
 
 	levelZeroSegments := lo.Filter(plan.GetSegmentBinlogs(), func(b *datapb.CompactionSegmentBinlogs, _ int) bool {

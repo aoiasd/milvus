@@ -31,7 +31,7 @@ const (
 	AnalyzeTaskPrefix                  = MetaPrefix + "/analyze-task"
 	PartitionStatsInfoPrefix           = MetaPrefix + "/partition-stats"
 	PartitionStatsCurrentVersionPrefix = MetaPrefix + "/current-partition-stats-version"
-	ChannelStatsInfoPrefix             = MetaPrefix + "/channel-stats"
+	BM25StatsInfoPrefix                = MetaPrefix + "/bm25-stats"
 
 	NonRemoveFlagTomestone = "non-removed"
 	RemoveFlagTomestone    = "removed"

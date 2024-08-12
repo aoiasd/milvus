@@ -38,7 +38,7 @@ type WriteBuffer interface {
 	// HasSegment checks whether certain segment exists in this buffer.
 	HasSegment(segmentID int64) bool
 	// BufferData is the method to buffer dml data msgs.
-	BufferData(insertMsgs []*InsertData, deleteMsgs []*msgstream.DeleteMsg, meta map[int64]storage.ChannelStats, startPos, endPos *msgpb.MsgPosition) error
+	BufferData(insertMsgs []*InsertData, deleteMsgs []*msgstream.DeleteMsg, startPos, endPos *msgpb.MsgPosition) error
 	// FlushTimestamp set flush timestamp for write buffer
 	SetFlushTimestamp(flushTs uint64)
 	// GetFlushTimestamp get current flush timestamp
@@ -203,23 +203,22 @@ func newWriteBufferBase(channel string, metacache metacache.MetaCache, storageV2
 	}
 
 	wb := &writeBufferBase{
-		channelName:        channel,
-		collectionID:       metacache.Collection(),
-		collSchema:         schema,
-		helper:             helper,
-		pkField:            pkField,
-		estSizePerRecord:   estSize,
-		syncMgr:            syncMgr,
-		metaWriter:         option.metaWriter,
-		buffers:            make(map[int64]*segmentBuffer),
-		metaCache:          metacache,
-		serializer:         serializer,
-		syncCheckpoint:     newCheckpointCandiates(),
-		syncPolicies:       option.syncPolicies,
-		flushTimestamp:     flushTs,
-		storagev2Cache:     storageV2Cache,
-		allocator:          option.idAllocator,
-		channelStatsBuffer: newStatsBuffer(),
+		channelName:      channel,
+		collectionID:     metacache.Collection(),
+		collSchema:       schema,
+		helper:           helper,
+		pkField:          pkField,
+		estSizePerRecord: estSize,
+		syncMgr:          syncMgr,
+		metaWriter:       option.metaWriter,
+		buffers:          make(map[int64]*segmentBuffer),
+		metaCache:        metacache,
+		serializer:       serializer,
+		syncCheckpoint:   newCheckpointCandiates(),
+		syncPolicies:     option.syncPolicies,
+		flushTimestamp:   flushTs,
+		storagev2Cache:   storageV2Cache,
+		allocator:        option.idAllocator,
 	}
 
 	wb.logger = log.With(zap.Int64("collectionID", wb.collectionID),
@@ -298,7 +297,6 @@ func (wb *writeBufferBase) GetCheckpoint() *msgpb.MsgPosition {
 	candidates := lo.MapToSlice(wb.buffers, func(_ int64, buf *segmentBuffer) *checkpointCandidate {
 		return &checkpointCandidate{buf.segmentID, buf.EarliestPosition(), "segment buffer"}
 	})
-	candidates = append(candidates, &checkpointCandidate{-1, wb.channelStatsBuffer.EarliestPosition(), "channel stats buffer"})
 	candidates = lo.Filter(candidates, func(candidate *checkpointCandidate, _ int) bool {
 		return candidate.position != nil
 	})
@@ -320,24 +318,12 @@ func (wb *writeBufferBase) GetCheckpoint() *msgpb.MsgPosition {
 	return checkpoint.position
 }
 
-func (wb *writeBufferBase) checkChannelStatsSync() bool {
-	// TODO SUPPORT SYNC CHANNEL STATS POLICY OPTION
-	if wb.channelStatsBuffer.numRow >= 10000 {
-		return true
-	}
-	return false
-}
-
 func (wb *writeBufferBase) triggerSync() (segmentIDs []int64) {
 	segmentsToSync := wb.getSegmentsToSync(wb.checkpoint.GetTimestamp(), wb.syncPolicies...)
 	if len(segmentsToSync) > 0 {
 		log.Info("write buffer get segments to sync", zap.Int64s("segmentIDs", segmentsToSync))
 		// ignore future here, use callback to handle error
 		wb.syncSegments(context.Background(), segmentsToSync)
-	}
-
-	if wb.channelStatsBuffer != nil && wb.checkChannelStatsSync() {
-		wb.syncChannelStats(context.Background())
 	}
 
 	return segmentsToSync
@@ -364,24 +350,6 @@ func (wb *writeBufferBase) dropPartitions(partitionIDs []int64) {
 	wb.metaCache.UpdateSegments(metacache.UpdateState(commonpb.SegmentState_Dropped),
 		metacache.WithSegmentIDs(segIDs...),
 	)
-}
-
-func (wb *writeBufferBase) syncChannelStats(ctx context.Context) *conc.Future[struct{}] {
-	syncTask, err := wb.getSyncChannelStatsTask(ctx)
-	if err != nil {
-		log.Fatal("failed to get sync meta task", zap.String("channel", wb.channelName), zap.Error(err))
-	}
-
-	return wb.syncMgr.SyncData(ctx, syncTask, func(err error) error {
-		if err != nil {
-			return err
-		}
-
-		if syncTask.StartPosition() != nil {
-			wb.syncCheckpoint.RemoveChannel(syncTask.ChannelName(), syncTask.StartPosition().GetTimestamp())
-		}
-		return nil
-	})
 }
 
 func (wb *writeBufferBase) syncSegments(ctx context.Context, segmentIDs []int64) []*conc.Future[struct{}] {
@@ -462,6 +430,7 @@ type InsertData struct {
 	segmentID   int64
 	partitionID int64
 	data        []*storage.InsertData
+	stats       map[int64]*storage.BM25Stats
 
 	pkField []storage.FieldData
 	pkType  schemapb.DataType
@@ -521,6 +490,10 @@ func (id *InsertData) Append(data *storage.InsertData, pkFieldData storage.Field
 
 func (id *InsertData) GetSegmentID() int64 {
 	return id.segmentID
+}
+
+func (id *InsertData) SetStats(stats map[int64]*storage.BM25Stats) {
+	id.stats = stats
 }
 
 func (id *InsertData) pkExists(pk storage.PrimaryKey, ts uint64) bool {
@@ -674,30 +647,6 @@ func (wb *writeBufferBase) bufferDelete(segmentID int64, pks []storage.PrimaryKe
 	metrics.DataNodeFlowGraphBufferDataSize.WithLabelValues(fmt.Sprint(paramtable.GetNodeID()), fmt.Sprint(wb.collectionID)).Add(float64(bufSize))
 }
 
-func (wb *writeBufferBase) getSyncChannelStatsTask(ctx context.Context) (syncmgr.Task, error) {
-	if wb.channelStatsBuffer == nil {
-		return nil, nil
-	}
-
-	meta, startPos, endPos := wb.channelStatsBuffer.yieldBuffer()
-	// TODO SIKP EMPTY BUFFER ?
-
-	if startPos != nil {
-		wb.syncCheckpoint.AddChannel(wb.channelName, startPos, "syncing channel stats task")
-	}
-
-	task := syncmgr.NewSyncChannelStatsTask().
-		WithChannelName(wb.channelName).
-		WithCheckpoint(endPos).
-		WithStartPosition(startPos).
-		WithCollectionID(wb.collectionID).
-		WithMetaData(meta).
-		WithSchema(wb.collSchema).
-		WithAllocator(wb.allocator).
-		WithMetaWriter(wb.metaWriter)
-
-	return task, nil
-}
 func (wb *writeBufferBase) getSyncTask(ctx context.Context, segmentID int64) (syncmgr.Task, error) {
 	log := log.Ctx(ctx).With(
 		zap.Int64("segmentID", segmentID),

@@ -71,11 +71,12 @@ type SyncTask struct {
 
 	insertBinlogs map[int64]*datapb.FieldBinlog // map[int64]*datapb.Binlog
 	statsBinlogs  map[int64]*datapb.FieldBinlog // map[int64]*datapb.Binlog
+	bm25Binlogs   map[int64]*datapb.FieldBinlog
 	deltaBinlog   *datapb.FieldBinlog
 
 	binlogBlobs     map[int64]*storage.Blob // fieldID => blob
 	binlogMemsize   map[int64]int64         // memory size
-	embeddingBlobs  map[int64]*storage.Blob
+	bm25Blobs       map[int64]*storage.Blob
 	batchStatsBlob  *storage.Blob
 	mergedStatsBlob *storage.Blob
 	deltaBlob       *storage.Blob
@@ -145,6 +146,8 @@ func (t *SyncTask) Run(ctx context.Context) (err error) {
 	t.processInsertBlobs()
 	t.processStatsBlob()
 	t.processDeltaBlob()
+	// TODO IF BM25
+	t.processBM25StastBlob()
 
 	err = t.writeLogs(ctx)
 	if err != nil {
@@ -241,6 +244,22 @@ func (t *SyncTask) processInsertBlobs() {
 	}
 }
 
+func (t *SyncTask) processBM25StastBlob() {
+	for fieldID, blob := range t.bm25Blobs {
+		k := metautil.JoinIDPath(t.collectionID, t.partitionID, t.segmentID, fieldID, t.nextID())
+		key := path.Join(t.chunkManager.RootPath(), common.BM25StatsPath, k)
+		t.segmentData[key] = blob.GetValue()
+		t.appendBM25Statslog(fieldID, &datapb.Binlog{
+			EntriesNum:    blob.RowNum,
+			TimestampFrom: t.tsFrom,
+			TimestampTo:   t.tsTo,
+			LogPath:       key,
+			LogSize:       int64(len(blob.GetValue())),
+			MemorySize:    blob.MemorySize, // TODO AOIASD ?,
+		})
+	}
+}
+
 func (t *SyncTask) processStatsBlob() {
 	if t.batchStatsBlob != nil {
 		t.convertBlob2StatsBinlog(t.batchStatsBlob, t.pkField.GetFieldID(), t.nextID(), t.batchSize)
@@ -296,6 +315,17 @@ func (t *SyncTask) appendBinlog(fieldID int64, binlog *datapb.Binlog) {
 	}
 
 	fieldBinlog.Binlogs = append(fieldBinlog.Binlogs, binlog)
+}
+
+func (t *SyncTask) appendBM25Statslog(fieldID int64, log *datapb.Binlog) {
+	fieldBinlog, ok := t.bm25Binlogs[fieldID]
+	if !ok {
+		fieldBinlog = &datapb.FieldBinlog{
+			FieldID: fieldID,
+		}
+		t.bm25Binlogs[fieldID] = fieldBinlog
+	}
+	fieldBinlog.Binlogs = append(fieldBinlog.Binlogs, log)
 }
 
 func (t *SyncTask) appendStatslog(fieldID int64, statlog *datapb.Binlog) {
