@@ -23,7 +23,6 @@ import (
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 
-	"github.com/milvus-io/milvus/internal/storage"
 	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/util/merr"
 	"github.com/milvus-io/milvus/pkg/util/typeutil"
@@ -75,7 +74,7 @@ type distribution struct {
 	// generated for each change of distribution
 	current *atomic.Pointer[snapshot]
 
-	bm25Stats *storage.BM25Stats
+	idfOracle IDFOracle
 	// protects current & segments
 	mut sync.RWMutex
 }
@@ -90,7 +89,7 @@ type SegmentEntry struct {
 }
 
 // NewDistribution creates a new distribution instance with all field initialized.
-func NewDistribution() *distribution {
+func NewDistribution(idfOracle IDFOracle) *distribution {
 	dist := &distribution{
 		serviceable:     atomic.NewBool(false),
 		growingSegments: make(map[UniqueID]SegmentEntry),
@@ -99,6 +98,7 @@ func NewDistribution() *distribution {
 		current:         atomic.NewPointer[snapshot](nil),
 		offlines:        typeutil.NewSet[int64](),
 		targetVersion:   atomic.NewInt64(initialTargetVersion),
+		idfOracle:       idfOracle,
 	}
 
 	dist.genSnapshot()
@@ -372,6 +372,7 @@ func (d *distribution) genSnapshot() chan struct{} {
 	d.current.Store(newSnapShot)
 	// shall be a new one
 	d.snapshots.GetOrInsert(d.snapshotVersion, newSnapShot)
+	d.idfOracle.SyncDistrbution(newSnapShot)
 
 	// first snapshot, return closed chan
 	if last == nil {

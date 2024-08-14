@@ -359,6 +359,7 @@ message SegmentLoadInfo {
     int64 readableVersion = 16;
     data.SegmentLevel level = 17;
     int64 storageVersion = 18;
+    repeated data.FieldBinlog bm25logs = 19;
 }
 
 message FieldIndexInfo {

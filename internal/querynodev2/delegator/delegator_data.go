@@ -60,10 +60,12 @@ import (
 
 // InsertData
 type InsertData struct {
-	RowIDs        []int64
-	PrimaryKeys   []storage.PrimaryKey
-	Timestamps    []uint64
-	InsertRecord  *segcorepb.InsertRecord
+	RowIDs       []int64
+	PrimaryKeys  []storage.PrimaryKey
+	Timestamps   []uint64
+	InsertRecord *segcorepb.InsertRecord
+	BM25Stats    map[int64]*storage.BM25Stats
+
 	StartPosition *msgpb.MsgPosition
 	PartitionID   int64
 }
@@ -146,6 +148,7 @@ func (sd *shardDelegator) ProcessInsert(insertRecords map[int64]*InsertData) {
 			if !sd.pkOracle.Exists(growing, paramtable.GetNodeID()) {
 				// register created growing segment after insert, avoid to add empty growing to delegator
 				sd.pkOracle.Register(growing, paramtable.GetNodeID())
+				sd.idfOracle.Register(segmentID, insertData.BM25Stats, segments.SegmentTypeGrowing)
 				sd.segmentManager.Put(context.Background(), segments.SegmentTypeGrowing, growing)
 				sd.addGrowing(SegmentEntry{
 					NodeID:        paramtable.GetNodeID(),
@@ -155,9 +158,11 @@ func (sd *shardDelegator) ProcessInsert(insertRecords map[int64]*InsertData) {
 					TargetVersion: initialTargetVersion,
 				})
 			}
-			sd.growingSegmentLock.Unlock()
-		}
 
+			sd.growingSegmentLock.Unlock()
+		} else {
+			sd.idfOracle.UpdateGrowing(growing.ID(), insertData.BM25Stats)
+		}
 		log.Debug("insert into growing segment",
 			zap.Int64("collectionID", growing.Collection()),
 			zap.Int64("segmentID", segmentID),
@@ -441,8 +446,9 @@ func (sd *shardDelegator) LoadGrowing(ctx context.Context, infos []*querypb.Segm
 	segmentIDs = lo.Map(loaded, func(segment segments.Segment, _ int) int64 { return segment.ID() })
 	log.Info("load growing segments done", zap.Int64s("segmentIDs", segmentIDs))
 
-	for _, candidate := range loaded {
-		sd.pkOracle.Register(candidate, paramtable.GetNodeID())
+	for _, segment := range loaded {
+		sd.pkOracle.Register(segment, paramtable.GetNodeID())
+		sd.idfOracle.Register(segment.ID(), segment.GetBM25Stats(), segments.SegmentTypeGrowing)
 	}
 	sd.addGrowing(lo.Map(loaded, func(segment segments.Segment, _ int) SegmentEntry {
 		return SegmentEntry{
@@ -548,6 +554,23 @@ func (sd *shardDelegator) LoadSegments(ctx context.Context, req *querypb.LoadSeg
 		if err != nil {
 			log.Warn("load stream delete failed", zap.Error(err))
 			return err
+		}
+
+		// TODO AOIASD SKIP IF COLLECTION WITHOUT BM25
+		bm25Stats, err := sd.loader.LoadBM25Stats(ctx, req.GetCollectionID(), infos...)
+		if err != nil {
+			log.Warn("failed to load bm25 stats for segment", zap.Error(err))
+			return err
+		}
+
+		var idfError error = nil
+		bm25Stats.Range(func(segmentID int64, stats map[int64]*storage.BM25Stats) bool {
+			idfError := sd.idfOracle.Register(segmentID, stats, segments.SegmentTypeSealed)
+			return idfError != nil
+		})
+		if idfError != nil {
+			log.Warn("register idfOracle failed", zap.Error(err))
+			return idfError
 		}
 	}
 
@@ -1018,28 +1041,9 @@ func (sd *shardDelegator) buildBM25IDF(req *internalpb.SearchRequest) error {
 		return err
 	}
 
-	sd.channelStatsMut.RLock()
-	defer sd.channelStatsMut.RUnlock()
-
-	stats, ok := sd.channelStats[req.GetFieldID()]
-	if !ok {
-		return fmt.Errorf("get field channel stats failed")
-	}
-
-	bm25stats, ok := stats.(*storage.BM25Stats)
-	if !ok {
-		return fmt.Errorf("get field BM25 stats failed")
-	}
-
-	dim := 0
-	idfSparseVector := make([][]byte, len(tfMaps))
-	for i, tf := range tfMaps {
-		idf := bm25stats.BuildIDF(tf)
-		idfSparseVector[i] = typeutil.CreateAndSortSparseFloatRow(idf)
-		log.Info("test-- build bm25 idf", zap.Any("idf", idf))
-		if len(idf) > dim {
-			dim = len(idf)
-		}
+	idfSparseVector, avgdl, err := sd.idfOracle.BuildIDF(req.GetFieldID(), tfMaps...)
+	if err != nil {
+		return err
 	}
 
 	newPlaceholder, err := funcutil.SparseVectorDataToPlaceholderGroupBytes(idfSparseVector)
@@ -1047,7 +1051,7 @@ func (sd *shardDelegator) buildBM25IDF(req *internalpb.SearchRequest) error {
 		return err
 	}
 
-	err = SetBM25Params(req, bm25stats.GetAvgdl())
+	err = SetBM25Params(req, avgdl)
 	if err != nil {
 		return err
 	}

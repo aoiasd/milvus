@@ -110,7 +110,9 @@ type shardDelegator struct {
 
 	lifetime lifetime.Lifetime[lifetime.State]
 
-	distribution   *distribution
+	distribution *distribution
+	idfOracle    IDFOracle
+
 	segmentManager segments.SegmentManager
 	tsafeManager   tsafe.Manager
 	pkOracle       pkoracle.PkOracle
@@ -303,7 +305,6 @@ func (sd *shardDelegator) Search(ctx context.Context, req *querypb.SearchRequest
 		Observe(float64(waitTr.ElapseSpan().Milliseconds()))
 
 	// build idf for bm25 search
-
 	log.Info("test-- fetch search", zap.String("metric type", req.GetReq().GetMetricType()))
 	if req.GetReq().GetMetricType() == metric.BM25 {
 		err := sd.buildBM25IDF(req.GetReq())
@@ -867,6 +868,7 @@ func NewShardDelegator(ctx context.Context, collectionID UniqueID, replicaID Uni
 
 	excludedSegments := NewExcludedSegments(paramtable.Get().QueryNodeCfg.CleanExcludeSegInterval.GetAsDuration(time.Second))
 
+	idfOracle := NewIDFOracle()
 	sd := &shardDelegator{
 		collectionID:     collectionID,
 		replicaID:        replicaID,
@@ -876,7 +878,7 @@ func NewShardDelegator(ctx context.Context, collectionID UniqueID, replicaID Uni
 		segmentManager:   manager.Segment,
 		workerManager:    workerManager,
 		lifetime:         lifetime.NewLifetime(lifetime.Initializing),
-		distribution:     NewDistribution(),
+		distribution:     NewDistribution(idfOracle),
 		deleteBuffer:     deletebuffer.NewListDeleteBuffer[*deletebuffer.Item](startTs, sizePerBlock),
 		pkOracle:         pkoracle.NewPkOracle(),
 		tsafeManager:     tsafeManager,
@@ -885,6 +887,7 @@ func NewShardDelegator(ctx context.Context, collectionID UniqueID, replicaID Uni
 		factory:          factory,
 		queryHook:        queryHook,
 		chunkManager:     chunkManager,
+		idfOracle:        idfOracle,
 		partitionStats:   make(map[UniqueID]*storage.PartitionStatsSnapshot),
 		excludedSegments: excludedSegments,
 		vectorizers:      make(map[int64]vectorizer.Vectorizer),

@@ -127,6 +127,9 @@ func (s *storageV1Serializer) EncodeBuffer(ctx context.Context, pack *SyncPack) 
 				return nil, err
 			}
 			task.mergedStatsBlob = mergedStatsBlob
+
+			// TODO IF BM25 FIELD EXIST
+			// mergedBM25Blob,err :=
 		}
 
 		task.WithFlush()

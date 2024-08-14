@@ -346,6 +346,22 @@ func (m *BM25Stats) Merge(meta *BM25Stats) {
 	m.tokenNum += meta.tokenNum
 }
 
+func (m *BM25Stats) Diff(meta *BM25Stats) {
+	for key, value := range meta.statistics {
+		m.statistics[key] -= value
+	}
+	m.numRow -= meta.NumRow()
+	m.tokenNum -= meta.tokenNum
+}
+
+func (m *BM25Stats) Clone() BM25Stats {
+	return BM25Stats{
+		statistics: m.statistics,
+		numRow:     m.numRow,
+		tokenNum:   m.tokenNum,
+	}
+}
+
 func (m *BM25Stats) Serialize() ([]byte, error) {
 	buffer := bytes.NewBuffer(make([]byte, 0, len(m.statistics)*8+16))
 
