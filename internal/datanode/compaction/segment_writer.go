@@ -17,6 +17,7 @@ import (
 	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/util/paramtable"
 	"github.com/milvus-io/milvus/pkg/util/typeutil"
+	"github.com/samber/lo"
 )
 
 func NewSegmentDeltaWriter(segmentID, partitionID, collectionID int64) *SegmentDeltaWriter {
@@ -97,7 +98,9 @@ type SegmentWriter struct {
 	tsFrom  typeutil.Timestamp
 	tsTo    typeutil.Timestamp
 
-	pkstats      *storage.PrimaryKeyStats
+	pkstats   *storage.PrimaryKeyStats
+	bm25Stats map[int64]*storage.BM25Stats
+
 	segmentID    int64
 	partitionID  int64
 	collectionID int64
@@ -125,6 +128,14 @@ func (w *SegmentWriter) GetPkID() int64 {
 	return w.pkstats.FieldID
 }
 
+func (w *SegmentWriter) GetBM25FieldID() []int64 {
+	return lo.Keys(w.bm25Stats)
+}
+
+func (w *SegmentWriter) ExistBM25Field() bool {
+	return len(w.bm25Stats) > 0
+}
+
 func (w *SegmentWriter) WrittenMemorySize() uint64 {
 	return w.writer.WrittenMemorySize()
 }
@@ -139,6 +150,10 @@ func (w *SegmentWriter) Write(v *storage.Value) error {
 	}
 
 	w.pkstats.Update(v.PK)
+	for fieldId, bytes := range v.BM25Row {
+		w.bm25Stats[fieldId].AppendBytes(bytes)
+	}
+
 	w.rowCount.Inc()
 	return w.writer.Write(v)
 }
@@ -147,6 +162,23 @@ func (w *SegmentWriter) Finish(actualRowCount int64) (*storage.Blob, error) {
 	w.writer.Flush()
 	codec := storage.NewInsertCodecWithSchema(&etcdpb.CollectionMeta{ID: w.collectionID, Schema: w.sch})
 	return codec.SerializePkStats(w.pkstats, actualRowCount)
+}
+
+func (w *SegmentWriter) GetBm25Stats() (map[int64]*storage.Blob, error) {
+	result := make(map[int64]*storage.Blob)
+	for fieldID, stats := range w.bm25Stats {
+		bytes, err := stats.Serialize()
+		if err != nil {
+			return nil, err
+		}
+		result[fieldID] = &storage.Blob{
+			Key:    fmt.Sprintf("%d", fieldID),
+			Value:  bytes,
+			RowNum: stats.NumRow(), // TODO AOIASD ADD MEMORY SIZE
+		}
+	}
+
+	return result, nil
 }
 
 func (w *SegmentWriter) IsFull() bool {
@@ -198,7 +230,7 @@ func (w *SegmentWriter) clear() {
 	w.tsTo = 0
 }
 
-func NewSegmentWriter(sch *schemapb.CollectionSchema, maxCount int64, segID, partID, collID int64) (*SegmentWriter, error) {
+func NewSegmentWriter(sch *schemapb.CollectionSchema, maxCount int64, segID, partID, collID int64, Bm25Fields []int64) (*SegmentWriter, error) {
 	writer, closers, err := newBinlogWriter(collID, partID, segID, sch)
 	if err != nil {
 		return nil, err
@@ -227,6 +259,7 @@ func NewSegmentWriter(sch *schemapb.CollectionSchema, maxCount int64, segID, par
 		tsTo:    0,
 
 		pkstats:      stats,
+		bm25Stats:    make(map[int64]*storage.BM25Stats),
 		sch:          sch,
 		segmentID:    segID,
 		partitionID:  partID,
@@ -234,6 +267,9 @@ func NewSegmentWriter(sch *schemapb.CollectionSchema, maxCount int64, segID, par
 		rowCount:     atomic.NewInt64(0),
 	}
 
+	for _, fieldID := range Bm25Fields {
+		segWriter.bm25Stats[fieldID] = storage.NewBM25Stats()
+	}
 	return &segWriter, nil
 }
 

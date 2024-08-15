@@ -573,6 +573,7 @@ message CompactionSegment {
   repeated FieldBinlog field2StatslogPaths = 5;
   repeated FieldBinlog deltalogs = 6;
   string channel = 7;
+  repeated FieldBinlog bm25logs = 9;
 }
 
 message CompactionPlanResult {

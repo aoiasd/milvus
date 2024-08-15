@@ -167,6 +167,8 @@ func BuildLogPath(binlogType storage.BinlogType, collectionID, partitionID, segm
 		return metautil.BuildDeltaLogPath(chunkManagerRootPath, collectionID, partitionID, segmentID, logID), nil
 	case storage.StatsBinlog:
 		return metautil.BuildStatsLogPath(chunkManagerRootPath, collectionID, partitionID, segmentID, fieldID, logID), nil
+	case storage.BM25Binlog:
+		return metautil.BuildBm25LogPath(chunkManagerRootPath, collectionID, partitionID, segmentID, fieldID, logID), nil
 	}
 	// should not happen
 	return "", merr.WrapErrParameterInvalidMsg("invalid binlog type")

@@ -1496,6 +1496,7 @@ func (m *meta) completeMixCompactionMutation(t *datapb.CompactionTask, result *d
 			Binlogs:       compactToSegment.GetInsertLogs(),
 			Statslogs:     compactToSegment.GetField2StatslogPaths(),
 			Deltalogs:     compactToSegment.GetDeltalogs(),
+			Bm25Statslogs: compactToSegment.GetBm25Logs(),
 
 			CreatedByCompaction: true,
 			CompactionFrom:      compactFromSegIDs,

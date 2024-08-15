@@ -138,6 +138,7 @@ func initMetaCache(initCtx context.Context, storageV2Cache *metacache.StorageV2C
 	// tickler will update addSegment progress to watchInfo
 	futures := make([]*conc.Future[any], 0, len(unflushed)+len(flushed))
 	segmentPks := typeutil.NewConcurrentMap[int64, []*storage.PkStatistics]()
+	segmentBm25 := typeutil.NewConcurrentMap[int64, map[int64]*storage.BM25Stats]()
 
 	loadSegmentStats := func(segType string, segments []*datapb.SegmentInfo) {
 		for _, item := range segments {
@@ -160,7 +161,17 @@ func initMetaCache(initCtx context.Context, storageV2Cache *metacache.StorageV2C
 				if err != nil {
 					return nil, err
 				}
+
+				// TODO AOIASD IF BM25 FIELD EXIST AND SUPPORT STORAGE V2
+				if segType == "grwoing" {
+					bm25stats, err := compaction.LoadBM25Stats(initCtx, chunkManager, info.GetSchema(), segment.GetID(), segment.GetBm25Statslogs())
+					if err != nil {
+						return nil, err
+					}
+					segmentBm25.Insert(segment.GetID(), bm25stats)
+				}
 				segmentPks.Insert(segment.GetID(), stats)
+
 				tickler.Inc()
 
 				return struct{}{}, nil
@@ -181,11 +192,21 @@ func initMetaCache(initCtx context.Context, storageV2Cache *metacache.StorageV2C
 		return nil, err
 	}
 
-	// return channel, nil
-	metacache := metacache.NewMetaCache(info, func(segment *datapb.SegmentInfo) *metacache.BloomFilterSet {
+	pkStatsFactory := func(segment *datapb.SegmentInfo) *metacache.BloomFilterSet {
 		entries, _ := segmentPks.Get(segment.GetID())
 		return metacache.NewBloomFilterSet(entries...)
-	})
+	}
+
+	bm25StatsFactor := func(segment *datapb.SegmentInfo) *metacache.SegmentBM25Stats {
+		stats, ok := segmentBm25.Get(segment.GetID())
+		if !ok {
+			return nil
+		}
+		return metacache.NewSegmentBM25Stats(stats)
+
+	}
+	// return channel, nil
+	metacache := metacache.NewMetaCache(info, pkStatsFactory, bm25StatsFactor)
 
 	return metacache, nil
 }

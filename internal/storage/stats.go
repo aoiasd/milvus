@@ -31,6 +31,7 @@ import (
 	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/util/merr"
 	"github.com/milvus-io/milvus/pkg/util/paramtable"
+	"github.com/milvus-io/milvus/pkg/util/typeutil"
 )
 
 // PrimaryKeyStats contains statistics data for pk column
@@ -330,6 +331,20 @@ func (m *BM25Stats) Append(datas ...map[uint32]float32) {
 			m.tokenNum += int64(value)
 		}
 
+		m.numRow += 1
+	}
+}
+
+// Update BM25Stats by sparse vector bytes
+func (m *BM25Stats) AppendBytes(datas ...[]byte) {
+	for _, data := range datas {
+		dim := len(data) / 8
+		for i := 0; i < dim; i++ {
+			index := typeutil.SparseFloatRowIndexAt(data, i)
+			value := typeutil.SparseFloatRowValueAt(data, i)
+			m.statistics[index] += 1
+			m.tokenNum += int64(value)
+		}
 		m.numRow += 1
 	}
 }

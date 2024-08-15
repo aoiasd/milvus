@@ -58,6 +58,11 @@ type MetaCache interface {
 var _ MetaCache = (*metaCacheImpl)(nil)
 
 type PkStatsFactory func(vchannel *datapb.SegmentInfo) *BloomFilterSet
+type BmStatsFactory func(vchannel *datapb.SegmentInfo) *SegmentBM25Stats
+
+func SealedBmstatsFactory(vchannel *datapb.SegmentInfo) *SegmentBM25Stats {
+	return nil
+}
 
 type metaCacheImpl struct {
 	collectionID int64
@@ -69,7 +74,7 @@ type metaCacheImpl struct {
 	stateSegments map[commonpb.SegmentState]map[int64]*SegmentInfo
 }
 
-func NewMetaCache(info *datapb.ChannelWatchInfo, factory PkStatsFactory) MetaCache {
+func NewMetaCache(info *datapb.ChannelWatchInfo, pkFactory PkStatsFactory, bmFactor BmStatsFactory) MetaCache {
 	vchannel := info.GetVchan()
 	cache := &metaCacheImpl{
 		collectionID:  vchannel.GetCollectionID(),
@@ -90,19 +95,19 @@ func NewMetaCache(info *datapb.ChannelWatchInfo, factory PkStatsFactory) MetaCac
 		cache.stateSegments[state] = make(map[int64]*SegmentInfo)
 	}
 
-	cache.init(vchannel, factory)
+	cache.init(vchannel, pkFactory, bmFactor)
 	return cache
 }
 
-func (c *metaCacheImpl) init(vchannel *datapb.VchannelInfo, factory PkStatsFactory) {
+func (c *metaCacheImpl) init(vchannel *datapb.VchannelInfo, pkFactory PkStatsFactory, bmFactor BmStatsFactory) {
 	for _, seg := range vchannel.FlushedSegments {
-		c.addSegment(NewSegmentInfo(seg, factory(seg)))
+		c.addSegment(NewSegmentInfo(seg, pkFactory(seg), bmFactor(seg)))
 	}
 
 	for _, seg := range vchannel.UnflushedSegments {
 		// segment state could be sealed for growing segment if flush request processed before datanode watch
 		seg.State = commonpb.SegmentState_Growing
-		c.addSegment(NewSegmentInfo(seg, factory(seg)))
+		c.addSegment(NewSegmentInfo(seg, pkFactory(seg), bmFactor(seg)))
 	}
 }
 
@@ -118,7 +123,7 @@ func (c *metaCacheImpl) Schema() *schemapb.CollectionSchema {
 
 // AddSegment adds a segment from segment info.
 func (c *metaCacheImpl) AddSegment(segInfo *datapb.SegmentInfo, factory PkStatsFactory, actions ...SegmentAction) {
-	segment := NewSegmentInfo(segInfo, factory(segInfo))
+	segment := NewSegmentInfo(segInfo, factory(segInfo), nil)
 
 	for _, action := range actions {
 		action(segment)

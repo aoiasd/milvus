@@ -91,11 +91,11 @@ const (
 	// SegmentIndexPath storage path const for segment index files.
 	SegmentIndexPath = `index_files`
 
+	//SegmentBm25LogPath storage path const for bm25 statistic
+	SegmentBm25LogPath = `bm25_stats`
+
 	// PartitionStatsPath storage path const for partition stats files
 	PartitionStatsPath = `part_stats`
-
-	//BM25StatsPath storage path const for bm25 statistic
-	BM25StatsPath = `bm25_stats`
 
 	// AnalyzeStatsPath storage path const for analyze.
 	AnalyzeStatsPath = `analyze_stats`

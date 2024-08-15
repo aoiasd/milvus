@@ -247,7 +247,7 @@ func NewMetaCache(req *datapb.ImportRequest) map[string]metacache.MetaCache {
 		}
 		metaCache := metacache.NewMetaCache(info, func(segment *datapb.SegmentInfo) *metacache.BloomFilterSet {
 			return metacache.NewBloomFilterSet()
-		})
+		}, metacache.SealedBmstatsFactory)
 		metaCaches[channel] = metaCache
 	}
 	return metaCaches

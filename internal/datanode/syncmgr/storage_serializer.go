@@ -101,6 +101,7 @@ func (s *storageV1Serializer) EncodeBuffer(ctx context.Context, pack *SyncPack) 
 		}
 		task.binlogBlobs = binlogBlobs
 
+		actions := []metacache.SegmentAction{}
 		singlePKStats, batchStatsBlob, err := s.serializeStatslog(pack)
 		if err != nil {
 			log.Warn("failed to serialized statslog", zap.Error(err))
@@ -108,15 +109,19 @@ func (s *storageV1Serializer) EncodeBuffer(ctx context.Context, pack *SyncPack) 
 		}
 
 		task.batchStatsBlob = batchStatsBlob
-		s.metacache.UpdateSegments(metacache.RollStats(singlePKStats), metacache.WithSegmentIDs(pack.segmentID))
-	}
+		actions = append(actions, metacache.RollStats(singlePKStats))
 
-	if len(pack.bm25Stats) > 0 {
-		statsBlobs, err := s.serializeBM25Stats(pack)
-		if err != nil {
-			return nil, err
+		if len(pack.bm25Stats) > 0 {
+			statsBlobs, err := s.serializeBM25Stats(pack)
+			if err != nil {
+				return nil, err
+			}
+
+			task.bm25Blobs = statsBlobs
+			actions = append(actions, metacache.MergeBm25Stats(pack.bm25Stats))
 		}
-		task.bm25Blobs = statsBlobs
+
+		s.metacache.UpdateSegments(metacache.MergeSegmentAction(actions...), metacache.WithSegmentIDs(pack.segmentID))
 	}
 
 	if pack.isFlush {
@@ -128,8 +133,13 @@ func (s *storageV1Serializer) EncodeBuffer(ctx context.Context, pack *SyncPack) 
 			}
 			task.mergedStatsBlob = mergedStatsBlob
 
-			// TODO IF BM25 FIELD EXIST
-			// mergedBM25Blob,err :=
+			// TODO AOIASD IF BM25 FIELD EXIST
+			mergedBM25Blob, err := s.serializeMergedBM25Stats(pack)
+			if err != nil {
+				log.Warn("failed to serialize merged bm25 stats log", zap.Error(err))
+				return nil, err
+			}
+			task.mergedBm25Blob = mergedBM25Blob
 		}
 
 		task.WithFlush()
@@ -251,6 +261,28 @@ func (s *storageV1Serializer) serializeMergedPkStats(pack *SyncPack) (*storage.B
 			PkType:  int64(s.pkField.GetDataType()),
 		}
 	}), segment.NumOfRows())
+}
+
+func (s *storageV1Serializer) serializeMergedBM25Stats(pack *SyncPack) (map[int64]*storage.Blob, error) {
+	segment, ok := s.metacache.GetSegmentByID(pack.segmentID)
+	if !ok {
+		return nil, merr.WrapErrSegmentNotFound(pack.segmentID)
+	}
+
+	fieldBytes, numRow, err := segment.GetBM25Stats().Serialize()
+	if err != nil {
+		return nil, err
+	}
+
+	blobs := make(map[int64]*storage.Blob)
+	for fieldID, bytes := range fieldBytes {
+		blobs[fieldID] = &storage.Blob{
+			Value: bytes,
+			// TODO AOIASD ADD MEMSIZE
+			RowNum: numRow[fieldID],
+		}
+	}
+	return blobs, nil
 }
 
 func (s *storageV1Serializer) serializeDeltalog(pack *SyncPack) (*storage.Blob, error) {

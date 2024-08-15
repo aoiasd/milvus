@@ -521,7 +521,8 @@ func (t *clusteringCompactionTask) mappingSegment(
 		blobs := lo.Map(allValues, func(v []byte, i int) *storage.Blob {
 			return &storage.Blob{Key: paths[i], Value: v}
 		})
-		pkIter, err := storage.NewBinlogDeserializeReader(blobs, t.primaryKeyField.GetFieldID())
+		// TODO AOIASD SUPPORT CLUSTER COMPACTION FOR BM25
+		pkIter, err := storage.NewBinlogDeserializeReader(blobs, t.primaryKeyField.GetFieldID(), []int64{})
 		if err != nil {
 			log.Warn("new insert binlogs Itr wrong", zap.Strings("paths", paths), zap.Error(err))
 			return err
@@ -1137,7 +1138,7 @@ func (t *clusteringCompactionTask) refreshBufferWriter(buffer *ClusterBuffer) (b
 		}
 	}
 
-	writer, err := NewSegmentWriter(t.plan.GetSchema(), t.plan.MaxSegmentRows, segmentID, t.partitionID, t.collectionID)
+	writer, err := NewSegmentWriter(t.plan.GetSchema(), t.plan.MaxSegmentRows, segmentID, t.partitionID, t.collectionID, []int64{})
 	if err != nil {
 		return pack, err
 	}

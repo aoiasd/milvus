@@ -34,6 +34,7 @@ type SegmentInfo struct {
 	bufferRows       int64
 	syncingRows      int64
 	bfs              *BloomFilterSet
+	bm25stats        *SegmentBM25Stats
 	level            datapb.SegmentLevel
 	syncingTasks     int32
 }
@@ -77,6 +78,10 @@ func (s *SegmentInfo) GetBloomFilterSet() *BloomFilterSet {
 	return s.bfs
 }
 
+func (s *SegmentInfo) GetBM25Stats() *SegmentBM25Stats {
+	return s.bm25stats
+}
+
 func (s *SegmentInfo) Level() datapb.SegmentLevel {
 	return s.level
 }
@@ -95,10 +100,11 @@ func (s *SegmentInfo) Clone() *SegmentInfo {
 		bfs:              s.bfs,
 		level:            s.level,
 		syncingTasks:     s.syncingTasks,
+		bm25stats:        s.bm25stats,
 	}
 }
 
-func NewSegmentInfo(info *datapb.SegmentInfo, bfs *BloomFilterSet) *SegmentInfo {
+func NewSegmentInfo(info *datapb.SegmentInfo, bfs *BloomFilterSet, bm25Stats *SegmentBM25Stats) *SegmentInfo {
 	level := info.GetLevel()
 	if level == datapb.SegmentLevel_Legacy {
 		level = datapb.SegmentLevel_L1
@@ -113,5 +119,6 @@ func NewSegmentInfo(info *datapb.SegmentInfo, bfs *BloomFilterSet) *SegmentInfo 
 		startPosRecorded: true,
 		level:            level,
 		bfs:              bfs,
+		bm25stats:        bm25Stats,
 	}
 }

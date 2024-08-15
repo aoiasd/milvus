@@ -144,6 +144,7 @@ func (t *mixCompactionTask) merge(
 
 	downloadTimeCost := time.Duration(0)
 	serWriteTimeCost := time.Duration(0)
+	bmWriteTimeCost := time.Duration(0)
 	uploadTimeCost := time.Duration(0)
 
 	for _, paths := range binlogPaths {
@@ -160,7 +161,7 @@ func (t *mixCompactionTask) merge(
 			return &storage.Blob{Key: paths[i], Value: v}
 		})
 
-		iter, err := storage.NewBinlogDeserializeReader(blobs, writer.GetPkID())
+		iter, err := storage.NewBinlogDeserializeReader(blobs, writer.GetPkID(), writer.GetBM25FieldID())
 		if err != nil {
 			log.Warn("compact wrong, failed to new insert binlogs reader", zap.Error(err))
 			return nil, err
@@ -255,6 +256,19 @@ func (t *mixCompactionTask) merge(
 		Channel:             t.plan.GetChannel(),
 	}
 
+	if writer.ExistBM25Field() {
+		bmWriteStart := time.Now()
+
+		bmBinlogs, err := bmSerializeWrite(ctx, t.binlogIO, t.Allocator, writer, remainingRowCount)
+		if err != nil {
+			log.Warn("compact wrong, failed to serialize write segment bm25 stats",
+				zap.Int64("remaining row count", remainingRowCount), zap.Error(err))
+			return nil, err
+		}
+		pack.Bm25Logs = bmBinlogs
+		bmWriteTimeCost += time.Since(bmWriteStart)
+	}
+
 	totalElapse := t.tr.RecordSpan()
 
 	log.Info("compact merge end",
@@ -265,6 +279,7 @@ func (t *mixCompactionTask) merge(
 		zap.Duration("download binlogs elapse", downloadTimeCost),
 		zap.Duration("upload binlogs elapse", uploadTimeCost),
 		zap.Duration("serWrite elapse", serWriteTimeCost),
+		zap.Duration("bm25Write elapse", bmWriteTimeCost),
 		zap.Duration("deRead elapse", totalElapse-serWriteTimeCost-downloadTimeCost-uploadTimeCost),
 		zap.Duration("total elapse", totalElapse))
 
@@ -317,7 +332,15 @@ func (t *mixCompactionTask) Compact() (*datapb.CompactionPlanResult, error) {
 
 	previousRowCount := t.getNumRows()
 
-	writer, err := NewSegmentWriter(t.plan.GetSchema(), previousRowCount, targetSegID, partitionID, collectionID)
+	BM25FieldID := []int64{}
+	// TODO REMOVE TEST CODE AND GET BM25 Field by Schema
+	for _, field := range t.plan.GetSchema().GetFields() {
+		if field.GetName() == "embedding" {
+			BM25FieldID = append(BM25FieldID, field.FieldID)
+		}
+	}
+
+	writer, err := NewSegmentWriter(t.plan.GetSchema(), previousRowCount, targetSegID, partitionID, collectionID, BM25FieldID)
 	if err != nil {
 		log.Warn("compact wrong, unable to init segment writer", zap.Error(err))
 		return nil, err

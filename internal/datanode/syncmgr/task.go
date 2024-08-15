@@ -74,13 +74,17 @@ type SyncTask struct {
 	bm25Binlogs   map[int64]*datapb.FieldBinlog
 	deltaBinlog   *datapb.FieldBinlog
 
-	binlogBlobs     map[int64]*storage.Blob // fieldID => blob
-	binlogMemsize   map[int64]int64         // memory size
-	bm25Blobs       map[int64]*storage.Blob
+	binlogBlobs   map[int64]*storage.Blob // fieldID => blob
+	binlogMemsize map[int64]int64         // memory size
+
+	bm25Blobs      map[int64]*storage.Blob
+	mergedBm25Blob map[int64]*storage.Blob
+
 	batchStatsBlob  *storage.Blob
 	mergedStatsBlob *storage.Blob
-	deltaBlob       *storage.Blob
-	deltaRowCount   int64
+
+	deltaBlob     *storage.Blob
+	deltaRowCount int64
 
 	// prefetched log ids
 	ids []int64
@@ -146,7 +150,7 @@ func (t *SyncTask) Run(ctx context.Context) (err error) {
 	t.processInsertBlobs()
 	t.processStatsBlob()
 	t.processDeltaBlob()
-	// TODO IF BM25
+	// TODO AOIASD IF BM25
 	t.processBM25StastBlob()
 
 	err = t.writeLogs(ctx)
@@ -247,7 +251,7 @@ func (t *SyncTask) processInsertBlobs() {
 func (t *SyncTask) processBM25StastBlob() {
 	for fieldID, blob := range t.bm25Blobs {
 		k := metautil.JoinIDPath(t.collectionID, t.partitionID, t.segmentID, fieldID, t.nextID())
-		key := path.Join(t.chunkManager.RootPath(), common.BM25StatsPath, k)
+		key := path.Join(t.chunkManager.RootPath(), common.SegmentBm25LogPath, k)
 		t.segmentData[key] = blob.GetValue()
 		t.appendBM25Statslog(fieldID, &datapb.Binlog{
 			EntriesNum:    blob.RowNum,

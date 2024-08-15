@@ -193,9 +193,52 @@ func statSerializeWrite(ctx context.Context, io io.BinlogIO, allocator allocator
 		},
 	}
 	if err := io.Upload(ctx, kvs); err != nil {
-		log.Warn("failed to upload insert log", zap.Error(err))
+		log.Warn("failed to upload stats log", zap.Error(err))
 		return nil, err
 	}
 
 	return statFieldLog, nil
+}
+
+func bmSerializeWrite(ctx context.Context, io io.BinlogIO, allocator allocator.Allocator, writer *SegmentWriter, finalRowCount int64) ([]*datapb.FieldBinlog, error) {
+	ctx, span := otel.Tracer(typeutil.DataNodeRole).Start(ctx, "bm25 stats log serializeWrite")
+	defer span.End()
+
+	stats, err := writer.GetBm25Stats()
+	if err != nil {
+		return nil, err
+	}
+
+	logID, _, err := allocator.Alloc(uint32(len(stats)))
+	if err != nil {
+		return nil, err
+	}
+
+	kvs := make(map[string][]byte)
+	binlogs := []*datapb.FieldBinlog{}
+	for fieldID, blob := range stats {
+		key, _ := binlog.BuildLogPath(storage.StatsBinlog, writer.GetCollectionID(), writer.GetPartitionID(), writer.GetSegmentID(), fieldID, logID)
+		kvs[key] = blob.GetValue()
+		fieldLog := &datapb.FieldBinlog{
+			FieldID: writer.GetPkID(),
+			Binlogs: []*datapb.Binlog{
+				{
+					LogSize: int64(len(blob.GetValue())),
+					// TODO AOIASD USE BLOB MEMORY
+					MemorySize: int64(len(blob.GetValue())),
+					LogPath:    key,
+					EntriesNum: finalRowCount,
+				},
+			},
+		}
+
+		binlogs = append(binlogs, fieldLog)
+	}
+
+	if err := io.Upload(ctx, kvs); err != nil {
+		log.Warn("failed to upload insert log", zap.Error(err))
+		return nil, err
+	}
+
+	return binlogs, nil
 }
