@@ -18,6 +18,7 @@ package pipeline
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/milvus-io/milvus-proto/go-api/v2/schemapb"
 	"github.com/milvus-io/milvus/internal/datanode/writebuffer"
@@ -93,6 +94,7 @@ func (eNode *embeddingNode) Name() string {
 
 func (eNode *embeddingNode) vectorize(data *storage.InsertData, meta map[int64]*storage.BM25Stats) error {
 	for _, field := range eNode.schema.Fields {
+		start := time.Now()
 		vectorizer, ok := eNode.vectorizers[field.GetFieldID()]
 		if !ok {
 			continue
@@ -121,6 +123,7 @@ func (eNode *embeddingNode) vectorize(data *storage.InsertData, meta map[int64]*
 			return typeutil.CreateAndSortSparseFloatRow(sparseMap)
 		})
 		data.Data[field.GetFieldID()] = BuildSparseFieldData(dim, sparseVector)
+		log.Info("test-- time cost", zap.Int("numrow", len(embeddingData)), zap.Duration("cost", time.Since(start)))
 	}
 	return nil
 }

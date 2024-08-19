@@ -269,7 +269,12 @@ func (s *storageV1Serializer) serializeMergedBM25Stats(pack *SyncPack) (map[int6
 		return nil, merr.WrapErrSegmentNotFound(pack.segmentID)
 	}
 
-	fieldBytes, numRow, err := segment.GetBM25Stats().Serialize()
+	stats := segment.GetBM25Stats()
+	if stats == nil {
+		return nil, fmt.Errorf("searalize empty bm25 stats")
+	}
+
+	fieldBytes, numRow, err := stats.Serialize()
 	if err != nil {
 		return nil, err
 	}

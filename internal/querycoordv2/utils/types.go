@@ -79,6 +79,7 @@ func PackSegmentLoadInfo(segment *datapb.SegmentInfo, channelCheckpoint *msgpb.M
 		NumOfRows:      segment.NumOfRows,
 		Statslogs:      segment.Statslogs,
 		Deltalogs:      segment.Deltalogs,
+		Bm25Logs:       segment.Bm25Statslogs,
 		InsertChannel:  segment.InsertChannel,
 		IndexInfos:     indexes,
 		StartPosition:  segment.GetStartPosition(),
@@ -86,6 +87,7 @@ func PackSegmentLoadInfo(segment *datapb.SegmentInfo, channelCheckpoint *msgpb.M
 		Level:          segment.GetLevel(),
 		StorageVersion: segment.GetStorageVersion(),
 	}
+	log.Info("test--", zap.Any("loadInfo", loadInfo))
 	return loadInfo
 }
 

@@ -163,6 +163,7 @@ func (node *QueryNode) GetStatistics(ctx context.Context, req *querypb.GetStatis
 func (node *QueryNode) composeIndexMeta(indexInfos []*indexpb.IndexInfo, schema *schemapb.CollectionSchema) *segcorepb.CollectionIndexMeta {
 	fieldIndexMetas := make([]*segcorepb.FieldIndexMeta, 0)
 	for _, info := range indexInfos {
+		log.Info("test-- index", zap.Any("info", info))
 		fieldIndexMetas = append(fieldIndexMetas, &segcorepb.FieldIndexMeta{
 			CollectionID:    info.GetCollectionID(),
 			FieldID:         info.GetFieldID(),

@@ -36,7 +36,7 @@ type MetaCache interface {
 	// Schema returns collection schema.
 	Schema() *schemapb.CollectionSchema
 	// AddSegment adds a segment from segment info.
-	AddSegment(segInfo *datapb.SegmentInfo, factory PkStatsFactory, actions ...SegmentAction)
+	AddSegment(segInfo *datapb.SegmentInfo, pkFactory PkStatsFactory, bmFactory BmStatsFactory, actions ...SegmentAction)
 	// UpdateSegments applies action to segment(s) satisfy the provided filters.
 	UpdateSegments(action SegmentAction, filters ...SegmentFilter)
 	// RemoveSegments removes segments matches the provided filter.
@@ -60,8 +60,12 @@ var _ MetaCache = (*metaCacheImpl)(nil)
 type PkStatsFactory func(vchannel *datapb.SegmentInfo) *BloomFilterSet
 type BmStatsFactory func(vchannel *datapb.SegmentInfo) *SegmentBM25Stats
 
-func SealedBmstatsFactory(vchannel *datapb.SegmentInfo) *SegmentBM25Stats {
+func EmptyBMStatsFactory(vchannel *datapb.SegmentInfo) *SegmentBM25Stats {
 	return nil
+}
+
+func NewBMStatsFactory(vchannel *datapb.SegmentInfo) *SegmentBM25Stats {
+	return NewSegmentBM25Stats(make(map[int64]*storage.BM25Stats))
 }
 
 type metaCacheImpl struct {
@@ -122,8 +126,8 @@ func (c *metaCacheImpl) Schema() *schemapb.CollectionSchema {
 }
 
 // AddSegment adds a segment from segment info.
-func (c *metaCacheImpl) AddSegment(segInfo *datapb.SegmentInfo, factory PkStatsFactory, actions ...SegmentAction) {
-	segment := NewSegmentInfo(segInfo, factory(segInfo), nil)
+func (c *metaCacheImpl) AddSegment(segInfo *datapb.SegmentInfo, pkFactory PkStatsFactory, bmFactory BmStatsFactory, actions ...SegmentAction) {
+	segment := NewSegmentInfo(segInfo, pkFactory(segInfo), bmFactory(segInfo))
 
 	for _, action := range actions {
 		action(segment)

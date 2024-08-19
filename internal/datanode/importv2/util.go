@@ -67,7 +67,7 @@ func NewSyncTask(ctx context.Context,
 		}, func(info *datapb.SegmentInfo) *metacache.BloomFilterSet {
 			bfs := metacache.NewBloomFilterSet()
 			return bfs
-		})
+		}, metacache.NewBMStatsFactory) // TODO AOIASD SUPPORT BM25 IMPORT
 	}
 
 	var serializer syncmgr.Serializer
@@ -247,7 +247,7 @@ func NewMetaCache(req *datapb.ImportRequest) map[string]metacache.MetaCache {
 		}
 		metaCache := metacache.NewMetaCache(info, func(segment *datapb.SegmentInfo) *metacache.BloomFilterSet {
 			return metacache.NewBloomFilterSet()
-		}, metacache.SealedBmstatsFactory)
+		}, metacache.EmptyBMStatsFactory)
 		metaCaches[channel] = metaCache
 	}
 	return metaCaches

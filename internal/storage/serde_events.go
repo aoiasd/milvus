@@ -211,13 +211,15 @@ func NewBinlogDeserializeReader(blobs []*Blob, PKfieldID UniqueID, BM25FiledID [
 				}
 			}
 
-			for _, bm25FieldID := range BM25FiledID {
-				v, ok := m[bm25FieldID]
-				if !ok {
-					return merr.WrapErrServiceInternal(fmt.Sprintf("BM25 Field not found %d", bm25FieldID))
+			if len(BM25FiledID) != 0 {
+				value.BM25Row = make(map[int64][]byte)
+				for _, bm25FieldID := range BM25FiledID {
+					v, ok := m[bm25FieldID]
+					if !ok {
+						return merr.WrapErrServiceInternal(fmt.Sprintf("BM25 Field not found %d", bm25FieldID))
+					}
+					value.BM25Row[bm25FieldID] = v.([]byte)
 				}
-
-				value.BM25Row[bm25FieldID] = v.([]byte)
 			}
 
 			rowID, ok := m[common.RowIDField].(int64)

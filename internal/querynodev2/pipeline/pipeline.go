@@ -55,8 +55,14 @@ func NewPipeLine(
 	}
 
 	filterNode := newFilterNode(collectionID, channel, manager, delegator, pipelineQueueLength)
+
+	// TODO AOIOASD CREATE EMBEDDING NODE FOR BM25 COLLECTION
+	embeddingNode, err := newEmbeddingNode(collectionID, channel, manager, pipelineQueueLength)
+	if err != nil {
+		return nil, err
+	}
 	insertNode := newInsertNode(collectionID, channel, manager, delegator, pipelineQueueLength)
 	deleteNode := newDeleteNode(collectionID, channel, manager, tSafeManager, delegator, pipelineQueueLength)
-	p.Add(filterNode, insertNode, deleteNode)
+	p.Add(filterNode, embeddingNode, insertNode, deleteNode)
 	return p, nil
 }

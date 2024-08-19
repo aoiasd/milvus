@@ -42,6 +42,10 @@ func CompressSaveBinlogPaths(req *datapb.SaveBinlogPathsRequest) error {
 	if err != nil {
 		return err
 	}
+	err = CompressFieldBinlogs(req.GetField2Bm25LogPaths())
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -130,6 +134,11 @@ func DecompressBinLogs(s *datapb.SegmentInfo) error {
 		return err
 	}
 	err = DecompressBinLog(storage.StatsBinlog, collectionID, partitionID, segmentID, s.GetStatslogs())
+	if err != nil {
+		return err
+	}
+
+	err = DecompressBinLog(storage.BM25Binlog, collectionID, partitionID, segmentID, s.GetBm25Statslogs())
 	if err != nil {
 		return err
 	}

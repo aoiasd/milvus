@@ -215,6 +215,10 @@ func (t *SyncTask) prefetchIDs() error {
 	if t.deltaBlob != nil {
 		totalIDCount++
 	}
+	if t.bm25Blobs != nil {
+		totalIDCount += len(t.bm25Blobs)
+	}
+
 	start, _, err := t.allocator.Alloc(uint32(totalIDCount))
 	if err != nil {
 		return err
@@ -251,6 +255,20 @@ func (t *SyncTask) processInsertBlobs() {
 func (t *SyncTask) processBM25StastBlob() {
 	for fieldID, blob := range t.bm25Blobs {
 		k := metautil.JoinIDPath(t.collectionID, t.partitionID, t.segmentID, fieldID, t.nextID())
+		key := path.Join(t.chunkManager.RootPath(), common.SegmentBm25LogPath, k)
+		t.segmentData[key] = blob.GetValue()
+		t.appendBM25Statslog(fieldID, &datapb.Binlog{
+			EntriesNum:    blob.RowNum,
+			TimestampFrom: t.tsFrom,
+			TimestampTo:   t.tsTo,
+			LogPath:       key,
+			LogSize:       int64(len(blob.GetValue())),
+			MemorySize:    blob.MemorySize, // TODO AOIASD ?,
+		})
+	}
+
+	for fieldID, blob := range t.mergedBm25Blob {
+		k := metautil.JoinIDPath(t.collectionID, t.partitionID, t.segmentID, fieldID, int64(storage.CompoundStatsType))
 		key := path.Join(t.chunkManager.RootPath(), common.SegmentBm25LogPath, k)
 		t.segmentData[key] = blob.GetValue()
 		t.appendBM25Statslog(fieldID, &datapb.Binlog{

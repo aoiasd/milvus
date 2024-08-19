@@ -206,7 +206,7 @@ func (wb *l0WriteBuffer) getL0SegmentID(partitionID int64, startPos *msgpb.MsgPo
 			StartPosition: startPos,
 			State:         commonpb.SegmentState_Growing,
 			Level:         datapb.SegmentLevel_L0,
-		}, func(_ *datapb.SegmentInfo) *metacache.BloomFilterSet { return metacache.NewBloomFilterSet() }, metacache.SetStartPosRecorded(false))
+		}, func(_ *datapb.SegmentInfo) *metacache.BloomFilterSet { return metacache.NewBloomFilterSet() }, metacache.EmptyBMStatsFactory, metacache.SetStartPosRecorded(false))
 		log.Info("Add a new level zero segment",
 			zap.Int64("segmentID", segmentID),
 			zap.String("level", datapb.SegmentLevel_L0.String()),

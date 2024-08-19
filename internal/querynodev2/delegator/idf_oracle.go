@@ -36,7 +36,7 @@ type IDFOracle interface {
 
 	UpdateGrowing(segmentID int64, stats map[int64]*storage.BM25Stats)
 
-	Register(segmentID int64, stats map[int64]*storage.BM25Stats, state commonpb.SegmentState) error
+	Register(segmentID int64, stats map[int64]*storage.BM25Stats, state commonpb.SegmentState)
 	Remove(segmentID int64, state commonpb.SegmentState)
 
 	BuildIDF(fieldID int64, tfs ...map[uint32]float32) ([][]byte, float64, error)
@@ -94,14 +94,15 @@ type idfOracle struct {
 	targetVersion int64
 }
 
-func (o *idfOracle) Register(segmentID int64, stats map[int64]*storage.BM25Stats, state commonpb.SegmentState) error {
+func (o *idfOracle) Register(segmentID int64, stats map[int64]*storage.BM25Stats, state commonpb.SegmentState) {
 	o.Lock()
 	defer o.Unlock()
 
+	log.Info("test-- register idf", zap.Int64("segmentID", segmentID), zap.String("state", state.String()))
 	switch state {
 	case segments.SegmentTypeGrowing:
 		if _, ok := o.growing[segmentID]; ok {
-			return fmt.Errorf("growing segment registered: %d", segmentID)
+			return
 		}
 		o.growing[segmentID] = &bm25Stats{
 			stats:         stats,
@@ -111,7 +112,7 @@ func (o *idfOracle) Register(segmentID int64, stats map[int64]*storage.BM25Stats
 		o.current.Merge(stats)
 	case segments.SegmentTypeSealed:
 		if _, ok := o.sealed[segmentID]; ok {
-			return fmt.Errorf("sealed segment registered: %d", segmentID)
+			return
 		}
 		o.sealed[segmentID] = &bm25Stats{
 			stats:         stats,
@@ -119,13 +120,16 @@ func (o *idfOracle) Register(segmentID int64, stats map[int64]*storage.BM25Stats
 			targetVersion: initialTargetVersion,
 		}
 	default:
-		return fmt.Errorf("unsupport segment state with idf oracle: %s", state.String())
+		return
 	}
 
-	return nil
 }
 
 func (o *idfOracle) UpdateGrowing(segmentID int64, stats map[int64]*storage.BM25Stats) {
+	if len(stats) == 0 {
+		return
+	}
+
 	o.Lock()
 	defer o.Unlock()
 
@@ -138,7 +142,7 @@ func (o *idfOracle) UpdateGrowing(segmentID int64, stats map[int64]*storage.BM25
 	if old.activate {
 		o.current.Merge(stats)
 	}
-	return
+	log.Info("test-- update idf", zap.Int64("segmentID", segmentID))
 }
 
 func (o *idfOracle) Remove(segmentID int64, state commonpb.SegmentState) {
@@ -147,18 +151,23 @@ func (o *idfOracle) Remove(segmentID int64, state commonpb.SegmentState) {
 
 	switch state {
 	case segments.SegmentTypeGrowing:
-		if _, ok := o.growing[segmentID]; ok {
+		if stats, ok := o.growing[segmentID]; ok {
+			if stats.activate {
+				o.current.Diff(stats.stats)
+			}
 			delete(o.growing, segmentID)
 		}
 	case segments.SegmentTypeSealed:
-		if _, ok := o.sealed[segmentID]; ok {
+		if stats, ok := o.sealed[segmentID]; ok {
+			if stats.activate {
+				o.current.Diff(stats.stats)
+			}
 			delete(o.sealed, segmentID)
 		}
 	default:
 		return
 	}
 
-	return
 }
 
 func (o *idfOracle) activate(stats *bm25Stats) {
@@ -177,6 +186,7 @@ func (o *idfOracle) SyncDistrbution(snapshot *snapshot) {
 
 	sealed, growing := snapshot.Peek()
 
+	log.Info("test-- sync idf", zap.Any("growing", growing))
 	for _, item := range sealed {
 		for _, segment := range item.Segments {
 			if stats, ok := o.sealed[segment.SegmentID]; ok {
@@ -198,17 +208,17 @@ func (o *idfOracle) SyncDistrbution(snapshot *snapshot) {
 	o.targetVersion = snapshot.targetVersion
 
 	for _, stats := range o.sealed {
-		if stats.activate == false && stats.targetVersion == o.targetVersion {
+		if !stats.activate && stats.targetVersion == o.targetVersion {
 			o.activate(stats)
-		} else if stats.activate == true && stats.targetVersion != o.targetVersion {
+		} else if stats.activate && stats.targetVersion != o.targetVersion {
 			o.deactivate(stats)
 		}
 	}
 
 	for _, stats := range o.growing {
-		if stats.activate == false && (stats.targetVersion == o.targetVersion || stats.targetVersion == initialTargetVersion) {
+		if !stats.activate && (stats.targetVersion == o.targetVersion || stats.targetVersion == initialTargetVersion) {
 			o.activate(stats)
-		} else if stats.activate == true && (stats.targetVersion != o.targetVersion && stats.targetVersion != initialTargetVersion) {
+		} else if stats.activate && (stats.targetVersion != o.targetVersion && stats.targetVersion != initialTargetVersion) {
 			o.deactivate(stats)
 		}
 	}

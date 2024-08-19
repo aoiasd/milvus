@@ -46,6 +46,7 @@ func (b *brokerMetaWriter) UpdateSync(ctx context.Context, pack *SyncTask) error
 	)
 
 	insertFieldBinlogs := lo.MapToSlice(pack.insertBinlogs, func(_ int64, fieldBinlog *datapb.FieldBinlog) *datapb.FieldBinlog { return fieldBinlog })
+	log.Info("test---", zap.Any("insert", insertFieldBinlogs))
 	statsFieldBinlogs := lo.MapToSlice(pack.statsBinlogs, func(_ int64, fieldBinlog *datapb.FieldBinlog) *datapb.FieldBinlog { return fieldBinlog })
 	if len(pack.deltaBinlog.Binlogs) > 0 {
 		deltaFieldBinlogs = append(deltaFieldBinlogs, pack.deltaBinlog)
@@ -53,6 +54,7 @@ func (b *brokerMetaWriter) UpdateSync(ctx context.Context, pack *SyncTask) error
 
 	if len(pack.bm25Binlogs) > 0 {
 		deltaBm25StatsBinlogs = lo.MapToSlice(pack.bm25Binlogs, func(_ int64, fieldBinlog *datapb.FieldBinlog) *datapb.FieldBinlog { return fieldBinlog })
+		log.Info("test---", zap.Any("bm25", deltaBm25StatsBinlogs))
 	}
 	// only current segment checkpoint info
 	segment, ok := pack.metacache.GetSegmentByID(pack.segmentID)

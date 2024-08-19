@@ -43,6 +43,7 @@ import (
 	"github.com/milvus-io/milvus/internal/querynodev2/segments"
 	"github.com/milvus-io/milvus/internal/querynodev2/tsafe"
 	"github.com/milvus-io/milvus/internal/storage"
+	"github.com/milvus-io/milvus/internal/util/ctokenizer"
 	"github.com/milvus-io/milvus/internal/util/streamrpc"
 	"github.com/milvus-io/milvus/internal/util/vectorizer"
 	"github.com/milvus-io/milvus/pkg/common"
@@ -892,6 +893,18 @@ func NewShardDelegator(ctx context.Context, collectionID UniqueID, replicaID Uni
 		excludedSegments: excludedSegments,
 		vectorizers:      make(map[int64]vectorizer.Vectorizer),
 	}
+
+	// TODO AOIASD INIT Vecotrizer
+	for _, field := range collection.Schema().Fields {
+		if field.Name == "embedding" {
+			tokenizer, err := ctokenizer.NewTokenizer(make(map[string]string))
+			if err != nil {
+				return nil, err
+			}
+			sd.vectorizers[field.GetFieldID()] = vectorizer.NewHashVectorizer(field, tokenizer)
+		}
+	}
+
 	m := sync.Mutex{}
 	sd.tsCond = sync.NewCond(&m)
 	if sd.lifetime.Add(lifetime.NotStopped) == nil {

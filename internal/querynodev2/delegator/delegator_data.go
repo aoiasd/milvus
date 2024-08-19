@@ -163,7 +163,7 @@ func (sd *shardDelegator) ProcessInsert(insertRecords map[int64]*InsertData) {
 		} else {
 			sd.idfOracle.UpdateGrowing(growing.ID(), insertData.BM25Stats)
 		}
-		log.Debug("insert into growing segment",
+		log.Info("insert into growing segment",
 			zap.Int64("collectionID", growing.Collection()),
 			zap.Int64("segmentID", segmentID),
 			zap.Int("rowCount", len(insertData.RowIDs)),
@@ -539,22 +539,11 @@ func (sd *shardDelegator) LoadSegments(ctx context.Context, req *querypb.LoadSeg
 	if req.GetInfos()[0].GetLevel() == datapb.SegmentLevel_L0 {
 		sd.RefreshLevel0DeletionStats()
 	} else {
+
 		// load bloom filter only when candidate not exists
 		infos := lo.Filter(req.GetInfos(), func(info *querypb.SegmentLoadInfo, _ int) bool {
 			return !sd.pkOracle.Exists(pkoracle.NewCandidateKey(info.GetSegmentID(), info.GetPartitionID(), commonpb.SegmentState_Sealed), targetNodeID)
 		})
-		candidates, err := sd.loader.LoadBloomFilterSet(ctx, req.GetCollectionID(), req.GetVersion(), infos...)
-		if err != nil {
-			log.Warn("failed to load bloom filter set for segment", zap.Error(err))
-			return err
-		}
-
-		log.Debug("load delete...")
-		err = sd.loadStreamDelete(ctx, candidates, infos, req.GetDeltaPositions(), targetNodeID, worker, entries)
-		if err != nil {
-			log.Warn("load stream delete failed", zap.Error(err))
-			return err
-		}
 
 		// TODO AOIASD SKIP IF COLLECTION WITHOUT BM25
 		bm25Stats, err := sd.loader.LoadBM25Stats(ctx, req.GetCollectionID(), infos...)
@@ -563,15 +552,19 @@ func (sd *shardDelegator) LoadSegments(ctx context.Context, req *querypb.LoadSeg
 			return err
 		}
 
-		var idfError error = nil
-		bm25Stats.Range(func(segmentID int64, stats map[int64]*storage.BM25Stats) bool {
-			idfError := sd.idfOracle.Register(segmentID, stats, segments.SegmentTypeSealed)
-			return idfError != nil
-		})
-		if idfError != nil {
-			log.Warn("register idfOracle failed", zap.Error(err))
-			return idfError
+		candidates, err := sd.loader.LoadBloomFilterSet(ctx, req.GetCollectionID(), req.GetVersion(), infos...)
+		if err != nil {
+			log.Warn("failed to load bloom filter set for segment", zap.Error(err))
+			return err
 		}
+
+		log.Debug("load delete...")
+		err = sd.loadStreamDelete(ctx, candidates, bm25Stats, infos, req.GetDeltaPositions(), targetNodeID, worker, entries)
+		if err != nil {
+			log.Warn("load stream delete failed", zap.Error(err))
+			return err
+		}
+
 	}
 
 	// alter distribution
@@ -640,6 +633,7 @@ func (sd *shardDelegator) RefreshLevel0DeletionStats() {
 
 func (sd *shardDelegator) loadStreamDelete(ctx context.Context,
 	candidates []*pkoracle.BloomFilterSet,
+	bm25Stats *typeutil.ConcurrentMap[int64, map[int64]*storage.BM25Stats],
 	infos []*querypb.SegmentLoadInfo,
 	deltaPositions []*msgpb.MsgPosition,
 	targetNodeID int64,
@@ -758,6 +752,14 @@ func (sd *shardDelegator) loadStreamDelete(ctx context.Context,
 		)
 		sd.pkOracle.Register(candidate, targetNodeID)
 	}
+
+	if bm25Stats != nil {
+		bm25Stats.Range(func(segmentID int64, stats map[int64]*storage.BM25Stats) bool {
+			sd.idfOracle.Register(segmentID, stats, segments.SegmentTypeSealed)
+			return false
+		})
+	}
+
 	log.Info("load delete done")
 
 	return nil

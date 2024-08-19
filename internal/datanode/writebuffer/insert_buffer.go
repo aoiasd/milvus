@@ -119,6 +119,10 @@ func (ib *InsertBuffer) Yield() []*storage.InsertData {
 	return result
 }
 
+func (ib *InsertBuffer) YieldStats() map[int64]*storage.BM25Stats {
+	return ib.statsBuffer.yieldBuffer()
+}
+
 func (ib *InsertBuffer) Buffer(inData *InsertData, startPos, endPos *msgpb.MsgPosition) int64 {
 	bufferedSize := int64(0)
 	for idx, data := range inData.data {

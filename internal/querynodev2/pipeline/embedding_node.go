@@ -71,7 +71,7 @@ func newEmbeddingNode(collectionID int64, channelName string, manager *DataManag
 	}
 
 	for _, field := range collection.Schema().GetFields() {
-		if field.IsPrimaryKey == true {
+		if field.IsPrimaryKey {
 			node.pkField = field
 		}
 
@@ -84,6 +84,7 @@ func newEmbeddingNode(collectionID int64, channelName string, manager *DataManag
 			log.Info("test--", zap.Any("field", field))
 			node.vectorizers[field.GetFieldID()] = vectorizer.NewHashVectorizer(field, tokenizer)
 		} else if field.GetName() == "text" {
+			log.Info("test-- embedding from", zap.Any("field", field))
 			node.embeddingFrom = field.GetFieldID()
 		}
 	}
@@ -157,7 +158,7 @@ func (eNode *embeddingNode) vectorize(msg *msgstream.InsertMsg, stats map[int64]
 		msg.FieldsData = RemoveFieldData(msg.GetFieldsData(), fieldID)
 
 		//TODO Get Embedding From
-		embeddingFieldID := int64(0)
+		embeddingFieldID := eNode.embeddingFrom
 
 		data, err := GetEmbeddingFieldData(msg.GetFieldsData(), embeddingFieldID)
 		if data == nil || err != nil {
@@ -182,8 +183,8 @@ func (eNode *embeddingNode) vectorize(msg *msgstream.InsertMsg, stats map[int64]
 	return nil
 }
 
-func (eNode *embeddingNode) Operate(in []Msg) []Msg {
-	nodeMsg := in[0].(*insertNodeMsg)
+func (eNode *embeddingNode) Operate(in Msg) Msg {
+	nodeMsg := in.(*insertNodeMsg)
 	nodeMsg.insertDatas = make(map[int64]*delegator.InsertData)
 
 	collection := eNode.manager.Collection.Get(eNode.collectionID)
@@ -196,7 +197,7 @@ func (eNode *embeddingNode) Operate(in []Msg) []Msg {
 		eNode.addInsertData(nodeMsg.insertDatas, msg, collection)
 	}
 
-	return []Msg{nodeMsg}
+	return nodeMsg
 }
 
 func GetEmbeddingFieldData(datas []*schemapb.FieldData, fieldID int64) ([]string, error) {
@@ -205,7 +206,7 @@ func GetEmbeddingFieldData(datas []*schemapb.FieldData, fieldID int64) ([]string
 			return data.GetScalars().GetStringData().GetData(), nil
 		}
 	}
-	return nil, fmt.Errorf("Field%d Not Found", fieldID)
+	return nil, fmt.Errorf("field%d not found", fieldID)
 }
 
 func GetSparseVectorDim(data [][]byte) int64 {

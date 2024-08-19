@@ -413,19 +413,19 @@ func (wb *writeBufferBase) getOrCreateBuffer(segmentID int64) *segmentBuffer {
 	return buffer
 }
 
-func (wb *writeBufferBase) yieldBuffer(segmentID int64) ([]*storage.InsertData, *storage.DeleteData, *TimeRange, *msgpb.MsgPosition) {
+func (wb *writeBufferBase) yieldBuffer(segmentID int64) ([]*storage.InsertData, map[int64]*storage.BM25Stats, *storage.DeleteData, *TimeRange, *msgpb.MsgPosition) {
 	buffer, ok := wb.buffers[segmentID]
 	if !ok {
-		return nil, nil, nil, nil
+		return nil, nil, nil, nil, nil
 	}
 
 	// remove buffer and move it to sync manager
 	delete(wb.buffers, segmentID)
 	start := buffer.EarliestPosition()
 	timeRange := buffer.GetTimeRange()
-	insert, delta := buffer.Yield()
+	insert, bm25, delta := buffer.Yield()
 
-	return insert, delta, timeRange, start
+	return insert, bm25, delta, timeRange, start
 }
 
 type InsertData struct {
@@ -627,7 +627,7 @@ func (wb *writeBufferBase) bufferInsert(inData *InsertData, startPos, endPos *ms
 			State:         commonpb.SegmentState_Growing,
 		}, func(_ *datapb.SegmentInfo) *metacache.BloomFilterSet {
 			return metacache.NewBloomFilterSetWithBatchSize(wb.getEstBatchSize())
-		}, metacache.SetStartPosRecorded(false))
+		}, metacache.NewBMStatsFactory, metacache.SetStartPosRecorded(false))
 		log.Info("add growing segment", zap.Int64("segmentID", inData.segmentID), zap.String("channel", wb.channelName))
 	}
 
@@ -662,7 +662,7 @@ func (wb *writeBufferBase) getSyncTask(ctx context.Context, segmentID int64) (sy
 	var totalMemSize float64 = 0
 	var tsFrom, tsTo uint64
 
-	insert, delta, timeRange, startPos := wb.yieldBuffer(segmentID)
+	insert, bm25, delta, timeRange, startPos := wb.yieldBuffer(segmentID)
 	if timeRange != nil {
 		tsFrom, tsTo = timeRange.timestampMin, timeRange.timestampMax
 	}
@@ -688,6 +688,7 @@ func (wb *writeBufferBase) getSyncTask(ctx context.Context, segmentID int64) (sy
 	pack := &syncmgr.SyncPack{}
 	pack.WithInsertData(insert).
 		WithDeleteData(delta).
+		WithBM25Stats(bm25).
 		WithCollectionID(wb.collectionID).
 		WithPartitionID(segmentInfo.PartitionID()).
 		WithChannelName(wb.channelName).

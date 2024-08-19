@@ -493,8 +493,7 @@ func (loader *segmentLoaderV2) LoadSegment(ctx context.Context,
 			return err
 		}
 
-		pkStatsBinlogs := loader.filterPKStatsBinlogs(loadInfo.Statslogs, pkField.GetFieldID())
-		loader.LoadBM25Stats(ctx)
+		// TODO AOIASD SUPPORT BM25 FOR STORAGE V2
 	}
 
 	log.Info("loading delta...")
@@ -1040,6 +1039,7 @@ func separateIndexAndBinlog(loadInfo *querypb.SegmentLoadInfo) (map[int64]*Index
 		fieldID := fieldBinlog.FieldID
 		// check num rows of data meta and index meta are consistent
 		if indexInfo, ok := fieldID2IndexInfo[fieldID]; ok {
+			log.Info("test--", zap.Int64("field", fieldBinlog.FieldID), zap.Any("info", indexInfo))
 			fieldInfo := &IndexedFieldInfo{
 				FieldBinlog: fieldBinlog,
 				IndexInfo:   indexInfo,
@@ -1263,17 +1263,17 @@ func (loader *segmentLoader) filterPKStatsBinlogs(fieldBinlogs []*datapb.FieldBi
 
 func (loader *segmentLoader) filterBM25Stats(fieldBinlogs []*datapb.FieldBinlog) map[int64][]string {
 	result := make(map[int64][]string, 0)
+	log.Info("test-- filter", zap.Any("binlog", fieldBinlogs))
 	for _, fieldBinlog := range fieldBinlogs {
 		logpaths := []string{}
 		for _, binlog := range fieldBinlog.GetBinlogs() {
 			_, logidx := path.Split(binlog.GetLogPath())
 			// if special status log exist
 			// only load one file
-			switch logidx {
-			case storage.CompoundStatsType.LogIdx():
+			if logidx == storage.CompoundStatsType.LogIdx() {
 				logpaths = []string{binlog.GetLogPath()}
 				break
-			default:
+			} else {
 				logpaths = append(logpaths, binlog.GetLogPath())
 			}
 		}
@@ -1396,6 +1396,7 @@ func (loader *segmentLoader) loadBm25Stats(ctx context.Context, segmentID int64,
 	}
 
 	startTs := time.Now()
+	log.Info("test--", zap.Strings("path", pathList))
 	values, err := loader.cm.MultiRead(ctx, pathList)
 	if err != nil {
 		return err
