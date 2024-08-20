@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -378,6 +379,7 @@ func (m *BM25Stats) Clone() BM25Stats {
 }
 
 func (m *BM25Stats) Serialize() ([]byte, error) {
+	start := time.Now()
 	buffer := bytes.NewBuffer(make([]byte, 0, len(m.statistics)*8+16))
 
 	if err := binary.Write(buffer, common.Endian, m.numRow); err != nil {
@@ -398,7 +400,7 @@ func (m *BM25Stats) Serialize() ([]byte, error) {
 		}
 	}
 
-	log.Info("test-- serialize", zap.Int64("numrow", m.numRow), zap.Int64("tokenNum", m.tokenNum), zap.Int("dim", len(m.statistics)), zap.Int("len", buffer.Len()))
+	log.Info("test-- serialize", zap.Int64("numrow", m.numRow), zap.Int64("tokenNum", m.tokenNum), zap.Int("dim", len(m.statistics)), zap.Int("len", buffer.Len()), zap.Duration("interval", time.Since(start)))
 	return buffer.Bytes(), nil
 }
 

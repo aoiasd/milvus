@@ -82,7 +82,7 @@ func newEmbeddingNode(collectionID int64, channelName string, manager *DataManag
 			}
 
 			log.Info("test--", zap.Any("field", field))
-			node.vectorizers[field.GetFieldID()] = vectorizer.NewHashVectorizer(field, tokenizer)
+			node.vectorizers[field.GetFieldID()] = vectorizer.NewHashVectorizer(tokenizer)
 		} else if field.GetName() == "text" {
 			log.Info("test-- embedding from", zap.Any("field", field))
 			node.embeddingFrom = field.GetFieldID()
@@ -151,8 +151,13 @@ func (eNode *embeddingNode) addInsertData(insertDatas map[UniqueID]*delegator.In
 }
 
 func (eNode *embeddingNode) vectorize(msg *msgstream.InsertMsg, stats map[int64]*storage.BM25Stats) error {
-	for fieldID, vectorizer := range eNode.vectorizers {
-		field := vectorizer.GetField()
+	for _, field := range eNode.schema.Fields {
+		fieldID := field.GetFieldID()
+		vectorizer, ok := eNode.vectorizers[field.GetFieldID()]
+		if !ok {
+			continue
+		}
+
 		// TODO REMOVE CODE FOR TEST
 		// REMOVE invalid vector field data used as placeholder
 		msg.FieldsData = RemoveFieldData(msg.GetFieldsData(), fieldID)

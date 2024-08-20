@@ -901,7 +901,7 @@ func NewShardDelegator(ctx context.Context, collectionID UniqueID, replicaID Uni
 			if err != nil {
 				return nil, err
 			}
-			sd.vectorizers[field.GetFieldID()] = vectorizer.NewHashVectorizer(field, tokenizer)
+			sd.vectorizers[field.GetFieldID()] = vectorizer.NewHashVectorizer(tokenizer)
 		}
 	}
 

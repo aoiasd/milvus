@@ -19,7 +19,6 @@
 package vectorizer
 
 import (
-	"github.com/milvus-io/milvus-proto/go-api/v2/schemapb"
 	"github.com/milvus-io/milvus/internal/util/ctokenizer"
 	"github.com/milvus-io/milvus/internal/util/tokenizerapi"
 	"github.com/milvus-io/milvus/pkg/util/typeutil"
@@ -27,17 +26,14 @@ import (
 
 type Vectorizer interface {
 	Vectorize(data ...string) (int64, []map[uint32]float32, error)
-	GetField() *schemapb.FieldSchema
 }
 
 type HashVectorizer struct {
-	field     *schemapb.FieldSchema
 	tokenizer tokenizerapi.Tokenizer
 }
 
-func NewHashVectorizer(field *schemapb.FieldSchema, tokenizer tokenizerapi.Tokenizer) *HashVectorizer {
+func NewHashVectorizer(tokenizer tokenizerapi.Tokenizer) *HashVectorizer {
 	return &HashVectorizer{
-		field:     field,
 		tokenizer: tokenizer,
 	}
 }
@@ -71,8 +67,4 @@ func (v *HashVectorizer) Vectorize(data ...string) (int64, []map[uint32]float32,
 		embedData[i] = embeddingMap
 	}
 	return dim, embedData, nil
-}
-
-func (v *HashVectorizer) GetField() *schemapb.FieldSchema {
-	return v.field
 }

@@ -190,7 +190,7 @@ func (t *SyncTask) Run(ctx context.Context) (err error) {
 		log.Info("segment removed", zap.Int64("segmentID", t.segment.SegmentID()), zap.String("channel", t.channelName))
 	}
 
-	log.Info("task done", zap.Float64("flushedSize", totalSize))
+	log.Info("task done", zap.Float64("flushedSize", totalSize), zap.Duration("interval", t.tr.RecordSpan()))
 
 	if !t.isFlush {
 		metrics.DataNodeAutoFlushBufferCount.WithLabelValues(fmt.Sprint(paramtable.GetNodeID()), metrics.SuccessLabel, t.level.String()).Inc()

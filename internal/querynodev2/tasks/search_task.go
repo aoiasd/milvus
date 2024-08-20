@@ -149,6 +149,8 @@ func (t *SearchTask) Execute() error {
 	if err != nil {
 		return err
 	}
+
+	log.Info("test-- req", zap.Any("req", req))
 	searchReq, err := segments.NewSearchRequest(t.ctx, t.collection, req, t.placeholderGroup)
 	if err != nil {
 		return err

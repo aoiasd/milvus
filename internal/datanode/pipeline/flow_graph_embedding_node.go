@@ -72,7 +72,7 @@ func newEmbeddingNode(channelName string, schema *schemapb.CollectionSchema) (*e
 				return nil, err
 			}
 			log.Info("test--", zap.Any("field", field))
-			node.vectorizers[field.GetFieldID()] = vectorizer.NewHashVectorizer(field, tokenizer)
+			node.vectorizers[field.GetFieldID()] = vectorizer.NewHashVectorizer(tokenizer)
 		} else if field.GetName() == "text" {
 			node.embeddingFrom = field.GetFieldID()
 		}
