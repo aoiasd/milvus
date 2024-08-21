@@ -35,8 +35,7 @@ func (s *SegmentBM25Stats) Merge(stats map[int64]*storage.BM25Stats) {
 
 	for fieldID, current := range stats {
 		if history, ok := s.stats[fieldID]; !ok {
-			clone := current.Clone()
-			s.stats[fieldID] = &clone
+			s.stats[fieldID] = current.Clone()
 		} else {
 			history.Merge(current)
 		}

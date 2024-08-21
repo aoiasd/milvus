@@ -241,7 +241,7 @@ func (kc *Catalog) applyBinlogInfo(segments []*datapb.SegmentInfo, insertLogs, d
 		}
 
 		if len(segmentInfo.Bm25Statslogs) == 0 {
-			segmentInfo.Statslogs = bm25Logs[segmentInfo.ID]
+			segmentInfo.Bm25Statslogs = bm25Logs[segmentInfo.ID]
 		}
 		if err = binlog.CompressFieldBinlogs(segmentInfo.Bm25Statslogs); err != nil {
 			return err

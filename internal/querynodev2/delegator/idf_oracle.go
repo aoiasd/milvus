@@ -53,8 +53,7 @@ func (s *bm25Stats) Merge(stats map[int64]*storage.BM25Stats) {
 		if stats, ok := s.stats[fieldID]; ok {
 			stats.Merge(newstats)
 		} else {
-			clone := newstats.Clone()
-			s.stats[fieldID] = &clone
+			s.stats[fieldID] = newstats.Clone()
 		}
 	}
 }
@@ -75,6 +74,13 @@ func (s *bm25Stats) GetStats(fieldID int64) (*storage.BM25Stats, error) {
 		return nil, fmt.Errorf("field not found in bm25 stats")
 	}
 	return stats, nil
+}
+
+func (s *bm25Stats) NumRow() int64 {
+	for _, stats := range s.stats {
+		return stats.NumRow()
+	}
+	return 0
 }
 
 func newBm25Stats() *bm25Stats {
@@ -186,7 +192,7 @@ func (o *idfOracle) SyncDistrbution(snapshot *snapshot) {
 
 	sealed, growing := snapshot.Peek()
 
-	log.Info("test-- sync idf", zap.Any("growing", growing))
+	log.Info("test-- snapshot", zap.Int64("version", snapshot.targetVersion), zap.Any("seal", sealed), zap.Any("grow", growing))
 	for _, item := range sealed {
 		for _, segment := range item.Segments {
 			if stats, ok := o.sealed[segment.SegmentID]; ok {
@@ -207,10 +213,12 @@ func (o *idfOracle) SyncDistrbution(snapshot *snapshot) {
 
 	o.targetVersion = snapshot.targetVersion
 
-	for _, stats := range o.sealed {
+	for seg, stats := range o.sealed {
 		if !stats.activate && stats.targetVersion == o.targetVersion {
+			log.Info("test-- activate", zap.Int64("segment", seg))
 			o.activate(stats)
 		} else if stats.activate && stats.targetVersion != o.targetVersion {
+			log.Info("test-- deactivate", zap.Int64("segment", seg))
 			o.deactivate(stats)
 		}
 	}
@@ -222,6 +230,8 @@ func (o *idfOracle) SyncDistrbution(snapshot *snapshot) {
 			o.deactivate(stats)
 		}
 	}
+
+	log.Info("test-- sync distribution finished", zap.Int64("version", o.targetVersion), zap.Int64("numrow", o.current.NumRow()))
 }
 
 func (o *idfOracle) BuildIDF(fieldID int64, tfs ...map[uint32]float32) ([][]byte, float64, error) {
@@ -236,8 +246,8 @@ func (o *idfOracle) BuildIDF(fieldID int64, tfs ...map[uint32]float32) ([][]byte
 	idfSparseVector := make([][]byte, len(tfs))
 	for i, tf := range tfs {
 		idf := stats.BuildIDF(tf)
-		idfSparseVector[i] = typeutil.CreateAndSortSparseFloatRow(idf)
 		log.Info("test-- build bm25 idf", zap.Any("idf", idf))
+		idfSparseVector[i] = typeutil.CreateAndSortSparseFloatRow(idf)
 	}
 	return idfSparseVector, stats.GetAvgdl(), nil
 }

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 
 	"github.com/milvus-io/milvus-proto/go-api/v2/schemapb"
 	"github.com/milvus-io/milvus/internal/util/bloomfilter"
@@ -366,13 +367,13 @@ func (m *BM25Stats) Diff(meta *BM25Stats) {
 	for key, value := range meta.statistics {
 		m.statistics[key] -= value
 	}
-	m.numRow -= meta.NumRow()
+	m.numRow -= meta.numRow
 	m.tokenNum -= meta.tokenNum
 }
 
-func (m *BM25Stats) Clone() BM25Stats {
-	return BM25Stats{
-		statistics: m.statistics,
+func (m *BM25Stats) Clone() *BM25Stats {
+	return &BM25Stats{
+		statistics: maps.Clone(m.statistics),
 		numRow:     m.numRow,
 		tokenNum:   m.tokenNum,
 	}
