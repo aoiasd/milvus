@@ -111,7 +111,6 @@ func (ttn *ttNode) Operate(in []Msg) []Msg {
 	if needUpdate {
 		ttn.updateChannelCP(channelPos, curTs, true)
 	}
-	log.Info("test-- pipeline delay", zap.Duration("ts", time.Since(tsoutil.PhysicalTime(channelPos.GetTimestamp()))))
 	return []Msg{}
 }
 

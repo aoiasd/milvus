@@ -194,15 +194,15 @@ func buildBinlogKvs(collectionID, partitionID, segmentID typeutil.UniqueID, binl
 		kv[key] = string(binlogBytes)
 	}
 
-	for _, statslog := range bm25logs {
-		if err := checkLogID(statslog); err != nil {
+	for _, bm25log := range bm25logs {
+		if err := checkLogID(bm25log); err != nil {
 			return nil, err
 		}
-		binlogBytes, err := proto.Marshal(statslog)
+		binlogBytes, err := proto.Marshal(bm25log)
 		if err != nil {
-			return nil, fmt.Errorf("marshal statslogs failed, collectionID:%d, segmentID:%d, fieldID:%d, error:%w", collectionID, segmentID, statslog.FieldID, err)
+			return nil, fmt.Errorf("marshal bm25log failed, collectionID:%d, segmentID:%d, fieldID:%d, error:%w", collectionID, segmentID, bm25log.FieldID, err)
 		}
-		key := buildFieldBM25StatslogPath(collectionID, partitionID, segmentID, statslog.FieldID)
+		key := buildFieldBM25StatslogPath(collectionID, partitionID, segmentID, bm25log.FieldID)
 		kv[key] = string(binlogBytes)
 	}
 
@@ -292,7 +292,7 @@ func buildFieldStatslogPath(collectionID typeutil.UniqueID, partitionID typeutil
 }
 
 func buildFieldBM25StatslogPath(collectionID typeutil.UniqueID, partitionID typeutil.UniqueID, segmentID typeutil.UniqueID, fieldID typeutil.UniqueID) string {
-	return fmt.Sprintf("%s/%d/%d/%d/%d", BM25StatsInfoPrefix, collectionID, partitionID, segmentID, fieldID)
+	return fmt.Sprintf("%s/%d/%d/%d/%d", SegmentBM25logPathPrefix, collectionID, partitionID, segmentID, fieldID)
 }
 
 func buildFieldBinlogPathPrefix(collectionID typeutil.UniqueID, partitionID typeutil.UniqueID, segmentID typeutil.UniqueID) string {

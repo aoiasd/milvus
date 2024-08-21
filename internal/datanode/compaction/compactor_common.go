@@ -217,10 +217,10 @@ func bmSerializeWrite(ctx context.Context, io io.BinlogIO, allocator allocator.A
 	kvs := make(map[string][]byte)
 	binlogs := []*datapb.FieldBinlog{}
 	for fieldID, blob := range stats {
-		key, _ := binlog.BuildLogPath(storage.StatsBinlog, writer.GetCollectionID(), writer.GetPartitionID(), writer.GetSegmentID(), fieldID, logID)
+		key, _ := binlog.BuildLogPath(storage.BM25Binlog, writer.GetCollectionID(), writer.GetPartitionID(), writer.GetSegmentID(), fieldID, logID)
 		kvs[key] = blob.GetValue()
 		fieldLog := &datapb.FieldBinlog{
-			FieldID: writer.GetPkID(),
+			FieldID: fieldID,
 			Binlogs: []*datapb.Binlog{
 				{
 					LogSize: int64(len(blob.GetValue())),
