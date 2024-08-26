@@ -19,6 +19,8 @@
 package vectorizer
 
 import (
+	"sync"
+
 	"github.com/milvus-io/milvus/internal/util/ctokenizer"
 	"github.com/milvus-io/milvus/internal/util/tokenizerapi"
 	"github.com/milvus-io/milvus/pkg/util/typeutil"
@@ -29,27 +31,26 @@ type Vectorizer interface {
 }
 
 type HashVectorizer struct {
-	tokenizer tokenizerapi.Tokenizer
+	tokenizer   tokenizerapi.Tokenizer
+	concurrency int
 }
 
 func NewHashVectorizer(tokenizer tokenizerapi.Tokenizer) *HashVectorizer {
 	return &HashVectorizer{
-		tokenizer: tokenizer,
+		tokenizer:   tokenizer,
+		concurrency: 8,
 	}
 }
 
-func (v *HashVectorizer) Vectorize(data ...string) (int64, []map[uint32]float32, error) {
-	row := len(data)
-
+func (v *HashVectorizer) vectorize(data []string, dst []map[uint32]float32) (int64, error) {
 	// TODO AOIASD: TOKENIZER CONCURRENT SAFE AND REMOVE INIT TOKENIZER
 	tokenizer, err := ctokenizer.NewTokenizer(make(map[string]string))
 	if err != nil {
-		return 0, nil, err
+		return 0, err
 	}
 
 	dim := int64(0)
-	embedData := make([]map[uint32]float32, row)
-	for i := 0; i < row; i++ {
+	for i := 0; i < len(data); i++ {
 		rowData := data[i]
 		embeddingMap := map[uint32]float32{}
 		tokenStream := tokenizer.NewTokenStream(rowData)
@@ -64,7 +65,51 @@ func (v *HashVectorizer) Vectorize(data ...string) (int64, []map[uint32]float32,
 			dim = vectorDim
 		}
 
-		embedData[i] = embeddingMap
+		dst[i] = embeddingMap
 	}
-	return dim, embedData, nil
+	return dim, nil
+}
+
+func (v *HashVectorizer) Vectorize(data ...string) (int64, []map[uint32]float32, error) {
+	row := len(data)
+	embedData := make([]map[uint32]float32, row)
+	wg := sync.WaitGroup{}
+
+	errCh := make(chan error, v.concurrency)
+	dimCh := make(chan int64, v.concurrency)
+	for i, j := 0, 0; i < v.concurrency && j < row; i++ {
+		var start = j
+		var end = start + row/v.concurrency
+		if i < row%v.concurrency {
+			end += 1
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			dim, err := v.vectorize(data[start:end], embedData[start:end])
+			if err != nil {
+				errCh <- err
+				return
+			}
+			dimCh <- dim
+		}()
+		j = end
+	}
+
+	wg.Wait()
+	close(errCh)
+	close(dimCh)
+	for err := range errCh {
+		if err != nil {
+			return 0, nil, err
+		}
+	}
+
+	maxDim := int64(0)
+	for dim := range dimCh {
+		if dim > maxDim {
+			maxDim = dim
+		}
+	}
+	return maxDim, embedData, nil
 }

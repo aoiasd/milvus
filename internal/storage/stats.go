@@ -308,7 +308,7 @@ func (sr *StatsReader) GetPrimaryKeyStatsList() ([]*PrimaryKeyStats, error) {
 type BM25Stats struct {
 	statistics map[uint32]int32
 	numRow     int64
-	tokenNum   int64
+	numToken   int64
 }
 
 func NewBM25Stats() *BM25Stats {
@@ -330,7 +330,7 @@ func (m *BM25Stats) Append(datas ...map[uint32]float32) {
 	for _, data := range datas {
 		for key, value := range data {
 			m.statistics[key] += 1
-			m.tokenNum += int64(value)
+			m.numToken += int64(value)
 		}
 
 		m.numRow += 1
@@ -345,7 +345,7 @@ func (m *BM25Stats) AppendBytes(datas ...[]byte) {
 			index := typeutil.SparseFloatRowIndexAt(data, i)
 			value := typeutil.SparseFloatRowValueAt(data, i)
 			m.statistics[index] += 1
-			m.tokenNum += int64(value)
+			m.numToken += int64(value)
 		}
 		m.numRow += 1
 	}
@@ -355,12 +355,16 @@ func (m *BM25Stats) NumRow() int64 {
 	return m.numRow
 }
 
+func (m *BM25Stats) NumToken() int64 {
+	return m.numToken
+}
+
 func (m *BM25Stats) Merge(meta *BM25Stats) {
 	for key, value := range meta.statistics {
 		m.statistics[key] += value
 	}
 	m.numRow += meta.NumRow()
-	m.tokenNum += meta.tokenNum
+	m.numToken += meta.numToken
 }
 
 func (m *BM25Stats) Diff(meta *BM25Stats) {
@@ -368,14 +372,14 @@ func (m *BM25Stats) Diff(meta *BM25Stats) {
 		m.statistics[key] -= value
 	}
 	m.numRow -= meta.numRow
-	m.tokenNum -= meta.tokenNum
+	m.numToken -= meta.numToken
 }
 
 func (m *BM25Stats) Clone() *BM25Stats {
 	return &BM25Stats{
 		statistics: maps.Clone(m.statistics),
 		numRow:     m.numRow,
-		tokenNum:   m.tokenNum,
+		numToken:   m.numToken,
 	}
 }
 
@@ -387,7 +391,7 @@ func (m *BM25Stats) Serialize() ([]byte, error) {
 		return nil, err
 	}
 
-	if err := binary.Write(buffer, common.Endian, m.tokenNum); err != nil {
+	if err := binary.Write(buffer, common.Endian, m.numToken); err != nil {
 		return nil, err
 	}
 
@@ -401,7 +405,7 @@ func (m *BM25Stats) Serialize() ([]byte, error) {
 		}
 	}
 
-	log.Info("test-- serialize", zap.Int64("numrow", m.numRow), zap.Int64("tokenNum", m.tokenNum), zap.Int("dim", len(m.statistics)), zap.Int("len", buffer.Len()), zap.Duration("interval", time.Since(start)))
+	log.Info("test-- serialize", zap.Int64("numrow", m.numRow), zap.Int64("tokenNum", m.numToken), zap.Int("dim", len(m.statistics)), zap.Int("len", buffer.Len()), zap.Duration("interval", time.Since(start)))
 	return buffer.Bytes(), nil
 }
 
@@ -430,12 +434,12 @@ func (m *BM25Stats) Deserialize(bs []byte) error {
 	}
 
 	m.numRow += numRow
-	m.tokenNum += tokenNum
+	m.numToken += tokenNum
 	for i := 0; i < dim; i++ {
 		m.statistics[keys[i]] += values[i]
 	}
 
-	log.Info("test-- deserialize", zap.Int64("numrow", m.numRow), zap.Int64("tokenNum", m.tokenNum))
+	log.Info("test-- deserialize", zap.Int64("numrow", m.numRow), zap.Int64("tokenNum", m.numToken))
 	return nil
 }
 
@@ -449,7 +453,7 @@ func (m *BM25Stats) BuildIDF(tf map[uint32]float32) map[uint32]float32 {
 }
 
 func (m *BM25Stats) GetAvgdl() float64 {
-	return float64(m.tokenNum) / float64(m.numRow)
+	return float64(m.numToken) / float64(m.numRow)
 }
 
 // DeserializeStats deserialize @blobs as []*PrimaryKeyStats
