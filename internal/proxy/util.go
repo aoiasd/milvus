@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/errors"
+	"github.com/samber/lo"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/grpc/metadata"
@@ -606,6 +607,89 @@ func validateSchema(coll *schemapb.CollectionSchema) error {
 		return fmt.Errorf("primary key is required for non autoid mode")
 	}
 
+	return nil
+}
+
+func validateAndFillFunction(coll *schemapb.CollectionSchema) error {
+	nameMap := lo.SliceToMap(coll.GetFields(), func(field *schemapb.FieldSchema) (string, *schemapb.FieldSchema) {
+		return field.GetName(), field
+	})
+	// validate function
+	for _, function := range coll.GetFunctions() {
+		inputFields := []*schemapb.FieldSchema{}
+		for _, name := range function.GetInputFieldNames() {
+			inputField, ok := nameMap[name]
+			if !ok {
+				return fmt.Errorf("function input field not found %s", function.InputFieldNames)
+			}
+			inputFields = append(inputFields, inputField)
+		}
+
+		err := checkFunctionInputField(function, coll, inputFields)
+		if err != nil {
+			return err
+		}
+
+		outputFields := make([]*schemapb.FieldSchema, len(function.GetInputFieldNames()))
+		lackFields := []int{}
+		for i, name := range function.GetOutputFieldNames() {
+			outputField, ok := nameMap[name]
+			if !ok {
+				outputFields[i] = &schemapb.FieldSchema{
+					Name: name,
+				}
+				lackFields = append(lackFields, i)
+				continue
+			}
+			outputFields[i] = outputField
+		}
+
+		err = checkAndFillFunctionOutputField(function, coll, outputFields, lackFields)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func fillBm25Field(field *schemapb.FieldSchema) {
+	field.DataType = schemapb.DataType_SparseFloatVector
+	field.Description = "Auto create bm25 field"
+}
+
+func checkAndFillFunctionOutputField(function *schemapb.FunctionSchema, coll *schemapb.CollectionSchema, fields []*schemapb.FieldSchema, lacks []int) error {
+	switch function.GetType() {
+	case schemapb.FunctionType_BM25:
+		if len(fields) != 1 {
+			return fmt.Errorf("bm25 only need 1 output field, but now %d", len(fields))
+		}
+		for _, idx := range lacks {
+			fillBm25Field(fields[idx])
+			coll.Fields = append(coll.Fields, fields[idx])
+		}
+
+		if fields[0].DataType != schemapb.DataType_SparseFloatVector {
+			return fmt.Errorf("bm25 only need sparse embedding output field, but now %s", fields[0].DataType.String())
+		}
+	default:
+		return fmt.Errorf("generate output field for unknown funtion")
+	}
+	return nil
+}
+
+func checkFunctionInputField(function *schemapb.FunctionSchema, coll *schemapb.CollectionSchema, fields []*schemapb.FieldSchema) error {
+	switch function.GetType() {
+	case schemapb.FunctionType_BM25:
+		if len(fields) != 1 {
+			return fmt.Errorf("bm25 only need 1 input field, but now %d", len(fields))
+		}
+		if fields[0].DataType != schemapb.DataType_VarChar {
+			return fmt.Errorf("bm25 only need varchar input field, but now %s", fields[0].DataType.String())
+		}
+
+	default:
+		return fmt.Errorf("generate output field for unknown funtion")
+	}
 	return nil
 }
 

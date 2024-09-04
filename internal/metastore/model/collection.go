@@ -18,6 +18,7 @@ type Collection struct {
 	Description          string
 	AutoID               bool
 	Fields               []*Field
+	Functions            []*Function
 	VirtualChannelNames  []string
 	PhysicalChannelNames []string
 	ShardsNum            int32
@@ -122,12 +123,13 @@ func MarshalCollectionModel(coll *Collection) *pb.CollectionInfo {
 type config struct {
 	withFields     bool
 	withPartitions bool
+	withFunctions  bool
 }
 
 type Option func(c *config)
 
 func newDefaultConfig() *config {
-	return &config{withFields: false, withPartitions: false}
+	return &config{withFields: false, withPartitions: false, withFunctions: false}
 }
 
 func WithFields() Option {
@@ -139,6 +141,12 @@ func WithFields() Option {
 func WithPartitions() Option {
 	return func(c *config) {
 		c.withPartitions = true
+	}
+}
+
+func WithFunctions() Option {
+	return func(c *config) {
+		c.withFunctions = true
 	}
 }
 
@@ -157,6 +165,10 @@ func marshalCollectionModelWithConfig(coll *Collection, c *config) *pb.Collectio
 	if c.withFields {
 		fields := MarshalFieldModels(coll.Fields)
 		collSchema.Fields = fields
+	}
+
+	if c.withFunctions {
+		collSchema.Functions = MarshalFunctionModels(coll.Functions)
 	}
 
 	collectionPb := &pb.CollectionInfo{
