@@ -189,7 +189,7 @@ func (s *MixCompactionTaskSuite) TestCompactTwoToOne() {
 		PartitionID:  PartitionID,
 		ID:           99999,
 		NumOfRows:    0,
-	}, pkoracle.NewBloomFilterSet())
+	}, pkoracle.NewBloomFilterSet(), metacache.NewEmptySegmentBM25Stats())
 
 	s.plan.SegmentBinlogs = append(s.plan.SegmentBinlogs, &datapb.CompactionSegmentBinlogs{
 		SegmentID: seg.SegmentID(),
@@ -535,7 +535,7 @@ func getRow(magic int64) map[int64]interface{} {
 }
 
 func (s *MixCompactionTaskSuite) initMultiRowsSegBuffer(magic, numRows, step int64) {
-	segWriter, err := NewSegmentWriter(s.meta.GetSchema(), 65535, magic, PartitionID, CollectionID)
+	segWriter, err := NewSegmentWriter(s.meta.GetSchema(), 65535, magic, PartitionID, CollectionID, []int64{})
 	s.Require().NoError(err)
 
 	for i := int64(0); i < numRows; i++ {
@@ -554,7 +554,7 @@ func (s *MixCompactionTaskSuite) initMultiRowsSegBuffer(magic, numRows, step int
 }
 
 func (s *MixCompactionTaskSuite) initSegBuffer(magic int64) {
-	segWriter, err := NewSegmentWriter(s.meta.GetSchema(), 100, magic, PartitionID, CollectionID)
+	segWriter, err := NewSegmentWriter(s.meta.GetSchema(), 100, magic, PartitionID, CollectionID, []int64{})
 	s.Require().NoError(err)
 
 	v := storage.Value{

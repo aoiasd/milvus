@@ -163,7 +163,7 @@ func (st *statsTask) Execute(ctx context.Context) error {
 	)
 
 	numRows := st.req.GetNumRows()
-	writer, err := compaction.NewSegmentWriter(st.req.GetSchema(), numRows, st.req.GetTargetSegmentID(), st.req.GetPartitionID(), st.req.GetCollectionID())
+	writer, err := compaction.NewSegmentWriter(st.req.GetSchema(), numRows, st.req.GetTargetSegmentID(), st.req.GetPartitionID(), st.req.GetCollectionID(), []int64{})
 	if err != nil {
 		log.Warn("sort segment wrong, unable to init segment writer", zap.Error(err))
 		return err
@@ -368,7 +368,7 @@ func (st *statsTask) downloadData(ctx context.Context, numRows int64, PKFieldID 
 			return &storage.Blob{Key: paths[i], Value: v}
 		})
 
-		iter, err := storage.NewBinlogDeserializeReader(blobs, PKFieldID)
+		iter, err := storage.NewBinlogDeserializeReader(blobs, PKFieldID, []int64{})
 		if err != nil {
 			log.Warn("downloadData wrong, failed to new insert binlogs reader", zap.Error(err))
 			return nil, err

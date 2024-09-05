@@ -49,7 +49,7 @@ func (r *SegmentDeserializeReader) initDeserializeReader() error {
 		return &storage.Blob{Key: r.binlogPaths[r.binlogPathPos][i], Value: v}
 	})
 
-	r.reader, err = storage.NewBinlogDeserializeReader(blobs, r.PKFieldID)
+	r.reader, err = storage.NewBinlogDeserializeReader(blobs, r.PKFieldID, []int64{})
 	if err != nil {
 		log.Warn("compact wrong, failed to new insert binlogs reader", zap.Error(err))
 		return err
