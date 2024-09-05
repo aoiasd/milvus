@@ -74,7 +74,8 @@ type InsertBuffer struct {
 	BufferBase
 	collSchema *schemapb.CollectionSchema
 
-	buffers []*storage.InsertData
+	buffers     []*storage.InsertData
+	statsBuffer *statsBuffer
 }
 
 func NewInsertBuffer(sch *schemapb.CollectionSchema) (*InsertBuffer, error) {
@@ -100,6 +101,10 @@ func NewInsertBuffer(sch *schemapb.CollectionSchema) (*InsertBuffer, error) {
 		collSchema: sch,
 	}
 
+	// TODO AOIASD CHECK FUNCION TYPE WAS BM25
+	if len(sch.GetFunctions()) > 0 {
+		ib.statsBuffer = newStatsBuffer()
+	}
 	return ib, nil
 }
 
@@ -116,17 +121,23 @@ func (ib *InsertBuffer) Yield() []*storage.InsertData {
 	return result
 }
 
-func (ib *InsertBuffer) Buffer(inData *inData, startPos, endPos *msgpb.MsgPosition) int64 {
+func (ib *InsertBuffer) YieldStats() map[int64]*storage.BM25Stats {
+	return ib.statsBuffer.yieldBuffer()
+}
+
+func (ib *InsertBuffer) Buffer(inData *InsertData, startPos, endPos *msgpb.MsgPosition) int64 {
 	bufferedSize := int64(0)
 	for idx, data := range inData.data {
 		tsData := inData.tsField[idx]
+
 		tr := ib.getTimestampRange(tsData)
 		ib.buffer(data, tr, startPos, endPos)
-
 		// update buffer size
 		ib.UpdateStatistics(int64(data.GetRowNum()), int64(data.GetMemorySize()), tr, startPos, endPos)
 		bufferedSize += int64(data.GetMemorySize())
 	}
+	// TODO AOIASD CHECK STATS NUMROW?
+	ib.statsBuffer.Buffer(inData.stats)
 	return bufferedSize
 }
 

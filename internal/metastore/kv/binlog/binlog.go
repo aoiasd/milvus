@@ -42,6 +42,10 @@ func CompressSaveBinlogPaths(req *datapb.SaveBinlogPathsRequest) error {
 	if err != nil {
 		return err
 	}
+	err = CompressFieldBinlogs(req.GetField2Bm25LogPaths())
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -56,6 +60,10 @@ func CompressCompactionBinlogs(binlogs []*datapb.CompactionSegment) error {
 			return err
 		}
 		err = CompressFieldBinlogs(binlog.GetField2StatslogPaths())
+		if err != nil {
+			return err
+		}
+		err = CompressFieldBinlogs(binlog.GetBm25Logs())
 		if err != nil {
 			return err
 		}
@@ -115,6 +123,8 @@ func DecompressCompactionBinlogs(binlogs []*datapb.CompactionSegmentBinlogs) err
 		if err != nil {
 			return err
 		}
+
+		// TODO AOIASD DecompressCompactionBM25Binlogs
 	}
 	return nil
 }
@@ -130,6 +140,11 @@ func DecompressBinLogs(s *datapb.SegmentInfo) error {
 		return err
 	}
 	err = DecompressBinLog(storage.StatsBinlog, collectionID, partitionID, segmentID, s.GetStatslogs())
+	if err != nil {
+		return err
+	}
+
+	err = DecompressBinLog(storage.BM25Binlog, collectionID, partitionID, segmentID, s.GetBm25Statslogs())
 	if err != nil {
 		return err
 	}
@@ -167,6 +182,8 @@ func BuildLogPath(binlogType storage.BinlogType, collectionID, partitionID, segm
 		return metautil.BuildDeltaLogPath(chunkManagerRootPath, collectionID, partitionID, segmentID, logID), nil
 	case storage.StatsBinlog:
 		return metautil.BuildStatsLogPath(chunkManagerRootPath, collectionID, partitionID, segmentID, fieldID, logID), nil
+	case storage.BM25Binlog:
+		return metautil.BuildBm25LogPath(chunkManagerRootPath, collectionID, partitionID, segmentID, fieldID, logID), nil
 	}
 	// should not happen
 	return "", merr.WrapErrParameterInvalidMsg("invalid binlog type")

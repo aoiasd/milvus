@@ -51,9 +51,9 @@ func NewL0WriteBuffer(channel string, metacache metacache.MetaCache, syncMgr syn
 	}, nil
 }
 
-func (wb *l0WriteBuffer) dispatchDeleteMsgs(groups []*inData, deleteMsgs []*msgstream.DeleteMsg, startPos, endPos *msgpb.MsgPosition) {
+func (wb *l0WriteBuffer) dispatchDeleteMsgs(groups []*InsertData, deleteMsgs []*msgstream.DeleteMsg, startPos, endPos *msgpb.MsgPosition) {
 	batchSize := paramtable.Get().CommonCfg.BloomFilterApplyBatchSize.GetAsInt()
-	split := func(pks []storage.PrimaryKey, pkTss []uint64, partitionSegments []*metacache.SegmentInfo, partitionGroups []*inData) []bool {
+	split := func(pks []storage.PrimaryKey, pkTss []uint64, partitionSegments []*metacache.SegmentInfo, partitionGroups []*InsertData) []bool {
 		lc := storage.NewBatchLocationsCache(pks)
 
 		// use hits to cache result
@@ -92,7 +92,7 @@ func (wb *l0WriteBuffer) dispatchDeleteMsgs(groups []*inData, deleteMsgs []*msgs
 		pkTss := delMsg.GetTimestamps()
 		partitionSegments := wb.metaCache.GetSegmentsBy(metacache.WithPartitionID(delMsg.PartitionID),
 			metacache.WithSegmentState(commonpb.SegmentState_Growing, commonpb.SegmentState_Sealed, commonpb.SegmentState_Flushing, commonpb.SegmentState_Flushed))
-		partitionGroups := lo.Filter(groups, func(inData *inData, _ int) bool {
+		partitionGroups := lo.Filter(groups, func(inData *InsertData, _ int) bool {
 			return delMsg.GetPartitionID() == common.AllPartitionsID || delMsg.GetPartitionID() == inData.partitionID
 		})
 
@@ -139,17 +139,12 @@ func (wb *l0WriteBuffer) dispatchDeleteMsgs(groups []*inData, deleteMsgs []*msgs
 	})
 }
 
-func (wb *l0WriteBuffer) BufferData(insertMsgs []*msgstream.InsertMsg, deleteMsgs []*msgstream.DeleteMsg, startPos, endPos *msgpb.MsgPosition) error {
+func (wb *l0WriteBuffer) BufferData(insertData []*InsertData, deleteMsgs []*msgstream.DeleteMsg, startPos, endPos *msgpb.MsgPosition) error {
 	wb.mut.Lock()
 	defer wb.mut.Unlock()
 
-	groups, err := wb.prepareInsert(insertMsgs)
-	if err != nil {
-		return err
-	}
-
 	// buffer insert data and add segment if not exists
-	for _, inData := range groups {
+	for _, inData := range insertData {
 		err := wb.bufferInsert(inData, startPos, endPos)
 		if err != nil {
 			return err
@@ -158,10 +153,10 @@ func (wb *l0WriteBuffer) BufferData(insertMsgs []*msgstream.InsertMsg, deleteMsg
 
 	// distribute delete msg
 	// bf write buffer check bloom filter of segment and current insert batch to decide which segment to write delete data
-	wb.dispatchDeleteMsgs(groups, deleteMsgs, startPos, endPos)
+	wb.dispatchDeleteMsgs(insertData, deleteMsgs, startPos, endPos)
 
 	// update pk oracle
-	for _, inData := range groups {
+	for _, inData := range insertData {
 		// segment shall always exists after buffer insert
 		segments := wb.metaCache.GetSegmentsBy(metacache.WithSegmentIDs(inData.segmentID))
 		for _, segment := range segments {
@@ -212,7 +207,7 @@ func (wb *l0WriteBuffer) getL0SegmentID(partitionID int64, startPos *msgpb.MsgPo
 			StartPosition: startPos,
 			State:         commonpb.SegmentState_Growing,
 			Level:         datapb.SegmentLevel_L0,
-		}, func(_ *datapb.SegmentInfo) pkoracle.PkStat { return pkoracle.NewBloomFilterSet() }, metacache.SetStartPosRecorded(false))
+		}, func(_ *datapb.SegmentInfo) pkoracle.PkStat { return pkoracle.NewBloomFilterSet() }, metacache.NoneBm25StatsFactory, metacache.SetStartPosRecorded(false))
 		log.Info("Add a new level zero segment",
 			zap.Int64("segmentID", segmentID),
 			zap.String("level", datapb.SegmentLevel_L0.String()),

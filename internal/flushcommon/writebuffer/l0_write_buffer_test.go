@@ -177,7 +177,7 @@ func (s *L0WriteBufferSuite) TestBufferData() {
 		pks, msg := s.composeInsertMsg(1000, 10, 128, schemapb.DataType_Int64)
 		delMsg := s.composeDeleteMsg(lo.Map(pks, func(id int64, _ int) storage.PrimaryKey { return storage.NewInt64PrimaryKey(id) }))
 
-		seg := metacache.NewSegmentInfo(&datapb.SegmentInfo{ID: 1000}, pkoracle.NewBloomFilterSet())
+		seg := metacache.NewSegmentInfo(&datapb.SegmentInfo{ID: 1000}, pkoracle.NewBloomFilterSet(), metacache.NewEmptySegmentBM25Stats())
 		s.metacache.EXPECT().GetSegmentsBy(mock.Anything, mock.Anything).Return([]*metacache.SegmentInfo{seg})
 		s.metacache.EXPECT().GetSegmentByID(int64(1000)).Return(nil, false).Once()
 		s.metacache.EXPECT().AddSegment(mock.Anything, mock.Anything, mock.Anything).Return()

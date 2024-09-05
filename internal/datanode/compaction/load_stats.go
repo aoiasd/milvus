@@ -21,6 +21,7 @@ import (
 	"path"
 	"time"
 
+	"github.com/samber/lo"
 	"go.uber.org/zap"
 
 	"github.com/milvus-io/milvus-proto/go-api/v2/schemapb"
@@ -29,6 +30,51 @@ import (
 	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/util/typeutil"
 )
+
+func LoadBM25Stats(ctx context.Context, chunkManager storage.ChunkManager, schema *schemapb.CollectionSchema, segmentID int64, statsBinlogs []*datapb.FieldBinlog) (map[int64]*storage.BM25Stats, error) {
+	startTs := time.Now()
+	log := log.With(zap.Int64("segmentID", segmentID))
+	log.Info("begin to reload history bm25 stats", zap.Int("statsBinLogsLen", len(statsBinlogs)))
+
+	fieldList, fieldOffset := make([]int64, len(statsBinlogs)), make([]int, len(statsBinlogs))
+	logpaths := make([]string, 0)
+	for i, binlog := range statsBinlogs {
+		fieldList[i] = binlog.FieldID
+		fieldOffset[i] = len(binlog.Binlogs)
+		logpaths = append(logpaths, lo.Map(binlog.Binlogs, func(log *datapb.Binlog, _ int) string { return log.GetLogPath() })...)
+	}
+
+	if len(logpaths) == 0 {
+		log.Warn("no bm25 stats to load")
+		return nil, nil
+	}
+
+	values, err := chunkManager.MultiRead(ctx, logpaths)
+	if err != nil {
+		log.Warn("failed to load bm25 stats files", zap.Error(err))
+		return nil, err
+	}
+
+	result := make(map[int64]*storage.BM25Stats)
+	cnt := 0
+	for i, fieldID := range fieldList {
+		for offset := 0; offset < fieldOffset[i]; offset++ {
+			stats, ok := result[fieldID]
+			if !ok {
+				stats = storage.NewBM25Stats()
+				result[fieldID] = stats
+			}
+			err := stats.Deserialize(values[cnt+offset])
+			if err != nil {
+				return nil, err
+			}
+		}
+		cnt += fieldOffset[i]
+	}
+
+	log.Info("Successfully load bm25 stats", zap.Any("time", time.Since(startTs)))
+	return result, nil
+}
 
 func LoadStats(ctx context.Context, chunkManager storage.ChunkManager, schema *schemapb.CollectionSchema, segmentID int64, statsBinlogs []*datapb.FieldBinlog) ([]*storage.PkStatistics, error) {
 	startTs := time.Now()

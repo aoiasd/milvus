@@ -17,10 +17,15 @@
 package storage
 
 import (
+	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"math"
+	"time"
 
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 
 	"github.com/milvus-io/milvus-proto/go-api/v2/schemapb"
 	"github.com/milvus-io/milvus/internal/util/bloomfilter"
@@ -28,6 +33,7 @@ import (
 	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/util/merr"
 	"github.com/milvus-io/milvus/pkg/util/paramtable"
+	"github.com/milvus-io/milvus/pkg/util/typeutil"
 )
 
 // PrimaryKeyStats contains statistics data for pk column
@@ -297,6 +303,157 @@ func (sr *StatsReader) GetPrimaryKeyStatsList() ([]*PrimaryKeyStats, error) {
 	}
 
 	return stats, nil
+}
+
+type BM25Stats struct {
+	statistics map[uint32]int32
+	numRow     int64
+	numToken   int64
+}
+
+func NewBM25Stats() *BM25Stats {
+	return &BM25Stats{
+		statistics: map[uint32]int32{},
+	}
+}
+
+func NewBM25StatsWithBytes(bytes []byte) (*BM25Stats, error) {
+	stats := NewBM25Stats()
+	err := stats.Deserialize(bytes)
+	if err != nil {
+		return nil, err
+	}
+	return stats, nil
+}
+
+func (m *BM25Stats) Append(datas ...map[uint32]float32) {
+	for _, data := range datas {
+		for key, value := range data {
+			m.statistics[key] += 1
+			m.numToken += int64(value)
+		}
+
+		m.numRow += 1
+	}
+}
+
+// Update BM25Stats by sparse vector bytes
+func (m *BM25Stats) AppendBytes(datas ...[]byte) {
+	for _, data := range datas {
+		dim := len(data) / 8
+		for i := 0; i < dim; i++ {
+			index := typeutil.SparseFloatRowIndexAt(data, i)
+			value := typeutil.SparseFloatRowValueAt(data, i)
+			m.statistics[index] += 1
+			m.numToken += int64(value)
+		}
+		m.numRow += 1
+	}
+}
+
+func (m *BM25Stats) NumRow() int64 {
+	return m.numRow
+}
+
+func (m *BM25Stats) NumToken() int64 {
+	return m.numToken
+}
+
+func (m *BM25Stats) Merge(meta *BM25Stats) {
+	for key, value := range meta.statistics {
+		m.statistics[key] += value
+	}
+	m.numRow += meta.NumRow()
+	m.numToken += meta.numToken
+}
+
+func (m *BM25Stats) Diff(meta *BM25Stats) {
+	for key, value := range meta.statistics {
+		m.statistics[key] -= value
+	}
+	m.numRow -= meta.numRow
+	m.numToken -= meta.numToken
+}
+
+func (m *BM25Stats) Clone() *BM25Stats {
+	return &BM25Stats{
+		statistics: maps.Clone(m.statistics),
+		numRow:     m.numRow,
+		numToken:   m.numToken,
+	}
+}
+
+func (m *BM25Stats) Serialize() ([]byte, error) {
+	start := time.Now()
+	buffer := bytes.NewBuffer(make([]byte, 0, len(m.statistics)*8+16))
+
+	if err := binary.Write(buffer, common.Endian, m.numRow); err != nil {
+		return nil, err
+	}
+
+	if err := binary.Write(buffer, common.Endian, m.numToken); err != nil {
+		return nil, err
+	}
+
+	for key, value := range m.statistics {
+		if err := binary.Write(buffer, common.Endian, key); err != nil {
+			return nil, err
+		}
+
+		if err := binary.Write(buffer, common.Endian, value); err != nil {
+			return nil, err
+		}
+	}
+
+	log.Info("test-- serialize", zap.Int64("numrow", m.numRow), zap.Int64("tokenNum", m.numToken), zap.Int("dim", len(m.statistics)), zap.Int("len", buffer.Len()), zap.Duration("interval", time.Since(start)))
+	return buffer.Bytes(), nil
+}
+
+func (m *BM25Stats) Deserialize(bs []byte) error {
+	buffer := bytes.NewBuffer(bs)
+	dim := (len(bs) - 16) / 8
+	var numRow, tokenNum int64
+	if err := binary.Read(buffer, common.Endian, &numRow); err != nil {
+		return err
+	}
+
+	if err := binary.Read(buffer, common.Endian, &tokenNum); err != nil {
+		return err
+	}
+
+	var keys []uint32 = make([]uint32, dim)
+	var values []int32 = make([]int32, dim)
+	for i := 0; i < dim; i++ {
+		if err := binary.Read(buffer, common.Endian, &keys[i]); err != nil {
+			return err
+		}
+
+		if err := binary.Read(buffer, common.Endian, &values[i]); err != nil {
+			return err
+		}
+	}
+
+	m.numRow += numRow
+	m.numToken += tokenNum
+	for i := 0; i < dim; i++ {
+		m.statistics[keys[i]] += values[i]
+	}
+
+	log.Info("test-- deserialize", zap.Int64("numrow", m.numRow), zap.Int64("tokenNum", m.numToken))
+	return nil
+}
+
+func (m *BM25Stats) BuildIDF(tf map[uint32]float32) map[uint32]float32 {
+	vector := make(map[uint32]float32)
+	for key, value := range tf {
+		nq := m.statistics[key]
+		vector[key] = value * float32(math.Log(1+(float64(m.numRow)-float64(nq)+0.5)/(float64(nq)+0.5)))
+	}
+	return vector
+}
+
+func (m *BM25Stats) GetAvgdl() float64 {
+	return float64(m.numToken) / float64(m.numRow)
 }
 
 // DeserializeStats deserialize @blobs as []*PrimaryKeyStats

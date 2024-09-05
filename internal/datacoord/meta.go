@@ -858,7 +858,7 @@ func RevertSegmentPartitionStatsVersionOperator(segmentID int64) UpdateOperator 
 }
 
 // Add binlogs in segmentInfo
-func AddBinlogsOperator(segmentID int64, binlogs, statslogs, deltalogs []*datapb.FieldBinlog) UpdateOperator {
+func AddBinlogsOperator(segmentID int64, binlogs, statslogs, deltalogs, bm25logs []*datapb.FieldBinlog) UpdateOperator {
 	return func(modPack *updateSegmentPack) bool {
 		segment := modPack.Get(segmentID)
 		if segment == nil {
@@ -870,6 +870,7 @@ func AddBinlogsOperator(segmentID int64, binlogs, statslogs, deltalogs []*datapb
 		segment.Binlogs = mergeFieldBinlogs(segment.GetBinlogs(), binlogs)
 		segment.Statslogs = mergeFieldBinlogs(segment.GetStatslogs(), statslogs)
 		segment.Deltalogs = mergeFieldBinlogs(segment.GetDeltalogs(), deltalogs)
+		segment.Bm25Statslogs = mergeFieldBinlogs(segment.GetBm25Statslogs(), bm25logs)
 		modPack.increments[segmentID] = metastore.BinlogsIncrement{
 			Segment: segment.SegmentInfo,
 		}
@@ -1524,17 +1525,17 @@ func (m *meta) completeMixCompactionMutation(t *datapb.CompactionTask, result *d
 	for _, compactToSegment := range result.GetSegments() {
 		compactToSegmentInfo := NewSegmentInfo(
 			&datapb.SegmentInfo{
-				ID:            compactToSegment.GetSegmentID(),
-				CollectionID:  compactFromSegInfos[0].CollectionID,
-				PartitionID:   compactFromSegInfos[0].PartitionID,
-				InsertChannel: t.GetChannel(),
-				NumOfRows:     compactToSegment.NumOfRows,
-				State:         commonpb.SegmentState_Flushed,
-				MaxRowNum:     compactFromSegInfos[0].MaxRowNum,
-				Binlogs:       compactToSegment.GetInsertLogs(),
-				Statslogs:     compactToSegment.GetField2StatslogPaths(),
-				Deltalogs:     compactToSegment.GetDeltalogs(),
-
+				ID:                  compactToSegment.GetSegmentID(),
+				CollectionID:        compactFromSegInfos[0].CollectionID,
+				PartitionID:         compactFromSegInfos[0].PartitionID,
+				InsertChannel:       t.GetChannel(),
+				NumOfRows:           compactToSegment.NumOfRows,
+				State:               commonpb.SegmentState_Flushed,
+				MaxRowNum:           compactFromSegInfos[0].MaxRowNum,
+				Binlogs:             compactToSegment.GetInsertLogs(),
+				Statslogs:           compactToSegment.GetField2StatslogPaths(),
+				Deltalogs:           compactToSegment.GetDeltalogs(),
+				Bm25Statslogs:       compactToSegment.GetBm25Logs(),
 				CreatedByCompaction: true,
 				CompactionFrom:      compactFromSegIDs,
 				LastExpireTime:      tsoutil.ComposeTSByTime(time.Unix(t.GetStartTime(), 0), 0),

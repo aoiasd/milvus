@@ -64,6 +64,7 @@ func (kc *Catalog) ListSegments(ctx context.Context) ([]*datapb.SegmentInfo, err
 	insertLogs := make(map[typeutil.UniqueID][]*datapb.FieldBinlog, 1)
 	deltaLogs := make(map[typeutil.UniqueID][]*datapb.FieldBinlog, 1)
 	statsLogs := make(map[typeutil.UniqueID][]*datapb.FieldBinlog, 1)
+	bm25Logs := make(map[typeutil.UniqueID][]*datapb.FieldBinlog, 1)
 
 	executeFn := func(binlogType storage.BinlogType, result map[typeutil.UniqueID][]*datapb.FieldBinlog) {
 		group.Go(func() error {
@@ -81,6 +82,7 @@ func (kc *Catalog) ListSegments(ctx context.Context) ([]*datapb.SegmentInfo, err
 	executeFn(storage.InsertBinlog, insertLogs)
 	executeFn(storage.DeleteBinlog, deltaLogs)
 	executeFn(storage.StatsBinlog, statsLogs)
+	executeFn(storage.BM25Binlog, bm25Logs)
 	group.Go(func() error {
 		ret, err := kc.listSegments()
 		if err != nil {
@@ -95,7 +97,7 @@ func (kc *Catalog) ListSegments(ctx context.Context) ([]*datapb.SegmentInfo, err
 		return nil, err
 	}
 
-	err = kc.applyBinlogInfo(segments, insertLogs, deltaLogs, statsLogs)
+	err = kc.applyBinlogInfo(segments, insertLogs, deltaLogs, statsLogs, bm25Logs)
 	if err != nil {
 		return nil, err
 	}
@@ -166,6 +168,8 @@ func (kc *Catalog) listBinlogs(binlogType storage.BinlogType) (map[typeutil.Uniq
 		logPathPrefix = SegmentDeltalogPathPrefix
 	case storage.StatsBinlog:
 		logPathPrefix = SegmentStatslogPathPrefix
+	case storage.BM25Binlog:
+		logPathPrefix = SegmentBM25logPathPrefix
 	default:
 		err = fmt.Errorf("invalid binlog type: %d", binlogType)
 	}
@@ -212,7 +216,7 @@ func (kc *Catalog) listBinlogs(binlogType storage.BinlogType) (map[typeutil.Uniq
 }
 
 func (kc *Catalog) applyBinlogInfo(segments []*datapb.SegmentInfo, insertLogs, deltaLogs,
-	statsLogs map[typeutil.UniqueID][]*datapb.FieldBinlog,
+	statsLogs, bm25Logs map[typeutil.UniqueID][]*datapb.FieldBinlog,
 ) error {
 	var err error
 	for _, segmentInfo := range segments {
@@ -234,6 +238,13 @@ func (kc *Catalog) applyBinlogInfo(segments []*datapb.SegmentInfo, insertLogs, d
 			segmentInfo.Statslogs = statsLogs[segmentInfo.ID]
 		}
 		if err = binlog.CompressFieldBinlogs(segmentInfo.Statslogs); err != nil {
+			return err
+		}
+
+		if len(segmentInfo.Bm25Statslogs) == 0 {
+			segmentInfo.Bm25Statslogs = bm25Logs[segmentInfo.ID]
+		}
+		if err = binlog.CompressFieldBinlogs(segmentInfo.Bm25Statslogs); err != nil {
 			return err
 		}
 	}
@@ -303,7 +314,7 @@ func (kc *Catalog) AlterSegments(ctx context.Context, segments []*datapb.Segment
 		segment := b.Segment
 
 		binlogKvs, err := buildBinlogKvsWithLogID(segment.GetCollectionID(), segment.GetPartitionID(), segment.GetID(),
-			cloneLogs(segment.GetBinlogs()), cloneLogs(segment.GetDeltalogs()), cloneLogs(segment.GetStatslogs()))
+			cloneLogs(segment.GetBinlogs()), cloneLogs(segment.GetDeltalogs()), cloneLogs(segment.GetStatslogs()), cloneLogs(segment.GetBm25Statslogs()))
 		if err != nil {
 			return err
 		}
@@ -322,7 +333,7 @@ func (kc *Catalog) handleDroppedSegment(segment *datapb.SegmentInfo) (kvs map[st
 	}
 	// To be compatible with previous implementation, we have to write binlogs on etcd for correct gc.
 	if !has {
-		kvs, err = buildBinlogKvsWithLogID(segment.GetCollectionID(), segment.GetPartitionID(), segment.GetID(), cloneLogs(segment.GetBinlogs()), cloneLogs(segment.GetDeltalogs()), cloneLogs(segment.GetStatslogs()))
+		kvs, err = buildBinlogKvsWithLogID(segment.GetCollectionID(), segment.GetPartitionID(), segment.GetID(), cloneLogs(segment.GetBinlogs()), cloneLogs(segment.GetDeltalogs()), cloneLogs(segment.GetStatslogs()), cloneLogs(segment.GetBm25Statslogs()))
 		if err != nil {
 			return
 		}
@@ -392,7 +403,7 @@ func (kc *Catalog) SaveDroppedSegmentsInBatch(ctx context.Context, segments []*d
 	kvs := make(map[string]string)
 	for _, s := range segments {
 		key := buildSegmentPath(s.GetCollectionID(), s.GetPartitionID(), s.GetID())
-		noBinlogsSegment, _, _, _ := CloneSegmentWithExcludeBinlogs(s)
+		noBinlogsSegment, _, _, _, _ := CloneSegmentWithExcludeBinlogs(s)
 		// `s` is not mutated above. Also, `noBinlogsSegment` is a cloned version of `s`.
 		segmentutil.ReCalcRowCount(s, noBinlogsSegment)
 		segBytes, err := proto.Marshal(noBinlogsSegment)
