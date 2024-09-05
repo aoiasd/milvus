@@ -58,6 +58,7 @@ func loadL0Segments(ctx context.Context, delegator delegator.ShardDelegator, req
 				NumOfRows:     segmentInfo.NumOfRows,
 				Statslogs:     segmentInfo.Statslogs,
 				Deltalogs:     segmentInfo.Deltalogs,
+				Bm25Logs:      segmentInfo.Bm25Statslogs,
 				InsertChannel: segmentInfo.InsertChannel,
 				StartPosition: segmentInfo.GetStartPosition(),
 				Level:         segmentInfo.GetLevel(),
@@ -99,6 +100,7 @@ func loadGrowingSegments(ctx context.Context, delegator delegator.ShardDelegator
 					NumOfRows:     segmentInfo.NumOfRows,
 					Statslogs:     segmentInfo.Statslogs,
 					Deltalogs:     segmentInfo.Deltalogs,
+					Bm25Logs:      segmentInfo.Bm25Statslogs,
 					InsertChannel: segmentInfo.InsertChannel,
 				})
 			} else {

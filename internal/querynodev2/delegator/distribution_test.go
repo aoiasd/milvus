@@ -29,7 +29,7 @@ type DistributionSuite struct {
 }
 
 func (s *DistributionSuite) SetupTest() {
-	s.dist = NewDistribution()
+	s.dist = NewDistribution(NewIDFOracle())
 	s.Equal(initialTargetVersion, s.dist.getTargetVersion())
 }
 

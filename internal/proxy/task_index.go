@@ -312,8 +312,8 @@ func (cit *createIndexTask) parseIndexParams() error {
 				return merr.WrapErrParameterInvalid("valid index params", "invalid index params", "float vector index does not support metric type: "+metricType)
 			}
 		} else if typeutil.IsSparseFloatVectorType(cit.fieldSchema.DataType) {
-			if metricType != metric.IP {
-				return merr.WrapErrParameterInvalid("valid index params", "invalid index params", "only IP is the supported metric type for sparse index")
+			if metricType != metric.IP && metricType != metric.BM25 {
+				return merr.WrapErrParameterInvalid("valid index params", "invalid index params", "only IP&BM25 is the supported metric type for sparse index")
 			}
 		} else if typeutil.IsBinaryVectorType(cit.fieldSchema.DataType) {
 			if !funcutil.SliceContain(indexparamcheck.BinaryVectorMetrics, metricType) {

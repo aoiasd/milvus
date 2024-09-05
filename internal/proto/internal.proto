@@ -126,6 +126,7 @@ message SearchRequest {
   int64 offset = 21;
   common.ConsistencyLevel consistency_level = 22;
   ExtraSearchParam extra_search_param = 23;
+  int64 FieldID=24;
 }
 
 message SubSearchResults {

@@ -622,6 +622,7 @@ message CompactionSegment {
   repeated FieldBinlog deltalogs = 6;
   string channel = 7;
   bool is_sorted = 8;
+  repeated FieldBinlog bm25logs = 9;
 }
 
 message CompactionPlanResult {

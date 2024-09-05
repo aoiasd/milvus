@@ -364,6 +364,7 @@ message SegmentLoadInfo {
     data.SegmentLevel level = 17;
     int64 storageVersion = 18;
     bool is_sorted = 19;
+    repeated data.FieldBinlog bm25logs = 20;
 }
 
 message FieldIndexInfo {
