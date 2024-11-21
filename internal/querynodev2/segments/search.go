@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -52,6 +53,7 @@ func searchSegments(ctx context.Context, mgr *Manager, segments []Segment, segTy
 		resultCh <- searchResult
 		// update metrics
 		elapsed := tr.ElapseSpan().Milliseconds()
+		log.Info("test-- search segment finish", zap.Int64("segment", s.ID()), zap.Duration("dur", time.Duration(elapsed)))
 		metrics.QueryNodeSQSegmentLatency.WithLabelValues(fmt.Sprint(paramtable.GetNodeID()),
 			metrics.SearchLabel, searchLabel).Observe(float64(elapsed))
 		metrics.QueryNodeSegmentSearchLatencyPerVector.WithLabelValues(fmt.Sprint(paramtable.GetNodeID()),

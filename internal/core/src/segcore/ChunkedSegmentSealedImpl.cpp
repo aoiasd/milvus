@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <ctime>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -938,6 +939,7 @@ ChunkedSegmentSealedImpl::vector_search(SearchInfo& search_info,
             get_bit(field_data_ready_bitset_, field_id),
             "Field Data is not loaded: " + std::to_string(field_id.get()));
         AssertInfo(num_rows_.has_value(), "Can't get row count value");
+        LOG_INFO("test-- search brute force seg");
         auto row_count = num_rows_.value();
         auto vec_data = fields_.at(field_id);
 
