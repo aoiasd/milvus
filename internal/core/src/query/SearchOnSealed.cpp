@@ -165,6 +165,7 @@ SearchOnSealed(const Schema& schema,
     auto field_id = search_info.field_id_;
     auto& field = schema[field_id];
 
+    LOG_INFO("test-- search brute force seg");
     // TODO(SPARSE): see todo in PlanImpl.h::PlaceHolder.
     auto dim = field.get_data_type() == DataType::VECTOR_SPARSE_FLOAT
                    ? 0

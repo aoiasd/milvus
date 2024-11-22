@@ -98,6 +98,7 @@ SearchOnGrowing(const segcore::SegmentGrowingImpl& segment,
         FloatSegmentIndexSearch(
             segment, info, query_data, num_queries, bitset, search_result);
     } else {
+        LOG_INFO("test-- search brute force growing seg: {}", segment.get_segment_id());
         std::shared_lock<std::shared_mutex> read_chunk_mutex(
             segment.get_chunk_mutex());
         // check SyncDataWithIndex() again, in case the vector chunks has been removed.
