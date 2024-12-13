@@ -24,11 +24,13 @@ import (
 	"strings"
 
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 
 	"github.com/milvus-io/milvus-proto/go-api/v2/schemapb"
 	"github.com/milvus-io/milvus/internal/storage"
 	"github.com/milvus-io/milvus/internal/util/importutilv2/common"
 	"github.com/milvus-io/milvus/pkg/util/merr"
+	"github.com/pingcap/log"
 )
 
 const (
@@ -138,6 +140,7 @@ func (j *reader) Read() (*storage.InsertData, error) {
 		if err = j.dec.Decode(&value); err != nil {
 			return nil, merr.WrapErrImportFailed(fmt.Sprintf("failed to parse row, error: %v", err))
 		}
+		log.Info("test-- parse", zap.Any("bytes", value))
 		row, err := j.parser.Parse(value)
 		if err != nil {
 			return nil, err

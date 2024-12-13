@@ -21,11 +21,13 @@ import (
 	"strconv"
 
 	"github.com/samber/lo"
+	"go.uber.org/zap"
 
 	"github.com/milvus-io/milvus-proto/go-api/v2/schemapb"
 	"github.com/milvus-io/milvus/internal/json"
 	"github.com/milvus-io/milvus/internal/util/importutilv2/common"
 	"github.com/milvus-io/milvus/internal/util/nullutil"
+	"github.com/milvus-io/milvus/pkg/log"
 	"github.com/milvus-io/milvus/pkg/util/merr"
 	"github.com/milvus-io/milvus/pkg/util/parameterutil"
 	"github.com/milvus-io/milvus/pkg/util/typeutil"
@@ -168,6 +170,7 @@ func (r *rowParser) combineDynamicRow(dynamicValues map[string]any, row Row) err
 			// case 1, 3
 			err := json.Unmarshal([]byte(value), &mp)
 			if err != nil {
+				log.Info("test--", zap.String("bytes", value), zap.Error(err))
 				return merr.WrapErrImportFailed("illegal value for dynamic field, not a JSON format string")
 			}
 		case map[string]interface{}:

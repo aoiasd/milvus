@@ -232,6 +232,41 @@ func NewBinlogDeserializeReader(blobs []*Blob, PKfieldID UniqueID) (*Deserialize
 	}), nil
 }
 
+func NewTestBinlogDeserializeReader(blobs []*Blob) (*DeserializeReader[*Value], error) {
+	reader, err := NewCompositeBinlogRecordReader(blobs)
+	if err != nil {
+		return nil, err
+	}
+
+	return NewDeserializeReader(reader, func(r Record, v []*Value) error {
+		// Note: the return value `Value` is reused.
+		for i := 0; i < r.Len(); i++ {
+			value := v[i]
+			if value == nil {
+				value = &Value{}
+				value.Value = make(map[FieldID]interface{}, len(r.Schema()))
+				v[i] = value
+			}
+
+			m := value.Value.(map[FieldID]interface{})
+			for j, dt := range r.Schema() {
+				if r.Column(j).IsNull(i) {
+					m[j] = nil
+				} else {
+					d, ok := serdeMap[dt].deserialize(r.Column(j), i)
+					if ok {
+						m[j] = d // TODO: avoid memory copy here.
+					} else {
+						return merr.WrapErrServiceInternal(fmt.Sprintf("unexpected type %s", dt))
+					}
+				}
+			}
+			value.Value = m
+		}
+		return nil
+	}), nil
+}
+
 func newDeltalogOneFieldReader(blobs []*Blob) (*DeserializeReader[*DeleteLog], error) {
 	reader, err := NewCompositeBinlogRecordReader(blobs)
 	if err != nil {
