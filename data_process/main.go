@@ -26,9 +26,9 @@ import (
 
 const ImportPath = "json_data/"
 const CheckpointPath = "/tmp/milvus_file_list.log"
-const BackupPath = "backup/backup_2024_12_16_10_11_30_347357086"
+const BackupPath = "backup/backup_2024_12_17_09_48_53_650563337"
 
-var collectionID = "454647810343567580"
+var collectionID = "454670119864893553"
 var json_log_id atomic.Int64
 var remain_seg atomic.Int32
 var fields = []*schemapb.FieldSchema{
@@ -151,6 +151,8 @@ func MoveJsonOption(field *schemapb.FieldSchema, target map[string]any, value an
 		movefunc(name)
 		total = total + target[name].(string) + " "
 	}
+
+	target["total"] = total
 	target[field.GetName()] = dict
 }
 

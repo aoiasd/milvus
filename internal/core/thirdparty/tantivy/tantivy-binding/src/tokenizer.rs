@@ -311,7 +311,7 @@ mod tests {
         let tokenizer = create_tokenizer(&params.to_string());
         assert!(tokenizer.is_ok(), "error: {}", tokenizer.err().unwrap());
         let mut bining = tokenizer.unwrap();
-        let mut stream = bining.token_stream("系统安全;,'';lxyz密码");
+        let mut stream = bining.token_stream("优秀token优秀");
 
         let mut results = Vec::<String>::new();
         while stream.advance() {
