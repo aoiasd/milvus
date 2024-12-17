@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	sio "io"
@@ -14,6 +15,7 @@ import (
 	"github.com/milvus-io/milvus-proto/go-api/v2/commonpb"
 	"github.com/milvus-io/milvus-proto/go-api/v2/schemapb"
 	"github.com/milvus-io/milvus/internal/flushcommon/io"
+	backuppb "github.com/milvus-io/milvus/internal/proto/backpb"
 	"github.com/milvus-io/milvus/internal/storage"
 	"github.com/milvus-io/milvus/pkg/util/conc"
 	"github.com/milvus-io/milvus/pkg/util/paramtable"
@@ -23,12 +25,12 @@ import (
 )
 
 const ImportPath = "json_data/"
+const CheckpointPath = "/tmp/milvus_file_list.log"
+const BackupPath = "backup/backup_2024_12_16_10_11_30_347357086"
 
-var collectionID = "454576124989538339"
-var partitionID = "454576124989538340"
-var prefix = path.Join("files", "insert_log", collectionID, partitionID) + "/"
-
+var collectionID = "454647810343567580"
 var json_log_id atomic.Int64
+var remain_seg atomic.Int32
 var fields = []*schemapb.FieldSchema{
 	{
 		Name:     "id",
@@ -75,6 +77,46 @@ func (o *DataOption) BuildData(field *schemapb.FieldSchema, target map[string]an
 	for _, option := range o.options {
 		option(field, target, value)
 	}
+}
+
+func FieldExist(fieldID int64) bool {
+	for _, field := range fields {
+		if fieldID == field.GetFieldID() {
+			return true
+		}
+	}
+	return false
+}
+
+func ReadSegmentInfo(cli storage.ChunkManager, collection string) (map[int64][]string, error) {
+	jsonBytes, err := cli.Read(context.Background(), path.Join(BackupPath, "meta/segment_meta.json"))
+	if err != nil {
+		return nil, err
+	}
+
+	log.Info("test--", zap.ByteString("bytes", jsonBytes))
+
+	segInfos := backuppb.SegmentLevelBackupInfo{}
+	err = json.Unmarshal(jsonBytes, &segInfos)
+	if err != nil {
+		return nil, err
+	}
+
+	result := map[int64][]string{}
+	for _, info := range segInfos.Infos {
+		paths := []string{}
+		for _, field := range info.Binlogs {
+			if !FieldExist(field.FieldID) {
+				continue
+			}
+			for _, binlog := range field.Binlogs {
+				paths = append(paths, binlog.GetLogPath())
+			}
+
+			result[info.SegmentId] = paths
+		}
+	}
+	return result, nil
 }
 
 func NewDataOption(options ...DataOptionFunc) DataOption {
@@ -174,29 +216,23 @@ func getChunkManager() (storage.ChunkManager, error) {
 	return cli, nil
 }
 
-func getSegmentBlobPaths(cli storage.ChunkManager, prefix, segmentID string, fields []*schemapb.FieldSchema) []string {
-	blobPaths := []string{}
-	for _, field := range fields {
-		path := path.Join(prefix, segmentID, strconv.FormatInt(field.FieldID, 10)) + "/"
-		cli.WalkWithPrefix(context.Background(), path, false, func(chunkObjectInfo *storage.ChunkObjectInfo) bool {
-			blobPaths = append(blobPaths, chunkObjectInfo.FilePath)
-			return true
-		})
-	}
-	return blobPaths
-}
-
 var cpLock = sync.Mutex{}
 
-func SaveCheckpoint(segment string, builder *JsonImportDataBuilder) error {
-	f, err := os.OpenFile("file_list.log", os.O_WRONLY|os.O_CREATE|os.O_APPEND, os.ModePerm)
+type checkPoint struct {
+	Segment  int64   `json:"segment"`
+	Json_ids []int64 `json:"json_ids"`
+}
+
+func SaveCheckpoint(segment int64, builder *JsonImportDataBuilder) error {
+	f, err := os.OpenFile(CheckpointPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, os.ModePerm)
 	if err != nil {
 		panic(err)
 	}
 
-	m := map[string]any{}
-	m["segment"] = segment
-	m["file"] = builder.logIds
+	m := checkPoint{
+		Segment:  segment,
+		Json_ids: builder.logIds,
+	}
 
 	bytes, err := json.Marshal(m)
 	if err != nil {
@@ -212,12 +248,41 @@ func SaveCheckpoint(segment string, builder *JsonImportDataBuilder) error {
 	return nil
 }
 
-func BuildJson(binlogio io.BinlogIO, cli storage.ChunkManager, segment string) error {
-	log.Info("build segment start", zap.String("segmentID", segment))
+func ReadCheckpoint(infos map[int64][]string) (map[int64][]string, error) {
+	f, err := os.OpenFile(CheckpointPath, os.O_RDONLY, os.ModePerm)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return infos, nil
+		}
+		return nil, err
+	}
+
+	reader := bufio.NewReader(f)
+	for {
+		line, _, err := reader.ReadLine()
+		if err != nil {
+			if err == sio.EOF {
+				break
+			}
+			return nil, err
+		}
+
+		m := &checkPoint{}
+		err = json.Unmarshal(line, m)
+		if err != nil {
+			return nil, err
+		}
+
+		delete(infos, m.Segment)
+	}
+	return infos, nil
+}
+
+func BuildJson(binlogio io.BinlogIO, cli storage.ChunkManager, segment int64, paths []string) error {
+	log.Info("build segment start", zap.Int64("segmentID", segment))
 	start := time.Now()
 	// save json every 20000 rows
 	builder := NewJsonImportDataBuilder(cli, 20000)
-	paths := getSegmentBlobPaths(cli, prefix, segment, fields)
 	bytes, err := binlogio.Download(context.Background(), paths)
 	if err != nil {
 		return err
@@ -255,7 +320,7 @@ func BuildJson(binlogio io.BinlogIO, cli storage.ChunkManager, segment string) e
 	if err != nil {
 		return err
 	}
-	log.Info("build segment success", zap.String("segmentID", segment), zap.Duration("time", time.Since(start)))
+	log.Info("build segment success", zap.Int64("segmentID", segment), zap.Duration("time", time.Since(start)), zap.Int32("remain", remain_seg.Add(-1)))
 	return nil
 }
 
@@ -265,17 +330,27 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	log.Info("test--", zap.String("prefix", prefix))
-	segments := []string{"454576124989938451", "454576124989939489"}
-	log.Info("test--", zap.Strings("segment", segments))
+
+	info, err := ReadSegmentInfo(cli, collectionID)
+	if err != nil {
+		panic(err)
+	}
+
+	info, err = ReadCheckpoint(info)
+	if err != nil {
+		panic(err)
+	}
+
+	log.Info("start build json", zap.Int("segmentNum", len(info)))
+	remain_seg.Store(int32(len(info)))
+	log.Info("test--", zap.Any("info", info))
 
 	binlogio := io.NewBinlogIO(cli)
-
 	pool := conc.NewPool[any](2, conc.WithPreAlloc(true))
 	futures := []*conc.Future[any]{}
-	for _, segment := range segments {
+	for segment, paths := range info {
 		future := pool.Submit(func() (any, error) {
-			err := BuildJson(binlogio, cli, segment)
+			err := BuildJson(binlogio, cli, segment, paths)
 			return nil, err
 		})
 		futures = append(futures, future)
