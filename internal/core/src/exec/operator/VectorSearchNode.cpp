@@ -15,6 +15,7 @@
 // limitations under the License.
 
 #include "VectorSearchNode.h"
+#include "log/Log.h"
 
 namespace milvus {
 namespace exec {
@@ -71,6 +72,7 @@ PhyVectorSearchNode::GetOutput() {
     milvus::SearchResult search_result;
 
     auto col_input = GetColumnVector(input_);
+    LOG_INFO("test-- GetRawData Start");
     TargetBitmapView view(col_input->GetRawData(), col_input->size());
     if (view.all()) {
         query_context_->set_search_result(
@@ -81,6 +83,8 @@ PhyVectorSearchNode::GetOutput() {
     // TODO: uniform knowhere BitsetView and milvus BitsetView
     milvus::BitsetView final_view((uint8_t*)col_input->GetRawData(),
                                   col_input->size());
+    
+    LOG_INFO("test-- VectorSearch Start");
     segment_->vector_search(search_info_,
                             src_data,
                             num_queries,
@@ -89,6 +93,7 @@ PhyVectorSearchNode::GetOutput() {
                             search_result);
 
     search_result.total_data_cnt_ = final_view.size();
+    LOG_INFO("test-- VectorSearch finish, data cnt: {}", search_result.total_data_cnt_);
     query_context_->set_search_result(std::move(search_result));
     std::chrono::high_resolution_clock::time_point vector_end =
         std::chrono::high_resolution_clock::now();
@@ -98,6 +103,7 @@ PhyVectorSearchNode::GetOutput() {
     monitor::internal_core_search_latency_vector.Observe(vector_cost / 1000);
     // for now, vector search store result in query_context
     // this node interface just return bitset
+    LOG_INFO("test-- GetOuput finish");
     return input_;
 }
 

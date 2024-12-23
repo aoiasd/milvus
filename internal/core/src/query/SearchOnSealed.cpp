@@ -17,6 +17,7 @@
 #include "common/BitsetView.h"
 #include "common/QueryInfo.h"
 #include "common/Types.h"
+#include "log/Log.h"
 #include "mmap/Column.h"
 #include "query/SearchBruteForce.h"
 #include "query/SearchOnSealed.h"
@@ -36,6 +37,7 @@ SearchOnSealedIndex(const Schema& schema,
     auto topK = search_info.topk_;
     auto round_decimal = search_info.round_decimal_;
 
+    LOG_INFO("test-- SearchOnSealedIndex Start");
     auto field_id = search_info.field_id_;
     auto& field = schema[field_id];
     auto is_sparse = field.get_data_type() == DataType::VECTOR_SPARSE_FLOAT;
@@ -62,7 +64,9 @@ SearchOnSealedIndex(const Schema& schema,
                                                        bitset,
                                                        *vec_index)) {
         auto index_type = vec_index->GetIndexType();
+        LOG_INFO("test-- SearchOnSealedIndex Start Query :{}", index_type);
         vec_index->Query(dataset, search_info, bitset, search_result);
+        LOG_INFO("test-- SearchOnSealedIndex Start Query finished");
         float* distances = search_result.distances_.data();
         auto total_num = num_queries * topK;
         if (round_decimal != -1) {
@@ -165,6 +169,8 @@ SearchOnSealed(const Schema& schema,
     auto field_id = search_info.field_id_;
     auto& field = schema[field_id];
 
+
+    LOG_INFO("test-- SearchOnSealed Start");
     // TODO(SPARSE): see todo in PlanImpl.h::PlaceHolder.
     auto dim = field.get_data_type() == DataType::VECTOR_SPARSE_FLOAT
                    ? 0
@@ -179,8 +185,10 @@ SearchOnSealed(const Schema& schema,
 
     auto data_type = field.get_data_type();
     CheckBruteForceSearchParam(field, search_info);
+    LOG_INFO("test-- Get Params");
     auto raw_dataset = query::dataset::RawDataset{0, dim, row_count, vec_data};
     if (milvus::exec::UseVectorIterator(search_info)) {
+        LOG_INFO("test-- SearchOnSealed Vector Iterator");
         auto sub_qr = BruteForceSearchIterators(query_dataset,
                                                 raw_dataset,
                                                 search_info,
@@ -190,6 +198,7 @@ SearchOnSealed(const Schema& schema,
         result.AssembleChunkVectorIterators(
             num_queries, 1, {0}, sub_qr.chunk_iterators());
     } else {
+        LOG_INFO("test-- SearchOnSealed BruteForce");
         auto sub_qr = BruteForceSearch(query_dataset,
                                        raw_dataset,
                                        search_info,
@@ -201,6 +210,7 @@ SearchOnSealed(const Schema& schema,
     }
     result.unity_topK_ = query_dataset.topk;
     result.total_nq_ = query_dataset.num_queries;
+    LOG_INFO("test-- SearchOnSealed Finished");
 }
 
 }  // namespace milvus::query
