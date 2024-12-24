@@ -20,6 +20,7 @@ package function
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/samber/lo"
@@ -40,6 +41,8 @@ type BM25FunctionRunner struct {
 	schema      *schemapb.FunctionSchema
 	outputField *schemapb.FieldSchema
 	concurrency int
+
+	keepInputField bool
 }
 
 func getAnalyzerParams(field *schemapb.FieldSchema) string {
@@ -77,6 +80,12 @@ func NewBM25FunctionRunner(coll *schemapb.CollectionSchema, schema *schemapb.Fun
 	tokenizer, err := ctokenizer.NewTokenizer(params)
 	if err != nil {
 		return nil, err
+	}
+
+	for _, param := range schema.GetParams() {
+		if param.GetKey() == "__keep_input_field_value" {
+			runner.keepInputField = strings.ToLower(param.GetValue()) == "true"
+		}
 	}
 
 	runner.tokenizer = tokenizer
@@ -155,6 +164,10 @@ func (v *BM25FunctionRunner) GetSchema() *schemapb.FunctionSchema {
 
 func (v *BM25FunctionRunner) GetOutputFields() []*schemapb.FieldSchema {
 	return []*schemapb.FieldSchema{v.outputField}
+}
+
+func (v *BM25FunctionRunner) KeepInputField() bool {
+	return v.keepInputField
 }
 
 func buildSparseFloatArray(mapdata []map[uint32]float32) *schemapb.SparseFloatArray {

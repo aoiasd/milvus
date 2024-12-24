@@ -161,6 +161,9 @@ func (eNode *embeddingNode) bm25Embedding(runner function.FunctionRunner, msg *m
 	}
 	stats[outputFieldID].AppendBytes(sparseArray.GetContents()...)
 	msg.FieldsData = append(msg.FieldsData, delegator.BuildSparseFieldData(outputField, sparseArray))
+	if !runner.KeepInputField() {
+		clearInputFieldData(msg.FieldsData, inputFieldID)
+	}
 	return nil
 }
 
@@ -209,4 +212,13 @@ func GetEmbeddingFieldData(datas []*schemapb.FieldData, fieldID int64) ([]string
 		}
 	}
 	return nil, fmt.Errorf("field %d not found", fieldID)
+}
+
+func clearInputFieldData(datas []*schemapb.FieldData, fieldID int64) {
+	for _, data := range datas {
+		if data.GetFieldId() == fieldID {
+			rows := len(data.GetScalars().GetStringData().GetData())
+			data.GetScalars().GetStringData().Data = make([]string, rows)
+		}
+	}
 }

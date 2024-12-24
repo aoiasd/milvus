@@ -246,8 +246,23 @@ func RunEmbeddingFunction(task *ImportTask, data *storage.InsertData) error {
 				return fmt.Errorf("unsupported output data type for embedding function: %s", outputField.GetDataType().String())
 			}
 		}
+		if fn.GetType() == schemapb.FunctionType_BM25 {
+			if !runner.KeepInputField() {
+				clearInputFieldData(data.Data, fn.InputFieldIds[0])
+			}
+		}
 	}
 	return nil
+}
+
+func clearInputFieldData(datas map[int64]storage.FieldData, fieldID int64) {
+	for k, data := range datas {
+		if k == fieldID {
+			data := data.(*storage.StringFieldData)
+			rows := data.RowNum()
+			data.Data = make([]string, rows)
+		}
+	}
 }
 
 func GetInsertDataRowCount(data *storage.InsertData, schema *schemapb.CollectionSchema) int {

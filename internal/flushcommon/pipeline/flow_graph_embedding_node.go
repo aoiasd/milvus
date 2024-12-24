@@ -98,7 +98,20 @@ func (eNode *embeddingNode) bm25Embedding(runner function.FunctionRunner, inputF
 
 	meta[outputFieldId].AppendBytes(sparseArray.GetContents()...)
 	data.Data[outputFieldId] = BuildSparseFieldData(sparseArray)
+	if !runner.KeepInputField() {
+		clearInputFieldData(data.Data, inputFieldId)
+	}
 	return nil
+}
+
+func clearInputFieldData(datas map[int64]storage.FieldData, fieldID int64) {
+	for k, data := range datas {
+		if k == fieldID {
+			data := data.(*storage.StringFieldData)
+			rows := data.RowNum()
+			data.Data = make([]string, rows)
+		}
+	}
 }
 
 func (eNode *embeddingNode) embedding(datas []*storage.InsertData) (map[int64]*storage.BM25Stats, error) {

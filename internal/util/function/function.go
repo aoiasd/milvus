@@ -29,6 +29,8 @@ type FunctionRunner interface {
 
 	GetSchema() *schemapb.FunctionSchema
 	GetOutputFields() []*schemapb.FieldSchema
+
+	KeepInputField() bool
 }
 
 func NewFunctionRunner(coll *schemapb.CollectionSchema, schema *schemapb.FunctionSchema) (FunctionRunner, error) {

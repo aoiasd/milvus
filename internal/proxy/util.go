@@ -783,8 +783,12 @@ func checkFunctionBasicParams(function *schemapb.FunctionSchema) error {
 	}
 	switch function.GetType() {
 	case schemapb.FunctionType_BM25:
-		if len(function.GetParams()) != 0 {
-			return fmt.Errorf("BM25 function accepts no params")
+		for _, param := range function.GetParams() {
+			if param.GetKey() == "__keep_input_field_value" {
+				if strings.ToLower(param.GetValue()) != "true" && strings.ToLower(param.GetValue()) != "false" {
+					return fmt.Errorf("value for '__keep_input_field_value' must be 'true' or 'false', got '%s'", param.GetValue())
+				}
+			}
 		}
 	default:
 		return fmt.Errorf("check function params with unknown function type")
