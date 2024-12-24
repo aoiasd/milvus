@@ -115,6 +115,7 @@ BruteForceSearch(const dataset::SearchDataset& query_ds,
     auto [query_dataset, base_dataset] =
         PrepareBFDataSet(query_ds, raw_ds, data_type);
     auto search_cfg = PrepareBFSearchParams(search_info, index_info);
+    LOG_INFO("test-- BruteForce Param: {}", search_cfg.dump());
     // `range_search_k` is only used as one of the conditions for iterator early termination.
     // not gurantee to return exactly `range_search_k` results, which may be more or less.
     // set it to -1 will return all results in the range.
@@ -123,6 +124,7 @@ BruteForceSearch(const dataset::SearchDataset& query_ds,
     sub_result.mutable_distances().resize(nq * topk);
 
     if (search_cfg.contains(RADIUS)) {
+        LOG_INFO("test-- BruteForce RADIUS");
         if (search_cfg.contains(RANGE_FILTER)) {
             CheckRangeSearchParam(search_cfg[RADIUS],
                                   search_cfg[RANGE_FILTER],
@@ -160,6 +162,7 @@ BruteForceSearch(const dataset::SearchDataset& query_ds,
                       KnowhereStatusString(res.error()),
                       res.what());
         }
+        LOG_INFO("test-- BruteForce RADIUS SUCCESS");
         auto result =
             ReGenRangeSearchResult(res.value(), topk, nq, query_ds.metric_type);
         milvus::tracer::AddEvent("ReGenRangeSearchResult");
@@ -168,6 +171,7 @@ BruteForceSearch(const dataset::SearchDataset& query_ds,
         std::copy_n(
             GetDatasetDistance(result), nq * topk, sub_result.get_distances());
     } else {
+        LOG_INFO("test-- BruteForce ELSE");
         knowhere::Status stat;
         if (data_type == DataType::VECTOR_FLOAT) {
             stat = knowhere::BruteForce::SearchWithBuf<float>(
@@ -221,6 +225,7 @@ BruteForceSearch(const dataset::SearchDataset& query_ds,
             PanicInfo(KnowhereError,
                       "Brute force search fail: " + KnowhereStatusString(stat));
         }
+        LOG_INFO("test-- BruteForce ELSE SUCCESS");
     }
     sub_result.round_values();
     return sub_result;
