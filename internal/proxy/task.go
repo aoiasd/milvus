@@ -1252,7 +1252,7 @@ func (t *alterCollectionFieldTask) PreExecute(ctx context.Context) error {
 			}
 
 			if value > defaultMaxVarCharLength {
-				return merr.WrapErrParameterInvalid("%s exceeds the maximum allowed value 1048576", prop.Value)
+				return merr.WrapErrParameterInvalidMsg("%s exceeds the maximum allowed value %v", prop.Value, defaultMaxVarCharLength)
 			}
 		}
 	}

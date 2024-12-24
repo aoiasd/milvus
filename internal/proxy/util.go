@@ -19,6 +19,7 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -64,7 +65,7 @@ const (
 	// enableMultipleVectorFields indicates whether to enable multiple vector fields.
 	enableMultipleVectorFields = true
 
-	defaultMaxVarCharLength = 1048576
+	defaultMaxVarCharLength = math.MaxInt64
 
 	defaultMaxArrayCapacity = 4096
 
@@ -365,7 +366,7 @@ func validateMaxLengthPerRow(collectionName string, field *schemapb.FieldSchema)
 			return err
 		}
 		if maxLengthPerRow > defaultMaxVarCharLength || maxLengthPerRow <= 0 {
-			return merr.WrapErrParameterInvalidMsg("the maximum length specified for a VarChar should be in (0, 1048576]")
+			return merr.WrapErrParameterInvalidMsg("the maximum length specified for a VarChar should be in (0, %d]", defaultMaxVarCharLength)
 		}
 		exist = true
 	}
