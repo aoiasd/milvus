@@ -414,8 +414,8 @@ func (t *SyncTask) IsFlush() bool {
 	return t.isFlush
 }
 
-func (t *SyncTask) Binlogs() (map[int64]*datapb.FieldBinlog, map[int64]*datapb.FieldBinlog, *datapb.FieldBinlog) {
-	return t.insertBinlogs, t.statsBinlogs, t.deltaBinlog
+func (t *SyncTask) Binlogs() (map[int64]*datapb.FieldBinlog, map[int64]*datapb.FieldBinlog, map[int64]*datapb.FieldBinlog, *datapb.FieldBinlog) {
+	return t.insertBinlogs, t.statsBinlogs, t.bm25Binlogs, t.deltaBinlog
 }
 
 func (t *SyncTask) MarshalJSON() ([]byte, error) {
