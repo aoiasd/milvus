@@ -73,6 +73,7 @@ func PackSegmentLoadInfo(segment *datapb.SegmentInfo, channelCheckpoint *msgpb.M
 			zap.Time("posTime", posTime),
 			zap.Duration("tsLag", tsLag))
 	}
+	log.Info("[xxxx] bm25 stats logs", zap.Any("bm25 stats logs", segment.Bm25Statslogs))
 	loadInfo := &querypb.SegmentLoadInfo{
 		SegmentID:      segment.ID,
 		PartitionID:    segment.PartitionID,

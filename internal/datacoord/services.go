@@ -451,6 +451,7 @@ func (s *Server) GetSegmentInfo(ctx context.Context, req *datapb.GetSegmentInfoR
 			}
 			segmentutil.ReCalcRowCount(info.SegmentInfo, clonedInfo.SegmentInfo)
 			infos = append(infos, clonedInfo.SegmentInfo)
+			log.Info("[xxx] segment info", zap.Any("segment info", clonedInfo))
 		} else {
 			info = s.meta.GetHealthySegment(ctx, id)
 			if info == nil {
@@ -461,6 +462,7 @@ func (s *Server) GetSegmentInfo(ctx context.Context, req *datapb.GetSegmentInfoR
 			clonedInfo := info.Clone()
 			segmentutil.ReCalcRowCount(info.SegmentInfo, clonedInfo.SegmentInfo)
 			infos = append(infos, clonedInfo.SegmentInfo)
+			log.Info("[xxx] segment info", zap.Any("segment info", clonedInfo))
 		}
 		vchannel := info.InsertChannel
 		if _, ok := channelCPs[vchannel]; vchannel != "" && !ok {
@@ -567,6 +569,7 @@ func (s *Server) SaveBinlogPaths(ctx context.Context, req *datapb.SaveBinlogPath
 		zap.Any("binlogs", req.GetField2BinlogPaths()),
 		zap.Any("deltalogs", req.GetDeltalogs()),
 		zap.Any("statslogs", req.GetField2StatslogPaths()),
+		zap.Any("bm25logs", req.GetField2Bm25LogPaths()),
 	)
 
 	if req.GetSegLevel() == datapb.SegmentLevel_L0 {

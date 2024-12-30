@@ -159,6 +159,7 @@ func (st *statsTask) sortSegment(ctx context.Context) ([]*datapb.FieldBinlog, er
 	numRows := st.req.GetNumRows()
 
 	bm25FieldIds := compaction.GetBM25FieldIDs(st.req.GetSchema())
+	log.Info("[xxxx] bm25FieldIds", zap.Any("bm25FieldIds", bm25FieldIds))
 	writer, err := compaction.NewSegmentWriter(st.req.GetSchema(), numRows, statsBatchSize, st.req.GetTargetSegmentID(), st.req.GetPartitionID(), st.req.GetCollectionID(), bm25FieldIds)
 	if err != nil {
 		log.Ctx(ctx).Warn("sort segment wrong, unable to init segment writer",
@@ -301,7 +302,9 @@ func (st *statsTask) sortSegment(ctx context.Context) ([]*datapb.FieldBinlog, er
 		zap.Duration("download elapse", downloadCost),
 		zap.Duration("sort elapse", sortTimeCost),
 		zap.Duration("serWrite elapse", serWriteTimeCost),
-		zap.Duration("total elapse", totalElapse))
+		zap.Duration("total elapse", totalElapse),
+		zap.Any("bm25statslog", bm25StatsLogs),
+	)
 	return insertLogs, nil
 }
 
@@ -583,6 +586,7 @@ func bm25SerializeWrite(ctx context.Context, rootPath string, io io.BinlogIO, st
 		return 0, nil, err
 	}
 
+	log.Info("[xxxx] bm25 stats blob", zap.Any("stats", stats))
 	kvs := make(map[string][]byte)
 	binlogs := []*datapb.FieldBinlog{}
 	cnt := int64(0)

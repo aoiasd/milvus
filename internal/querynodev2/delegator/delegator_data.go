@@ -1031,6 +1031,7 @@ func (sd *shardDelegator) buildBM25IDF(req *internalpb.SearchRequest) (float64, 
 	if err != nil {
 		return 0, err
 	}
+	log.Info("[xxxx] avgdl", zap.Float64("avgdl", avgdl))
 
 	for _, idf := range idfSparseVector {
 		metrics.QueryNodeSearchFTSNumTokens.WithLabelValues(fmt.Sprint(paramtable.GetNodeID()), fmt.Sprint(sd.collectionID)).Observe(float64(typeutil.SparseFloatRowElementCount(idf)))
