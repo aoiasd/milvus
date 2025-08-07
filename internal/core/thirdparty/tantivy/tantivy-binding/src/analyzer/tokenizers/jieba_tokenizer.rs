@@ -3,6 +3,7 @@ use jieba_rs;
 use lazy_static::lazy_static;
 use serde_json as json;
 use std::borrow::Cow;
+use std::fs;
 use std::io::BufReader;
 use tantivy::tokenizer::{Token, TokenStream, Tokenizer};
 
@@ -133,6 +134,29 @@ fn get_jieba_hmm(params: &json::Map<String, json::Value>) -> Result<bool> {
     }
 }
 
+fn get_jieba_user_dict(
+    params: &json::Map<String, json::Value>,
+) -> Result<Option<BufReader<fs::File>>> {
+    match params.get("dict_path") {
+        Some(value) => value.as_str().map_or(
+            Err(TantivyBindingError::InvalidArgument(
+                "jieba tokenizer dict path must be string".into(),
+            )),
+            |v| {
+                let file = fs::File::open(v).map_err(|e| {
+                    TantivyBindingError::InvalidArgument(format!(
+                        "read dict file failed with error: {}",
+                        e
+                    ))
+                })?;
+
+                return Ok(Some(BufReader::new(file)));
+            },
+        ),
+        _ => Ok(None),
+    }
+}
+
 impl<'a> JiebaTokenizer<'a> {
     pub fn new() -> JiebaTokenizer<'a> {
         JiebaTokenizer {
@@ -144,6 +168,7 @@ impl<'a> JiebaTokenizer<'a> {
 
     pub fn from_json(params: &json::Map<String, json::Value>) -> Result<JiebaTokenizer<'a>> {
         let (dict, system_dict) = get_jieba_dict(params)?;
+        let user_dict = get_jieba_user_dict(params)?;
 
         let mut tokenizer =
             system_dict.map_or(Ok(jieba_rs::Jieba::empty()), |name| match name.as_str() {
@@ -165,6 +190,16 @@ impl<'a> JiebaTokenizer<'a> {
 
         for word in dict {
             tokenizer.add_word(word.as_str(), None, None);
+        }
+
+        if user_dict.is_some() {
+            let mut data = user_dict.unwrap();
+            tokenizer.load_dict(&mut data).map_err(|e| {
+                TantivyBindingError::InvalidArgument(format!(
+                    "read jieba dict file failed with error: {}",
+                    e
+                ))
+            })?;
         }
 
         let mode = get_jieba_mode(params)?;

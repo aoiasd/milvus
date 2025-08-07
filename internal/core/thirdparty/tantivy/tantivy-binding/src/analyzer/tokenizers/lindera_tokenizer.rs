@@ -1,7 +1,9 @@
 use core::result::Result::Err;
 use std::collections::HashSet;
 
-use lindera::dictionary::DictionaryKind;
+use lindera::dictionary::{
+    load_user_dictionary_from_bin, load_user_dictionary_from_csv, DictionaryKind, UserDictionary,
+};
 use lindera::mode::Mode;
 use lindera::segmenter::Segmenter;
 use lindera::token::Token as LToken;
@@ -28,6 +30,8 @@ pub struct LinderaTokenStream<'a> {
 const DICTKINDKEY: &str = "dict_kind";
 const DICTBUILDDIRKEY: &str = "dict_build_dir";
 const DICTDOWNLOADURLKEY: &str = "download_urls";
+const USERDICTKINDKEY: &str = "user_dict_kind";
+const USERDICTKEY: &str = "user_dict";
 const FILTERKEY: &str = "filter";
 
 impl<'a> TokenStream for LinderaTokenStream<'a> {
@@ -72,7 +76,9 @@ impl LinderaTokenizer {
 
         let dictionary = load_dictionary_from_kind(&kind, build_dir, download_urls)?;
 
-        let segmenter = Segmenter::new(Mode::Normal, dictionary, None);
+        let user_dictionary = fetch_lindera_user_dict(params)?;
+
+        let segmenter = Segmenter::new(Mode::Normal, dictionary, user_dictionary);
         let mut tokenizer = LinderaTokenizer::from_segmenter(segmenter);
 
         // append lindera filter
@@ -130,6 +136,74 @@ impl DictionaryKindParser for &str {
     }
 }
 
+fn fetch_lindera_user_dict(
+    params: &json::Map<String, json::Value>,
+) -> Result<Option<UserDictionary>> {
+    params.get(USERDICTKEY).map_or(Ok(None), |v| {
+        v.as_str().map_or(
+            Err(TantivyBindingError::InvalidArgument(
+                "lindera user dict path must be string".into(),
+            )),
+            |v| {
+                let path = std::path::PathBuf::from(v);
+                match path.extension() {
+                    Some(ext) => match ext.to_str() {
+                        Some("csv") => {
+                            let kind = fetch_lindera_user_dict_kind(params)?;
+
+                            load_user_dictionary_from_csv(kind, path.as_path()).map_or_else(
+                                |e| {
+                                    Err(TantivyBindingError::InternalError(
+                                        format!(
+                                            "load lindera user dict from csv failed with error: {}",
+                                            e
+                                        )
+                                        .into(),
+                                    ))
+                                },
+                                |dict| Ok(Some(dict)),
+                            )
+                        }
+                        Some("bin") => load_user_dictionary_from_bin(path.as_path()).map_or_else(
+                            |e| {
+                                Err(TantivyBindingError::InternalError(
+                                    format!(
+                                        "load lindera user dict from csv failed with error: {}",
+                                        e
+                                    )
+                                    .into(),
+                                ))
+                            },
+                            |dict| Ok(Some(dict)),
+                        ),
+                        _ => Err(TantivyBindingError::InvalidArgument(
+                            "invalid lindera user dict file".into(),
+                        )),
+                    },
+                    None => Err(TantivyBindingError::InvalidArgument(
+                        "invalid lindera user dict file".into(),
+                    )),
+                }
+            },
+        )
+    })
+}
+
+fn fetch_lindera_user_dict_kind(params: &json::Map<String, json::Value>) -> Result<DictionaryKind> {
+    params
+        .get(USERDICTKINDKEY)
+        .ok_or(TantivyBindingError::InvalidArgument(
+            "lindera user dict kind must be set if use csv file".into(),
+        ))?
+        .as_str()
+        .map_or(
+            Err(TantivyBindingError::InvalidArgument(
+                "lindera user dict path must be string".into(),
+            )),
+            |v| v.into_dict_kind(),
+        )
+}
+
 fn fetch_lindera_kind(params: &json::Map<String, json::Value>) -> Result<DictionaryKind> {
     params
         .get(DICTKINDKEY)
@@ -166,25 +240,19 @@ fn fetch_lindera_tags_from_params(
 ) -> Result<HashSet<String>> {
     params
         .get("tags")
-        .ok_or_else(|| {
-            TantivyBindingError::InvalidArgument(format!(
-                "lindera japanese stop tag filter tags must be set"
-            ))
-        })?
+        .ok_or(TantivyBindingError::InvalidArgument(format!(
+            "lindera japanese stop tag filter tags must be set"
+        )))?
         .as_array()
-        .ok_or_else(|| {
-            TantivyBindingError::InvalidArgument(format!(
-                "lindera japanese stop tags filter tags must be array"
-            ))
-        })?
+        .ok_or(TantivyBindingError::InvalidArgument(format!(
+            "lindera japanese stop tags filter tags must be array"
+        )))?
         .iter()
         .map(|v| {
             v.as_str()
-                .ok_or_else(|| {
-                    TantivyBindingError::InvalidArgument(format!(
-                        "lindera japanese stop tags filter tags must be string"
-                    ))
-                })
+                .ok_or(TantivyBindingError::InvalidArgument(format!(
+                    "lindera japanese stop tags filter tags must be string"
+                )))
                 .map(|s| s.to_string())
         })
         .collect::<Result<HashSet<String>>>()
@@ -194,11 +262,9 @@ fn fetch_japanese_compound_word_token_filter(
     kind: &DictionaryKind,
     params: Option<&json::Map<String, json::Value>>,
 ) -> Result<LTokenFilter> {
-    let filter_param = params.ok_or_else(|| {
-        TantivyBindingError::InvalidArgument(format!(
-            "lindera japanese compound word filter must use with params"
-        ))
-    })?;
+    let filter_param = params.ok_or(TantivyBindingError::InvalidArgument(format!(
+        "lindera japanese compound word filter must use with params"
+    )))?;
 
     let tags: HashSet<String> = fetch_lindera_tags_from_params(filter_param)?;
 
@@ -206,11 +272,9 @@ fn fetch_japanese_compound_word_token_filter(
         .get("new_tag")
         .map(|v| {
             v.as_str()
-                .ok_or_else(|| {
-                    TantivyBindingError::InvalidArgument(format!(
-                        "lindera japanese compound word filter new_tag must be string"
-                    ))
-                })
+                .ok_or(TantivyBindingError::InvalidArgument(format!(
+                    "lindera japanese compound word filter new_tag must be string"
+                )))
                 .map(|s| s.to_string())
         })
         .transpose()?;

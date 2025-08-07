@@ -38,6 +38,9 @@ pub fn free_binding<T>(ptr: *mut c_void) {
 
 #[cfg(test)]
 pub extern "C" fn set_bitset(bitset: *mut c_void, doc_id: *const u32, len: usize) {
+    use std::slice;
+    use crate::convert_to_rust_slice;
+
     let bitset = unsafe { &mut *(bitset as *mut Vec<u32>) };
     let docs = unsafe { convert_to_rust_slice!(doc_id, len) };
     bitset.extend_from_slice(docs);
