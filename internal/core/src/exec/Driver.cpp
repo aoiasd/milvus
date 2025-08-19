@@ -26,9 +26,11 @@
 #include "exec/operator/IterativeFilterNode.h"
 #include "exec/operator/MvccNode.h"
 #include "exec/operator/Operator.h"
+#include "exec/operator/RescoresNode.h"
 #include "exec/operator/VectorSearchNode.h"
 #include "exec/operator/GroupByNode.h"
 #include "exec/Task.h"
+#include "plan/PlanNode.h"
 
 #include "common/EasyAssert.h"
 
@@ -83,6 +85,11 @@ DriverFactory::CreateDriver(std::unique_ptr<DriverContext> ctx,
                            plannode)) {
             operators.push_back(
                 std::make_unique<PhyGroupByNode>(id, ctx.get(), groupbynode));
+        } else if (auto rescoresnode =
+                       std::dynamic_pointer_cast<const plan::RescoresNode>(
+                           plannode)) {
+            operators.push_back(
+                std::make_unique<PhyRescoresNode>(id, ctx.get(), rescoresnode));
         }
         // TODO: add more operators
     }

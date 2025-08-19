@@ -269,6 +269,7 @@ type SearchReqV2 struct {
 	SearchParams     map[string]interface{} `json:"searchParams"`
 	ConsistencyLevel string                 `json:"consistencyLevel"`
 	ExprParams       map[string]interface{} `json:"exprParams"`
+	FunctionScore    FunctionScore          `json:"functionScore"`
 	// not use Params any more, just for compatibility
 	Params map[string]float64 `json:"params"`
 }
@@ -305,6 +306,7 @@ type HybridSearchReq struct {
 	StrictGroupSize  bool           `json:"strictGroupSize"`
 	OutputFields     []string       `json:"outputFields"`
 	ConsistencyLevel string         `json:"consistencyLevel"`
+	FunctionScore    FunctionScore  `json:"functionScore"`
 }
 
 func (req *HybridSearchReq) GetDbName() string { return req.DbName }
@@ -578,6 +580,11 @@ func wrapperReturnDefault() gin.H {
 
 func wrapperReturnDefaultWithCost(cost int) gin.H {
 	return gin.H{HTTPReturnCode: merr.Code(nil), HTTPReturnData: gin.H{}, HTTPReturnCost: cost}
+}
+
+type FunctionScore struct {
+	Functions []FunctionSchema       `json:"functions"`
+	Params    map[string]interface{} `json:"params"`
 }
 
 type ResourceGroupNodeFilter struct {

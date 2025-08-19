@@ -220,7 +220,7 @@ func TestExpr_Like(t *testing.T) {
 		MetricType:   "",
 		SearchParams: "",
 		RoundDecimal: 0,
-	}, nil)
+	}, nil, nil)
 	assert.NoError(t, err, expr)
 	assert.NotNil(t, plan)
 	fmt.Println(plan)
@@ -233,7 +233,7 @@ func TestExpr_Like(t *testing.T) {
 		MetricType:   "",
 		SearchParams: "",
 		RoundDecimal: 0,
-	}, nil)
+	}, nil, nil)
 	assert.NoError(t, err, expr)
 	assert.NotNil(t, plan)
 	fmt.Println(plan)
@@ -246,7 +246,7 @@ func TestExpr_Like(t *testing.T) {
 		MetricType:   "",
 		SearchParams: "",
 		RoundDecimal: 0,
-	}, nil)
+	}, nil, nil)
 	assert.NoError(t, err, expr)
 	assert.NotNil(t, plan)
 	fmt.Println(plan)
@@ -605,7 +605,7 @@ func TestCreateSearchPlan(t *testing.T) {
 		MetricType:   "",
 		SearchParams: "",
 		RoundDecimal: 0,
-	}, nil)
+	}, nil, nil)
 	assert.NoError(t, err)
 }
 
@@ -616,7 +616,7 @@ func TestCreateFloat16SearchPlan(t *testing.T) {
 		MetricType:   "",
 		SearchParams: "",
 		RoundDecimal: 0,
-	}, nil)
+	}, nil, nil)
 	assert.NoError(t, err)
 }
 
@@ -627,7 +627,7 @@ func TestCreateBFloat16earchPlan(t *testing.T) {
 		MetricType:   "",
 		SearchParams: "",
 		RoundDecimal: 0,
-	}, nil)
+	}, nil, nil)
 	assert.NoError(t, err)
 }
 
@@ -638,7 +638,7 @@ func TestCreateSparseFloatVectorSearchPlan(t *testing.T) {
 		MetricType:   "",
 		SearchParams: "",
 		RoundDecimal: 0,
-	}, nil)
+	}, nil, nil)
 	assert.NoError(t, err)
 }
 
@@ -800,19 +800,19 @@ func TestCreateRetrievePlan_Invalid(t *testing.T) {
 func TestCreateSearchPlan_Invalid(t *testing.T) {
 	t.Run("invalid expr", func(t *testing.T) {
 		schema := newTestSchemaHelper(t)
-		_, err := CreateSearchPlan(schema, "invalid expression", "", nil, nil)
+		_, err := CreateSearchPlan(schema, "invalid expression", "", nil, nil, nil)
 		assert.Error(t, err)
 	})
 
 	t.Run("invalid vector field", func(t *testing.T) {
 		schema := newTestSchemaHelper(t)
-		_, err := CreateSearchPlan(schema, "Int64Field > 0", "not_exist", nil, nil)
+		_, err := CreateSearchPlan(schema, "Int64Field > 0", "not_exist", nil, nil, nil)
 		assert.Error(t, err)
 	})
 
 	t.Run("not vector type", func(t *testing.T) {
 		schema := newTestSchemaHelper(t)
-		_, err := CreateSearchPlan(schema, "Int64Field > 0", "VarCharField", nil, nil)
+		_, err := CreateSearchPlan(schema, "Int64Field > 0", "VarCharField", nil, nil, nil)
 		assert.Error(t, err)
 	})
 }
@@ -958,7 +958,7 @@ func Test_JSONExpr(t *testing.T) {
 			MetricType:   "",
 			SearchParams: "",
 			RoundDecimal: 0,
-		}, nil)
+		}, nil, nil)
 		assert.NoError(t, err)
 	}
 }
@@ -987,7 +987,7 @@ func Test_InvalidExprOnJSONField(t *testing.T) {
 			MetricType:   "",
 			SearchParams: "",
 			RoundDecimal: 0,
-		}, nil)
+		}, nil, nil)
 		assert.Error(t, err, expr)
 	}
 }
@@ -1024,7 +1024,7 @@ func Test_InvalidExprWithoutJSONField(t *testing.T) {
 			MetricType:   "",
 			SearchParams: "",
 			RoundDecimal: 0,
-		}, nil)
+		}, nil, nil)
 		assert.Error(t, err)
 	}
 }
@@ -1061,7 +1061,7 @@ func Test_InvalidExprWithMultipleJSONField(t *testing.T) {
 			MetricType:   "",
 			SearchParams: "",
 			RoundDecimal: 0,
-		}, nil)
+		}, nil, nil)
 		assert.Error(t, err)
 	}
 }
@@ -1082,7 +1082,7 @@ func Test_exprWithSingleQuotes(t *testing.T) {
 			MetricType:   "",
 			SearchParams: "",
 			RoundDecimal: 0,
-		}, nil)
+		}, nil, nil)
 		assert.NoError(t, err)
 	}
 
@@ -1097,7 +1097,7 @@ func Test_exprWithSingleQuotes(t *testing.T) {
 			MetricType:   "",
 			SearchParams: "",
 			RoundDecimal: 0,
-		}, nil)
+		}, nil, nil)
 		assert.Error(t, err)
 	}
 }
@@ -1132,7 +1132,7 @@ func Test_JSONContains(t *testing.T) {
 			MetricType:   "",
 			SearchParams: "",
 			RoundDecimal: 0,
-		}, nil)
+		}, nil, nil)
 		assert.NoError(t, err)
 	}
 }
@@ -1163,7 +1163,7 @@ func Test_InvalidJSONContains(t *testing.T) {
 			MetricType:   "",
 			SearchParams: "",
 			RoundDecimal: 0,
-		}, nil)
+		}, nil, nil)
 		assert.Error(t, err)
 	}
 }
@@ -1226,7 +1226,7 @@ func Test_EscapeString(t *testing.T) {
 			MetricType:   "",
 			SearchParams: "",
 			RoundDecimal: 0,
-		}, nil)
+		}, nil, nil)
 		assert.NoError(t, err)
 	}
 
@@ -1243,7 +1243,7 @@ c'`,
 			MetricType:   "",
 			SearchParams: "",
 			RoundDecimal: 0,
-		}, nil)
+		}, nil, nil)
 		assert.Error(t, err)
 		fmt.Println(plan)
 	}
@@ -1271,7 +1271,7 @@ func Test_JSONContainsAll(t *testing.T) {
 			MetricType:   "",
 			SearchParams: "",
 			RoundDecimal: 0,
-		}, nil)
+		}, nil, nil)
 		assert.NoError(t, err)
 		assert.NotNil(t, plan.GetVectorAnns().GetPredicates().GetJsonContainsExpr())
 		assert.Equal(t, planpb.JSONContainsExpr_ContainsAll, plan.GetVectorAnns().GetPredicates().GetJsonContainsExpr().GetOp())
@@ -1293,7 +1293,7 @@ func Test_JSONContainsAll(t *testing.T) {
 			MetricType:   "",
 			SearchParams: "",
 			RoundDecimal: 0,
-		}, nil)
+		}, nil, nil)
 		assert.Error(t, err)
 	}
 }
@@ -1316,7 +1316,7 @@ func Test_JSONContainsAny(t *testing.T) {
 			MetricType:   "",
 			SearchParams: "",
 			RoundDecimal: 0,
-		}, nil)
+		}, nil, nil)
 		assert.NoError(t, err)
 		assert.NotNil(t, plan.GetVectorAnns().GetPredicates().GetJsonContainsExpr())
 		assert.Equal(t, planpb.JSONContainsExpr_ContainsAny, plan.GetVectorAnns().GetPredicates().GetJsonContainsExpr().GetOp())
@@ -1338,7 +1338,7 @@ func Test_JSONContainsAny(t *testing.T) {
 			MetricType:   "",
 			SearchParams: "",
 			RoundDecimal: 0,
-		}, nil)
+		}, nil, nil)
 		assert.Error(t, err)
 	}
 }
@@ -1386,7 +1386,7 @@ func Test_ArrayExpr(t *testing.T) {
 			MetricType:   "",
 			SearchParams: "",
 			RoundDecimal: 0,
-		}, nil)
+		}, nil, nil)
 		assert.NoError(t, err, expr)
 	}
 
@@ -1420,7 +1420,7 @@ func Test_ArrayExpr(t *testing.T) {
 			MetricType:   "",
 			SearchParams: "",
 			RoundDecimal: 0,
-		}, nil)
+		}, nil, nil)
 		assert.Error(t, err, expr)
 	}
 }
@@ -1448,7 +1448,7 @@ func Test_ArrayLength(t *testing.T) {
 			MetricType:   "",
 			SearchParams: "",
 			RoundDecimal: 0,
-		}, nil)
+		}, nil, nil)
 		assert.NoError(t, err, expr)
 	}
 
@@ -1474,7 +1474,7 @@ func Test_ArrayLength(t *testing.T) {
 			MetricType:   "",
 			SearchParams: "",
 			RoundDecimal: 0,
-		}, nil)
+		}, nil, nil)
 		assert.Error(t, err, expr)
 	}
 }
@@ -1552,7 +1552,7 @@ func BenchmarkWithString(b *testing.B) {
 			MetricType:   "",
 			SearchParams: "",
 			RoundDecimal: 0,
-		}, nil)
+		}, nil, nil)
 		assert.NoError(b, err)
 		assert.NotNil(b, plan)
 	}
@@ -1595,7 +1595,7 @@ func BenchmarkTemplateWithString(b *testing.B) {
 			MetricType:   "",
 			SearchParams: "",
 			RoundDecimal: 0,
-		}, mv)
+		}, mv, nil)
 		assert.NoError(b, err)
 		assert.NotNil(b, plan)
 	}
@@ -1610,7 +1610,7 @@ func TestNestedPathWithChinese(t *testing.T) {
 		MetricType:   "",
 		SearchParams: "",
 		RoundDecimal: 0,
-	}, nil)
+	}, nil, nil)
 	assert.NoError(t, err, expr)
 	paths := plan.GetVectorAnns().GetPredicates().GetUnaryRangeExpr().GetColumnInfo().GetNestedPath()
 	assert.NotNil(t, paths)
@@ -1624,7 +1624,7 @@ func TestNestedPathWithChinese(t *testing.T) {
 		MetricType:   "",
 		SearchParams: "",
 		RoundDecimal: 0,
-	}, nil)
+	}, nil, nil)
 	assert.NoError(t, err, expr)
 	paths = plan.GetVectorAnns().GetPredicates().GetUnaryRangeExpr().GetColumnInfo().GetNestedPath()
 	assert.NotNil(t, paths)
@@ -1650,7 +1650,7 @@ func Test_JSONPathNullExpr(t *testing.T) {
 			MetricType:   "",
 			SearchParams: "",
 			RoundDecimal: 0,
-		}, nil)
+		}, nil, nil)
 		assert.NoError(t, err)
 		assert.NotNil(t, plan)
 
@@ -1659,7 +1659,7 @@ func Test_JSONPathNullExpr(t *testing.T) {
 			MetricType:   "",
 			SearchParams: "",
 			RoundDecimal: 0,
-		}, nil)
+		}, nil, nil)
 		assert.NoError(t, err)
 		assert.NotNil(t, plan2)
 
