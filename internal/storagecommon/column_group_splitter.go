@@ -36,9 +36,9 @@ func SplitBySchema(fields []*schemapb.FieldSchema) []ColumnGroup {
 	groups := make([]ColumnGroup, 0)
 	shortColumnGroup := ColumnGroup{Columns: make([]int, 0), GroupID: DefaultShortColumnGroupID}
 	for i, field := range fields {
-		if IsVectorDataType(field.DataType) || field.DataType == schemapb.DataType_Text {
+		if typeutil.IsVectorType(field.DataType) {
 			groups = append(groups, ColumnGroup{Columns: []int{i}, GroupID: field.GetFieldID()})
-		} else {
+		} else if !typeutil.IsLobType(field.DataType) {
 			shortColumnGroup.Columns = append(shortColumnGroup.Columns, i)
 		}
 	}
@@ -48,15 +48,12 @@ func SplitBySchema(fields []*schemapb.FieldSchema) []ColumnGroup {
 	return groups
 }
 
-func IsVectorDataType(dataType schemapb.DataType) bool {
-	switch dataType {
-	case schemapb.DataType_BinaryVector,
-		schemapb.DataType_Float16Vector,
-		schemapb.DataType_BFloat16Vector,
-		schemapb.DataType_Int8Vector,
-		schemapb.DataType_FloatVector,
-		schemapb.DataType_SparseFloatVector:
-		return true
+func SplitLobBySchema(fields []*schemapb.FieldSchema) []ColumnGroup {
+	groups := make([]ColumnGroup, 0)
+	for i, field := range fields {
+		if typeutil.IsLobType(field.DataType) {
+			groups = append(groups, ColumnGroup{Columns: []int{i}, GroupID: field.GetFieldID()})
+		}
 	}
-	return false
+	return groups
 }

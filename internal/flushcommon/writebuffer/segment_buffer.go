@@ -14,6 +14,7 @@ type segmentBuffer struct {
 
 	insertBuffer *InsertBuffer
 	deltaBuffer  *DeltaBuffer
+	lobBuffer    *LobBuffer
 }
 
 func newSegmentBuffer(segmentID int64, collSchema *schemapb.CollectionSchema) (*segmentBuffer, error) {

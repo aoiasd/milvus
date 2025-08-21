@@ -606,6 +606,16 @@ func IsBoolType(dataType schemapb.DataType) bool {
 	}
 }
 
+// IsLobType returns true if input is a lob type, otherwise false
+func IsLobType(dataType schemapb.DataType) bool {
+	switch dataType {
+	case schemapb.DataType_Text:
+		return true
+	default:
+		return false
+	}
+}
+
 // IsStringType returns true if input is a varChar type, otherwise false
 func IsStringType(dataType schemapb.DataType) bool {
 	switch dataType {

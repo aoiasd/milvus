@@ -45,8 +45,9 @@ type BlobInfo struct {
 // 102: ...
 type InsertData struct {
 	// TODO, data should be zero copy by passing data directly to event reader or change Data to map[FieldID]FieldDataArray
-	Data  map[FieldID]FieldData // field id to field data
-	Infos []BlobInfo
+	Data    map[FieldID]FieldData // field id to field data
+	LobData map[FieldID]FieldData // Large object data
+	Infos   []BlobInfo
 }
 
 func NewInsertData(schema *schemapb.CollectionSchema) (*InsertData, error) {
@@ -84,9 +85,15 @@ func NewInsertDataWithCap(schema *schemapb.CollectionSchema, cap int, withFuncti
 				return nil
 			}
 		}
+
 		fieldData, err := NewFieldData(field.DataType, field, cap)
 		if err != nil {
 			return err
+		}
+
+		if typeutil.IsLobType(field.GetDataType()) {
+			idata.LobData[field.FieldID] = fieldData
+			continue
 		}
 		idata.Data[field.FieldID] = fieldData
 		return nil
@@ -346,7 +353,7 @@ func NewFieldData(dataType schemapb.DataType, fieldSchema *schemapb.FieldSchema,
 			data.ValidData = make([]bool, 0, cap)
 		}
 		return data, nil
-	case schemapb.DataType_String, schemapb.DataType_VarChar:
+	case schemapb.DataType_String, schemapb.DataType_VarChar, schemapb.DataType_Text:
 		data := &StringFieldData{
 			Data:     make([]string, 0, cap),
 			DataType: dataType,
