@@ -1,9 +1,14 @@
+use lazy_static::lazy_static;
+use regex::Regex;
 use tantivy::tokenizer::{Token, TokenFilter, TokenStream, Tokenizer};
+
+lazy_static! {
+    static ref RE: Regex = Regex::new(r"[\p{Punct}\s]+").unwrap();
+}
 
 pub struct RemovePunctFilter;
 
 pub struct RemovePunctFilterStream<T> {
-    regex: regex::Regex,
     tail: T,
 }
 
@@ -22,7 +27,6 @@ impl<T: Tokenizer> Tokenizer for RemovePunctFilterWrapper<T> {
 
     fn token_stream<'a>(&'a mut self, text: &'a str) -> Self::TokenStream<'a> {
         RemovePunctFilterStream {
-            regex: regex::Regex::new(r"[\p{Punct}\s]+").unwrap(),
             tail: self.0.token_stream(text),
         }
     }
@@ -31,7 +35,7 @@ impl<T: Tokenizer> Tokenizer for RemovePunctFilterWrapper<T> {
 impl<T: TokenStream> TokenStream for RemovePunctFilterStream<T> {
     fn advance(&mut self) -> bool {
         while self.tail.advance() {
-            if !self.regex.is_match(&self.tail.token().text) {
+            if !RE.is_match(&self.tail.token().text) {
                 return true;
             }
         }
@@ -52,13 +56,11 @@ impl<T: TokenStream> TokenStream for RemovePunctFilterStream<T> {
 mod tests {
 
     #[test]
-    #[cfg(feature = "lindera-ipadic")]
     fn test_remove_punct_filter() {
         use crate::analyzer::analyzer::create_analyzer;
         let params = r#"{
             "tokenizer": {
-                "type": "lindera",
-                "dict_kind": "ipadic"
+                "type": "jieba"
             },
             "filter": ["removepunct"]
         }"#;
@@ -67,7 +69,7 @@ mod tests {
         assert!(tokenizer.is_ok(), "error: {}", tokenizer.err().unwrap());
 
         let mut bining = tokenizer.unwrap();
-        let mut stream = bining.token_stream("ミルヴァスの日本語テスト、句読点テスト");
+        let mut stream = bining.token_stream("中文，标点。\"测试\"。\n");
 
         let mut results = Vec::<String>::new();
         while stream.advance() {
