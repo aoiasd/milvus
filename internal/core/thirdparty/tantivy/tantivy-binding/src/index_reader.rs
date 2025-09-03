@@ -44,7 +44,7 @@ impl IndexReaderWrapper {
 
         let reader = index
             .reader_builder()
-            .reload_policy(ReloadPolicy::OnCommit) // OnCommit serve for growing segment.
+            .reload_policy(ReloadPolicy::OnCommitWithDelay) // OnCommit serve for growing segment.
             .try_into()?;
         reader.reload()?;
 
@@ -124,9 +124,8 @@ impl IndexReaderWrapper {
         inclusive: bool,
         bitset: *mut c_void,
     ) -> Result<()> {
-        let q = RangeQuery::new_i64_bounds(
-            self.field_name.to_string(),
-            make_bounds(lower_bound, inclusive),
+        let q = RangeQuery::new(
+            make_bounds(Term::from_field_i64(self.field, lower_bound), inclusive),
             Bound::Unbounded,
         );
         self.search(&q, bitset)
@@ -138,10 +137,9 @@ impl IndexReaderWrapper {
         inclusive: bool,
         bitset: *mut c_void,
     ) -> Result<()> {
-        let q = RangeQuery::new_i64_bounds(
-            self.field_name.to_string(),
+        let q = RangeQuery::new(
             Bound::Unbounded,
-            make_bounds(upper_bound, inclusive),
+            make_bounds(Term::from_field_i64(self.field, upper_bound), inclusive),
         );
         self.search(&q, bitset)
     }
@@ -154,11 +152,9 @@ impl IndexReaderWrapper {
     ) -> Result<()> {
         let lower_bound = make_bounds(Term::from_field_bool(self.field, lower_bound), inclusive);
         let upper_bound = Bound::Unbounded;
-        let q = RangeQuery::new_term_bounds(
-            self.field_name.to_string(),
-            Type::Bool,
-            &lower_bound,
-            &upper_bound,
+        let q = RangeQuery::new(
+            lower_bound,
+            upper_bound,
         );
         self.search(&q, bitset)
     }
@@ -171,11 +167,9 @@ impl IndexReaderWrapper {
     ) -> Result<()> {
         let lower_bound = Bound::Unbounded;
         let upper_bound = make_bounds(Term::from_field_bool(self.field, upper_bound), inclusive);
-        let q = RangeQuery::new_term_bounds(
-            self.field_name.to_string(),
-            Type::Bool,
-            &lower_bound,
-            &upper_bound,
+        let q = RangeQuery::new(
+            lower_bound,
+            upper_bound,
         );
         self.search(&q, bitset)
     }
@@ -188,9 +182,9 @@ impl IndexReaderWrapper {
         ub_inclusive: bool,
         bitset: *mut c_void,
     ) -> Result<()> {
-        let lb = make_bounds(lower_bound, lb_inclusive);
-        let ub = make_bounds(upper_bound, ub_inclusive);
-        let q = RangeQuery::new_i64_bounds(self.field_name.to_string(), lb, ub);
+        let lb = make_bounds(Term::from_field_i64(self.field, lower_bound), lb_inclusive);
+        let ub = make_bounds(Term::from_field_i64(self.field, upper_bound), ub_inclusive);
+        let q = RangeQuery::new(lb, ub);
         self.search(&q, bitset)
     }
 
@@ -212,11 +206,9 @@ impl IndexReaderWrapper {
     ) -> Result<()> {
         let lower_bound = make_bounds(Term::from_field_bool(self.field, lower_bound), lb_inclusive);
         let upper_bound = make_bounds(Term::from_field_bool(self.field, upper_bound), ub_inclusive);
-        let q = RangeQuery::new_term_bounds(
-            self.field_name.to_string(),
-            Type::Bool,
-            &lower_bound,
-            &upper_bound,
+        let q = RangeQuery::new(
+            lower_bound,
+            upper_bound,
         );
         self.search(&q, bitset)
     }
@@ -227,9 +219,8 @@ impl IndexReaderWrapper {
         inclusive: bool,
         bitset: *mut c_void,
     ) -> Result<()> {
-        let q = RangeQuery::new_f64_bounds(
-            self.field_name.to_string(),
-            make_bounds(lower_bound, inclusive),
+        let q = RangeQuery::new(
+            make_bounds(Term::from_field_f64(self.field, lower_bound), inclusive),
             Bound::Unbounded,
         );
         self.search(&q, bitset)
@@ -241,10 +232,9 @@ impl IndexReaderWrapper {
         inclusive: bool,
         bitset: *mut c_void,
     ) -> Result<()> {
-        let q = RangeQuery::new_f64_bounds(
-            self.field_name.to_string(),
+        let q = RangeQuery::new(
             Bound::Unbounded,
-            make_bounds(upper_bound, inclusive),
+            make_bounds(Term::from_field_f64(self.field, upper_bound), inclusive),
         );
         self.search(&q, bitset)
     }
@@ -257,9 +247,9 @@ impl IndexReaderWrapper {
         ub_inclusive: bool,
         bitset: *mut c_void,
     ) -> Result<()> {
-        let lb = make_bounds(lower_bound, lb_inclusive);
-        let ub = make_bounds(upper_bound, ub_inclusive);
-        let q = RangeQuery::new_f64_bounds(self.field_name.to_string(), lb, ub);
+        let lower_bound = make_bounds(Term::from_field_f64(self.field, lower_bound), lb_inclusive);
+        let upper_bound = make_bounds(Term::from_field_f64(self.field, upper_bound), ub_inclusive);
+        let q = RangeQuery::new(lower_bound, upper_bound);
         self.search(&q, bitset)
     }
 
@@ -293,9 +283,8 @@ impl IndexReaderWrapper {
         inclusive: bool,
         bitset: *mut c_void,
     ) -> Result<()> {
-        let q = RangeQuery::new_str_bounds(
-            self.field_name.to_string(),
-            make_bounds(lower_bound, inclusive),
+        let q = RangeQuery::new(
+            make_bounds(Term::from_field_text(self.field, lower_bound), inclusive),
             Bound::Unbounded,
         );
         self.search(&q, bitset)
@@ -307,10 +296,9 @@ impl IndexReaderWrapper {
         inclusive: bool,
         bitset: *mut c_void,
     ) -> Result<()> {
-        let q = RangeQuery::new_str_bounds(
-            self.field_name.to_string(),
+        let q = RangeQuery::new(
             Bound::Unbounded,
-            make_bounds(upper_bound, inclusive),
+            make_bounds(Term::from_field_text(self.field, upper_bound), inclusive),
         );
         self.search(&q, bitset)
     }
@@ -323,9 +311,9 @@ impl IndexReaderWrapper {
         ub_inclusive: bool,
         bitset: *mut c_void,
     ) -> Result<()> {
-        let lb = make_bounds(lower_bound, lb_inclusive);
-        let ub = make_bounds(upper_bound, ub_inclusive);
-        let q = RangeQuery::new_str_bounds(self.field_name.to_string(), lb, ub);
+        let lower_bound = make_bounds(Term::from_field_text(self.field, lower_bound), lb_inclusive);
+        let upper_bound = make_bounds(Term::from_field_text(self.field, upper_bound), ub_inclusive);
+        let q = RangeQuery::new(lower_bound,upper_bound);
         self.search(&q, bitset)
     }
 

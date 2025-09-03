@@ -9,7 +9,9 @@ use log::info;
 use tantivy::schema::{
     Field, IndexRecordOption, Schema, SchemaBuilder, TextFieldIndexing, TextOptions, FAST, INDEXED,
 };
-use tantivy::{doc, Document, Index, IndexWriter, SingleSegmentIndexWriter, UserOperation};
+use tantivy::{doc, Index, IndexWriter, SingleSegmentIndexWriter};
+use tantivy::indexer::UserOperation;
+use tantivy::TantivyDocument as Document;
 
 use crate::convert_to_rust_slice;
 use crate::data_type::TantivyDataType;
@@ -227,7 +229,7 @@ impl IndexWriterWrapper {
     pub fn add_multi_i8s(&mut self, datas: &[i8], offset: i64) -> Result<()> {
         let mut document = Document::default();
         for data in datas {
-            document.add_field_value(self.field, *data as i64);
+            document.add_field_value(self.field, &(*data as i64));
         }
         document.add_i64(self.id_field.unwrap(), offset);
         self.index_writer_add_document(document)
@@ -236,7 +238,7 @@ impl IndexWriterWrapper {
     pub fn add_multi_i16s(&mut self, datas: &[i16], offset: i64) -> Result<()> {
         let mut document = Document::default();
         for data in datas {
-            document.add_field_value(self.field, *data as i64);
+            document.add_field_value(self.field, &(*data as i64));
         }
         document.add_i64(self.id_field.unwrap(), offset);
         self.index_writer_add_document(document)
@@ -245,7 +247,7 @@ impl IndexWriterWrapper {
     pub fn add_multi_i32s(&mut self, datas: &[i32], offset: i64) -> Result<()> {
         let mut document = Document::default();
         for data in datas {
-            document.add_field_value(self.field, *data as i64);
+            document.add_field_value(self.field, &(*data as i64));
         }
         document.add_i64(self.id_field.unwrap(), offset);
         self.index_writer_add_document(document)
@@ -254,7 +256,7 @@ impl IndexWriterWrapper {
     pub fn add_multi_i64s(&mut self, datas: &[i64], offset: i64) -> Result<()> {
         let mut document = Document::default();
         for data in datas {
-            document.add_field_value(self.field, *data);
+            document.add_field_value(self.field, data);
         }
         document.add_i64(self.id_field.unwrap(), offset);
         self.index_writer_add_document(document)
@@ -263,7 +265,7 @@ impl IndexWriterWrapper {
     pub fn add_multi_f32s(&mut self, datas: &[f32], offset: i64) -> Result<()> {
         let mut document = Document::default();
         for data in datas {
-            document.add_field_value(self.field, *data as f64);
+            document.add_field_value(self.field, &(*data as f64));
         }
         document.add_i64(self.id_field.unwrap(), offset);
         self.index_writer_add_document(document)
@@ -272,7 +274,7 @@ impl IndexWriterWrapper {
     pub fn add_multi_f64s(&mut self, datas: &[f64], offset: i64) -> Result<()> {
         let mut document = Document::default();
         for data in datas {
-            document.add_field_value(self.field, *data);
+            document.add_field_value(self.field, data);
         }
         document.add_i64(self.id_field.unwrap(), offset);
         self.index_writer_add_document(document)
@@ -281,7 +283,7 @@ impl IndexWriterWrapper {
     pub fn add_multi_bools(&mut self, datas: &[bool], offset: i64) -> Result<()> {
         let mut document = Document::default();
         for data in datas {
-            document.add_field_value(self.field, *data);
+            document.add_field_value(self.field, data);
         }
         document.add_i64(self.id_field.unwrap(), offset);
         self.index_writer_add_document(document)
@@ -340,7 +342,7 @@ impl IndexWriterWrapper {
     pub fn add_multi_i8s_by_single_segment_writer(&mut self, datas: &[i8]) -> Result<()> {
         let mut document = Document::default();
         for data in datas {
-            document.add_field_value(self.field, *data as i64);
+            document.add_field_value(self.field, &(*data as i64));
         }
         self.single_segment_index_writer_add_document(document)
     }
@@ -348,7 +350,7 @@ impl IndexWriterWrapper {
     pub fn add_multi_i16s_by_single_segment_writer(&mut self, datas: &[i16]) -> Result<()> {
         let mut document = Document::default();
         for data in datas {
-            document.add_field_value(self.field, *data as i64);
+            document.add_field_value(self.field, &(*data as i64));
         }
         self.single_segment_index_writer_add_document(document)
     }
@@ -356,7 +358,7 @@ impl IndexWriterWrapper {
     pub fn add_multi_i32s_by_single_segment_writer(&mut self, datas: &[i32]) -> Result<()> {
         let mut document = Document::default();
         for data in datas {
-            document.add_field_value(self.field, *data as i64);
+            document.add_field_value(self.field, &(*data as i64));
         }
         self.single_segment_index_writer_add_document(document)
     }
@@ -364,7 +366,7 @@ impl IndexWriterWrapper {
     pub fn add_multi_i64s_by_single_segment_writer(&mut self, datas: &[i64]) -> Result<()> {
         let mut document = Document::default();
         for data in datas {
-            document.add_field_value(self.field, *data);
+            document.add_field_value(self.field, data);
         }
         self.single_segment_index_writer_add_document(document)
     }
@@ -372,7 +374,7 @@ impl IndexWriterWrapper {
     pub fn add_multi_f32s_by_single_segment_writer(&mut self, datas: &[f32]) -> Result<()> {
         let mut document = Document::default();
         for data in datas {
-            document.add_field_value(self.field, *data as f64);
+            document.add_field_value(self.field, &(*data as f64));
         }
         self.single_segment_index_writer_add_document(document)
     }
@@ -380,7 +382,7 @@ impl IndexWriterWrapper {
     pub fn add_multi_f64s_by_single_segment_writer(&mut self, datas: &[f64]) -> Result<()> {
         let mut document = Document::default();
         for data in datas {
-            document.add_field_value(self.field, *data);
+            document.add_field_value(self.field, data);
         }
         self.single_segment_index_writer_add_document(document)
     }
@@ -388,7 +390,7 @@ impl IndexWriterWrapper {
     pub fn add_multi_bools_by_single_segment_writer(&mut self, datas: &[bool]) -> Result<()> {
         let mut document = Document::default();
         for data in datas {
-            document.add_field_value(self.field, *data);
+            document.add_field_value(self.field, data);
         }
         self.single_segment_index_writer_add_document(document)
     }
