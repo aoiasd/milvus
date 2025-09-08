@@ -47,7 +47,7 @@ tempfile = "3.19.1"
 criterion = "0.4"
 
 [build-dependencies]
-cbindgen = "0.26.0"
+cbindgen = "0.29.0"
 
 [[bench]]
 name = "analyzer_bench"
