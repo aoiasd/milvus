@@ -1,4 +1,5 @@
 use icu_segmenter::WordSegmenter;
+use icu_segmenter::options::WordBreakOptions;
 use tantivy::tokenizer::{Token, TokenStream, Tokenizer};
 
 pub struct IcuTokenizer {
@@ -8,7 +9,7 @@ pub struct IcuTokenizer {
 impl Clone for IcuTokenizer {
     fn clone(&self) -> Self {
         IcuTokenizer {
-            segmenter: WordSegmenter::new_auto(Default::default()),
+            segmenter: WordSegmenter::try_new_auto(WordBreakOptions::default()).unwrap(),
         }
     }
 }
@@ -41,12 +42,13 @@ impl TokenStream for IcuTokenStream {
 impl IcuTokenizer {
     pub fn new() -> IcuTokenizer {
         IcuTokenizer {
-            segmenter: WordSegmenter::new_auto(Default::default()),
+            segmenter: WordSegmenter::try_new_auto(WordBreakOptions::default()).unwrap(),
         }
     }
 
     fn tokenize(&self, text: &str) -> Vec<Token> {
-        let breakpoints: Vec<usize> = self.segmenter.segment_str(text).collect();
+        let borrowed_segmenter = self.segmenter.as_borrowed();
+        let breakpoints: Vec<usize> = borrowed_segmenter.segment_str(text).collect();
         let mut tokens = vec![];
         let mut offset = 0;
         let mut position = 0;
