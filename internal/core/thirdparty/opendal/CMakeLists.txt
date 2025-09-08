@@ -18,10 +18,10 @@ set(GIT_REPOSITORY  "https://github.com/apache/opendal.git")
 set(GIT_TAG "v0.43.0-rc.2")
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-    set(CARGO_CMD cargo +1.83 build --verbose)
+    set(CARGO_CMD RUSTFLAGS="-C target-cpu=neoverse-v2" cargo +1.89 build --verbose --target aarch64-unknown-linux-gnu)
     set(TARGET_DIR "debug")
 else ()
-    set(CARGO_CMD cargo +1.83 build --release --verbose)
+    set(CARGO_CMD RUSTFLAGS="-C target-cpu=neoverse-v2" cargo +1.89 build --release --verbose --target aarch64-unknown-linux-gnu)
     set(TARGET_DIR "release")
 endif ()
 
