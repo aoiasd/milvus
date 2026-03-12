@@ -100,7 +100,7 @@ func (suite *IDFOracleSuite) registerSealed(segID int64, start uint32, end uint3
 		data, err := s.Serialize()
 		suite.Require().NoError(err)
 		filePath := path.Join(segDir, fmt.Sprintf("%d", fieldID), "0.data")
-		err = os.WriteFile(filePath, data, os.ModePerm)
+		err = os.WriteFile(filePath, data, 0o600)
 		suite.Require().NoError(err)
 		diskSize += int64(len(data))
 	}

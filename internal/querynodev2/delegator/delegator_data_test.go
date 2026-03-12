@@ -634,7 +634,6 @@ func (s *DelegatorDataSuite) TestLoadSegmentsWithBm25() {
 			},
 		}, segmentEntryCoreFields(sealed[0].Segments))
 	})
-
 }
 
 func (s *DelegatorDataSuite) TestLoadSegments() {
@@ -952,7 +951,7 @@ func (s *DelegatorDataSuite) TestBuildBM25IDF() {
 		fieldDir := path.Join(segDir, "101")
 		os.MkdirAll(fieldDir, os.ModePerm)
 		data, _ := stats.Serialize()
-		os.WriteFile(path.Join(fieldDir, "0.data"), data, os.ModePerm)
+		os.WriteFile(path.Join(fieldDir, "0.data"), data, 0o600)
 
 		segStats := &sealedBm25Stats{
 			ts:        time.Now(),
