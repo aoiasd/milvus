@@ -17,19 +17,29 @@
 package delegator
 
 import (
+	"bytes"
+	"context"
 	"fmt"
-	"os"
-	"path"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
-	"go.uber.org/atomic"
 
 	"github.com/milvus-io/milvus-proto/go-api/v2/schemapb"
+	"github.com/milvus-io/milvus/internal/mocks"
 	"github.com/milvus-io/milvus/internal/storage"
+	"github.com/milvus-io/milvus/pkg/v2/proto/datapb"
 	"github.com/milvus-io/milvus/pkg/v2/util/typeutil"
 )
+
+// bytesFileReader wraps bytes.Reader to implement storage.FileReader.
+type bytesFileReader struct {
+	*bytes.Reader
+}
+
+func (r *bytesFileReader) Close() error              { return nil }
+func (r *bytesFileReader) Size() (int64, error)       { return int64(r.Reader.Len()), nil }
 
 type IDFOracleSuite struct {
 	suite.Suite
@@ -87,36 +97,30 @@ func (suite *IDFOracleSuite) genStats(start uint32, end uint32) map[int64]*stora
 	return result
 }
 
-// registerSealed writes stats to disk and registers directly into idfOracle.
+// registerSealed loads BM25 stats via LoadSealed with a mock ChunkManager.
+// Returns the disk size written. Idempotent via LoadSealed's internal check.
 func (suite *IDFOracleSuite) registerSealed(segID int64, start uint32, end uint32) int64 {
 	stats := suite.genStats(start, end)
-	segDir := path.Join(suite.idfOracle.dirPath, fmt.Sprintf("%d", segID))
-	fieldDir := path.Join(segDir, "102")
-	err := os.MkdirAll(fieldDir, os.ModePerm)
+
+	// serialize stats to bytes for mock reader
+	data, err := stats[102].Serialize()
 	suite.Require().NoError(err)
 
-	var diskSize int64
-	for fieldID, s := range stats {
-		data, err := s.Serialize()
-		suite.Require().NoError(err)
-		filePath := path.Join(segDir, fmt.Sprintf("%d", fieldID), "0.data")
-		err = os.WriteFile(filePath, data, 0o600)
-		suite.Require().NoError(err)
-		diskSize += int64(len(data))
-	}
+	cm := mocks.NewChunkManager(suite.T())
+	remotePath := fmt.Sprintf("bm25stats/seg_%d/field_102/0", segID)
+	cm.EXPECT().Reader(mock.Anything, remotePath).Return(
+		&bytesFileReader{bytes.NewReader(data)}, nil,
+	)
 
-	segStats := &sealedBm25Stats{
-		ts:        time.Now(),
-		activate:  atomic.NewBool(false),
-		segmentID: segID,
-		localDir:  segDir,
-		fieldList: []int64{102},
-		diskSize:  diskSize,
-	}
+	bm25Logs := []*datapb.FieldBinlog{{
+		FieldID: 102,
+		Binlogs: []*datapb.Binlog{{LogPath: remotePath}},
+	}}
 
-	suite.idfOracle.preloadSealed(segID, segStats, bm25Stats(stats))
-	suite.idfOracle.sealedDiskSize.Add(diskSize)
-	return diskSize
+	diskBefore := suite.idfOracle.sealedDiskSize.Load()
+	err = suite.idfOracle.LoadSealed(context.Background(), segID, bm25Logs, cm)
+	suite.Require().NoError(err)
+	return suite.idfOracle.sealedDiskSize.Load() - diskBefore
 }
 
 // update test snapshot

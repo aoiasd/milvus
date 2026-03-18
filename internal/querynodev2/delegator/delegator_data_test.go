@@ -17,10 +17,9 @@
 package delegator
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"os"
-	"path"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -32,13 +31,13 @@ import (
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
-	uatomic "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/milvus-io/milvus-proto/go-api/v2/commonpb"
 	"github.com/milvus-io/milvus-proto/go-api/v2/msgpb"
 	"github.com/milvus-io/milvus-proto/go-api/v2/schemapb"
+	"github.com/milvus-io/milvus/internal/mocks"
 	"github.com/milvus-io/milvus/internal/mocks/util/mock_segcore"
 	"github.com/milvus-io/milvus/internal/querynodev2/cluster"
 	"github.com/milvus-io/milvus/internal/querynodev2/pkoracle"
@@ -946,23 +945,22 @@ func (s *DelegatorDataSuite) TestBuildBM25IDF() {
 		for i := start; i < end; i++ {
 			stats.Append(map[uint32]float32{i: 1})
 		}
-		// write stats to disk
-		segDir := path.Join(oracle.dirPath, fmt.Sprintf("%d", segID))
-		fieldDir := path.Join(segDir, "101")
-		os.MkdirAll(fieldDir, os.ModePerm)
-		data, _ := stats.Serialize()
-		os.WriteFile(path.Join(fieldDir, "0.data"), data, 0o600)
+		data, err := stats.Serialize()
+		s.Require().NoError(err)
 
-		segStats := &sealedBm25Stats{
-			ts:        time.Now(),
-			activate:  uatomic.NewBool(false),
-			segmentID: segID,
-			localDir:  segDir,
-			fieldList: []int64{101},
-			diskSize:  int64(len(data)),
-		}
-		oracle.preloadSealed(segID, segStats, bm25Stats{101: stats})
-		oracle.sealedDiskSize.Add(int64(len(data)))
+		cm := mocks.NewChunkManager(s.T())
+		remotePath := fmt.Sprintf("bm25stats/seg_%d/field_101/0", segID)
+		cm.EXPECT().Reader(mock.Anything, remotePath).Return(
+			&bytesFileReader{bytes.NewReader(data)}, nil,
+		)
+
+		bm25Logs := []*datapb.FieldBinlog{{
+			FieldID: 101,
+			Binlogs: []*datapb.Binlog{{LogPath: remotePath}},
+		}}
+
+		err = oracle.LoadSealed(context.Background(), segID, bm25Logs, cm)
+		s.Require().NoError(err)
 	}
 
 	genSnapShot := func(seals, grows []int64, targetVersion int64) *snapshot {
@@ -1373,8 +1371,8 @@ func (s *DelegatorDataSuite) TestLoadPartitionStats() {
 	s.NoError(err)
 	partitionID1 := int64(1001)
 	idPath1 := metautil.JoinIDPath(s.collectionID, partitionID1)
-	idPath1 = path.Join(idPath1, s.delegator.vchannelName)
-	statsPath1 := path.Join(s.chunkManager.RootPath(), common.PartitionStatsPath, idPath1, strconv.Itoa(1))
+	idPath1 = filepath.Join(idPath1, s.delegator.vchannelName)
+	statsPath1 := filepath.Join(s.chunkManager.RootPath(), common.PartitionStatsPath, idPath1, strconv.Itoa(1))
 	s.chunkManager.Write(context.Background(), statsPath1, statsData1)
 	defer s.chunkManager.Remove(context.Background(), statsPath1)
 

@@ -100,22 +100,6 @@ func (suite *SegmentLoaderSuite) SetupTest() {
 	suite.manager.Collection.PutOrRef(suite.collectionID, suite.schema, indexMeta, loadMeta)
 }
 
-func (suite *SegmentLoaderSuite) SetupBM25() {
-	// Dependencies
-	suite.manager = NewManager()
-	suite.loader = NewLoader(context.Background(), suite.manager, suite.chunkManager)
-	initcore.InitRemoteChunkManager(paramtable.Get())
-
-	suite.schema = mock_segcore.GenTestBM25CollectionSchema("test")
-	indexMeta := mock_segcore.GenTestIndexMeta(suite.collectionID, suite.schema)
-	loadMeta := &querypb.LoadMetaInfo{
-		LoadType:     querypb.LoadType_LoadCollection,
-		CollectionID: suite.collectionID,
-		PartitionIDs: []int64{suite.partitionID},
-	}
-	suite.manager.Collection.PutOrRef(suite.collectionID, suite.schema, indexMeta, loadMeta)
-}
-
 func (suite *SegmentLoaderSuite) TearDownTest() {
 	ctx := context.Background()
 	for i := 0; i < suite.segmentNum; i++ {
