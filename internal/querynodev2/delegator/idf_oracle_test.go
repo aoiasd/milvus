@@ -110,7 +110,7 @@ func (suite *IDFOracleSuite) registerSealed(segID int64, start uint32, end uint3
 	remotePath := fmt.Sprintf("bm25stats/seg_%d/field_102/0", segID)
 	cm.EXPECT().Reader(mock.Anything, remotePath).Return(
 		&bytesFileReader{bytes.NewReader(data)}, nil,
-	)
+	).Maybe()
 
 	bm25Logs := []*datapb.FieldBinlog{{
 		FieldID: 102,

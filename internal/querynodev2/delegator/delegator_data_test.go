@@ -952,7 +952,7 @@ func (s *DelegatorDataSuite) TestBuildBM25IDF() {
 		remotePath := fmt.Sprintf("bm25stats/seg_%d/field_101/0", segID)
 		cm.EXPECT().Reader(mock.Anything, remotePath).Return(
 			&bytesFileReader{bytes.NewReader(data)}, nil,
-		)
+		).Maybe()
 
 		bm25Logs := []*datapb.FieldBinlog{{
 			FieldID: 101,
