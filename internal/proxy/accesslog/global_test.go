@@ -33,7 +33,6 @@ import (
 	"github.com/milvus-io/milvus-proto/go-api/v3/commonpb"
 	"github.com/milvus-io/milvus-proto/go-api/v3/milvuspb"
 	"github.com/milvus-io/milvus/internal/proxy/accesslog/info"
-	"github.com/milvus-io/milvus/pkg/v3/util/etcd"
 	"github.com/milvus-io/milvus/pkg/v3/util/paramtable"
 )
 
@@ -72,11 +71,17 @@ func TestAccessLogger_InitFailed(t *testing.T) {
 	assert.False(t, ok)
 
 	// init minio error cause init writter failed
-	Params.Init(paramtable.NewBaseTable(paramtable.SkipRemote(true)))
-	Params.Save(Params.ProxyCfg.AccessLog.MinioEnable.Key, "true")
-	Params.Save(Params.MinioCfg.Address.Key, "")
+	// Use a fresh once and params to avoid the watch registered above from firing on param changes
+	once = sync.Once{}
+	var Params2 paramtable.ComponentParam
+	Params2.Init(paramtable.NewBaseTable(paramtable.SkipRemote(true)))
+	Params2.Save(Params2.ProxyCfg.AccessLog.Enable.Key, "true")
+	Params2.Save(Params2.ProxyCfg.AccessLog.Filename.Key, "test_access")
+	Params2.Save(Params2.ProxyCfg.AccessLog.LocalPath.Key, t.TempDir())
+	Params2.Save(Params2.ProxyCfg.AccessLog.MinioEnable.Key, "true")
+	Params2.Save(Params2.MinioCfg.Address.Key, "")
 
-	InitAccessLogger(&Params)
+	InitAccessLogger(&Params2)
 	rpcInfo = &grpc.UnaryServerInfo{Server: nil, FullMethod: "testMethod"}
 	accessInfo = info.NewGrpcAccessInfo(context.Background(), rpcInfo, nil)
 	ok = _globalL.Write(accessInfo)
@@ -86,7 +91,7 @@ func TestAccessLogger_InitFailed(t *testing.T) {
 func TestAccessLogger_DynamicEnable(t *testing.T) {
 	once = sync.Once{}
 	var Params paramtable.ComponentParam
-	Params.Init(paramtable.NewBaseTable())
+	Params.Init(paramtable.NewBaseTable(paramtable.SkipRemote(true)))
 	Params.Save(Params.ProxyCfg.AccessLog.Enable.Key, "false")
 	// init with close accesslog
 	InitAccessLogger(&Params)
@@ -95,21 +100,8 @@ func TestAccessLogger_DynamicEnable(t *testing.T) {
 	ok := _globalL.Write(accessInfo)
 	assert.False(t, ok)
 
-	etcdCli, err := etcd.GetEtcdClient(
-		Params.EtcdCfg.UseEmbedEtcd.GetAsBool(),
-		Params.EtcdCfg.EtcdUseSSL.GetAsBool(),
-		Params.EtcdCfg.Endpoints.GetAsStrings(),
-		Params.EtcdCfg.EtcdTLSCert.GetValue(),
-		Params.EtcdCfg.EtcdTLSKey.GetValue(),
-		Params.EtcdCfg.EtcdTLSCACert.GetValue(),
-		Params.EtcdCfg.EtcdTLSMinVersion.GetValue())
-	require.NoError(t, err)
-
 	// enable access log
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	etcdCli.Put(ctx, "by-dev/config/proxy/accessLog/enable", "true")
-	defer etcdCli.Delete(ctx, "by-dev/config/proxy/accessLog/enable")
+	require.NoError(t, Params.Save(Params.ProxyCfg.AccessLog.Enable.Key, "true"))
 
 	assert.Eventually(t, func() bool {
 		accessInfo := info.NewGrpcAccessInfo(context.Background(), rpcInfo, nil)
@@ -118,7 +110,7 @@ func TestAccessLogger_DynamicEnable(t *testing.T) {
 	}, 10*time.Second, 500*time.Millisecond)
 
 	// disable access log
-	etcdCli.Put(ctx, "by-dev/config/proxy/accessLog/enable", "false")
+	require.NoError(t, Params.Save(Params.ProxyCfg.AccessLog.Enable.Key, "false"))
 	assert.Eventually(t, func() bool {
 		accessInfo := info.NewGrpcAccessInfo(context.Background(), rpcInfo, nil)
 		ok := _globalL.Write(accessInfo)
