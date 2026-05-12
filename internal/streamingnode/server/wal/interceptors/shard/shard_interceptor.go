@@ -25,8 +25,9 @@ var _ interceptors.InterceptorWithMetrics = (*shardInterceptor)(nil)
 
 // shardInterceptor is the implementation of shard management interceptor.
 type shardInterceptor struct {
-	shardManager shards.ShardManager
-	ops          map[message.MessageType]interceptors.AppendInterceptorCall
+	shardManager    shards.ShardManager
+	functionManager *functionRunnerManager
+	ops             map[message.MessageType]interceptors.AppendInterceptorCall
 }
 
 // initOpTable initializes the operation table for the segment interceptor.
@@ -81,6 +82,9 @@ func (impl *shardInterceptor) handleCreateCollection(ctx context.Context, msg me
 		return msgID, err
 	}
 	impl.shardManager.CreateCollection(message.MustAsImmutableCreateCollectionMessageV1(msg.IntoImmutableMessage(msgID)))
+	if schema := createCollectionMsg.MustBody().GetCollectionSchema(); schema != nil {
+		impl.functionManager.Recover(header.GetCollectionId(), schema)
+	}
 	return msgID, nil
 }
 
@@ -99,6 +103,7 @@ func (impl *shardInterceptor) handleDropCollection(ctx context.Context, msg mess
 		return msgID, err
 	}
 	impl.shardManager.DropCollection(message.MustAsImmutableDropCollectionMessageV1(msg.IntoImmutableMessage(msgID)))
+	impl.functionManager.DropCollection(dropCollectionMessage.Header().GetCollectionId())
 	return msgID, nil
 }
 
@@ -171,10 +176,17 @@ func (impl *shardInterceptor) handleInsertMessage(ctx context.Context, msg messa
 			zap.Error(err))
 		return nil, errors.Wrap(err, "CheckIfCollectionSchemaVersionMatch")
 	}
+	if err := impl.materializeFunctionFields(ctx, insertMsg, header.GetCollectionId(), schemaVersion); err != nil {
+		impl.shardManager.Logger().Warn("failed to materialize function fields before WAL append",
+			zap.Int64("collectionID", header.GetCollectionId()),
+			zap.Int32("schemaVersion", schemaVersion),
+			zap.Error(err))
+		return nil, status.NewInner("failed to materialize function fields before WAL append: %s", err.Error())
+	}
 	for _, partition := range header.GetPartitions() {
 		if partition.BinarySize == 0 {
-			// binary size should be set at proxy with estimate, but we don't implement it right now.
-			// use payload size instead.
+			// Proxy does not estimate binary size today. Use payload size after
+			// write-before materialization when the estimate is absent.
 			partition.BinarySize = uint64(msg.EstimateSize())
 		}
 		req := &shards.AssignSegmentRequest{
@@ -287,7 +299,14 @@ func (impl *shardInterceptor) handleAlterCollection(ctx context.Context, msg mes
 		putCollectionMsg.OverwriteHeader(header)
 	}
 
-	return appendOp(ctx, msg)
+	msgID, err := appendOp(ctx, msg)
+	if err != nil {
+		return msgID, err
+	}
+	if schema := putCollectionMsg.MustBody().GetUpdates().GetSchema(); schema != nil {
+		impl.functionManager.Recover(header.GetCollectionId(), schema)
+	}
+	return msgID, nil
 }
 
 // handleCreateSegment handles the create segment message.
@@ -354,4 +373,6 @@ func (impl *shardInterceptor) handleTruncateCollectionMessage(ctx context.Contex
 }
 
 // Close closes the segment interceptor.
-func (impl *shardInterceptor) Close() {}
+func (impl *shardInterceptor) Close() {
+	impl.functionManager.Close()
+}

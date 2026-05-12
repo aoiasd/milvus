@@ -3,7 +3,9 @@ package shards
 import (
 	"github.com/cockroachdb/errors"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/proto"
 
+	"github.com/milvus-io/milvus-proto/go-api/v3/schemapb"
 	"github.com/milvus-io/milvus/internal/streamingnode/server/wal/interceptors/shard/policy"
 	"github.com/milvus-io/milvus/pkg/v3/log"
 	"github.com/milvus-io/milvus/pkg/v3/proto/streamingpb"
@@ -221,4 +223,37 @@ func (m *shardManagerImpl) checkIfCollectionSchemaVersionMatch(header *message.I
 	}
 
 	return collectionSchemaVersion, nil
+}
+
+func (m *shardManagerImpl) GetCollectionSchema(collectionID int64, schemaVersion int32) (*schemapb.CollectionSchema, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	collectionInfo, ok := m.collections[collectionID]
+	if !ok {
+		return nil, ErrCollectionNotFound
+	}
+	if collectionInfo.Schema == nil || collectionInfo.Schema.GetSchema() == nil {
+		return nil, ErrCollectionSchemaNotFound
+	}
+	collectionSchemaVersion := collectionInfo.SchemaVersion()
+	if schemaVersion != 0 && collectionSchemaVersion != schemaVersion {
+		return nil, ErrCollectionSchemaVersionNotMatch
+	}
+
+	return proto.Clone(collectionInfo.Schema.GetSchema()).(*schemapb.CollectionSchema), nil
+}
+
+func (m *shardManagerImpl) GetAllCollectionSchemas() map[int64]*schemapb.CollectionSchema {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	schemas := make(map[int64]*schemapb.CollectionSchema)
+	for collectionID, collectionInfo := range m.collections {
+		if collectionInfo.Schema == nil || collectionInfo.Schema.GetSchema() == nil {
+			continue
+		}
+		schemas[collectionID] = proto.Clone(collectionInfo.Schema.GetSchema()).(*schemapb.CollectionSchema)
+	}
+	return schemas
 }

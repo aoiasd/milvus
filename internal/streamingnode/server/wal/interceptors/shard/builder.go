@@ -11,8 +11,15 @@ func NewInterceptorBuilder() interceptors.InterceptorBuilder {
 type interceptorBuilder struct{}
 
 func (b *interceptorBuilder) Build(param *interceptors.InterceptorBuildParam) interceptors.Interceptor {
+	functionManager := newFunctionRunnerManager(param.ShardManager.Logger())
 	shardInterceptor := &shardInterceptor{
-		shardManager: param.ShardManager,
+		shardManager:    param.ShardManager,
+		functionManager: functionManager,
+	}
+	if schemaProvider, ok := param.ShardManager.(collectionSchemaProvider); ok {
+		for collectionID, schema := range schemaProvider.GetAllCollectionSchemas() {
+			functionManager.Recover(collectionID, schema)
+		}
 	}
 	shardInterceptor.initOpTable()
 	return shardInterceptor
