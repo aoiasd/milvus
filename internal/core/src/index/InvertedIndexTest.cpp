@@ -76,6 +76,18 @@ using namespace milvus::segcore;
 
 namespace milvus::test {
 
+TEST(InvertedIndex, PatternMatchPlannerPolicy) {
+    index::InvertedIndexTantivy<std::string> index;
+
+    EXPECT_TRUE(index.SupportPatternMatch());
+    EXPECT_TRUE(index.ShouldUseOp(proto::plan::OpType::PrefixMatch));
+    EXPECT_TRUE(index.ShouldUseOp(proto::plan::OpType::RegexMatch));
+    EXPECT_TRUE(index.ShouldUseOp(proto::plan::OpType::Equal));
+    EXPECT_FALSE(index.ShouldUseOp(proto::plan::OpType::Match));
+    EXPECT_FALSE(index.ShouldUseOp(proto::plan::OpType::InnerMatch));
+    EXPECT_FALSE(index.ShouldUseOp(proto::plan::OpType::PostfixMatch));
+}
+
 struct ChunkManagerWrapper {
     ChunkManagerWrapper(storage::ChunkManagerPtr cm) : cm_(cm) {
     }

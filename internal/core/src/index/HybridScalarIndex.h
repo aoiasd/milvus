@@ -111,6 +111,11 @@ class HybridScalarIndex : public ScalarIndex<T> {
     }
 
     bool
+    ShouldUseOp(proto::plan::OpType op) const override {
+        return internal_index_->ShouldUseOp(op);
+    }
+
+    bool
     SupportPatternMatch() const override {
         return internal_index_->SupportPatternMatch();
     }

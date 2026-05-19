@@ -621,6 +621,10 @@ struct UnaryIndexFuncForMatch {
             if (index->SupportPatternMatch()) {
                 return index->PatternMatch(val, op);
             }
+            if (op == proto::plan::OpType::Match &&
+                index->TryUsePatternQuery() && index->SupportPatternQuery()) {
+                return index->PatternQuery(val);
+            }
 
             if (!index->HasRawData()) {
                 ThrowInfo(Unsupported,

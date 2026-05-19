@@ -212,6 +212,29 @@ class ScalarIndex : public IndexBase {
         return true;
     }
 
+    // Planner policy for scalar-index execution. Most scalar ops can use the
+    // index directly. Pattern ops need extra capability checks:
+    // - Match keeps the original SQL LIKE pattern, so PatternQuery can handle
+    //   it when the index supports and opts into that path.
+    // - Prefix/Postfix/Inner/Regex are op-specific and should use
+    //   PatternMatch or raw-data fallback.
+    virtual bool
+    ShouldUseOp(proto::plan::OpType op) const {
+        switch (op) {
+            case proto::plan::OpType::Match:
+                return SupportPatternMatch() ||
+                       (TryUsePatternQuery() && SupportPatternQuery()) ||
+                       HasRawData();
+            case proto::plan::OpType::PrefixMatch:
+            case proto::plan::OpType::PostfixMatch:
+            case proto::plan::OpType::InnerMatch:
+            case proto::plan::OpType::RegexMatch:
+                return SupportPatternMatch() || HasRawData();
+            default:
+                return true;
+        }
+    }
+
     // Execute a LIKE-pattern query on the index.
     // @param pattern: a raw SQL LIKE pattern (e.g. "%hello%", "abc_def"),
     //   NOT a regex. Implementations must convert internally if needed

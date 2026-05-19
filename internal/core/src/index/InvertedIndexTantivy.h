@@ -284,6 +284,25 @@ class InvertedIndexTantivy : public ScalarIndex<T> {
     }
 
     bool
+    ShouldUseOp(proto::plan::OpType op) const override {
+        if constexpr (!std::is_same_v<T, std::string>) {
+            return true;
+        }
+
+        // Suffix/contains and complex LIKE can be executed correctly via regex
+        // over indexed terms, but for short varchar values they are often
+        // slower than raw scan. Other ops keep the normal inverted-index path.
+        switch (op) {
+            case proto::plan::OpType::Match:
+            case proto::plan::OpType::PostfixMatch:
+            case proto::plan::OpType::InnerMatch:
+                return false;
+            default:
+                return true;
+        }
+    }
+
+    bool
     SupportPatternQuery() const override {
         return std::is_same_v<T, std::string>;
     }
