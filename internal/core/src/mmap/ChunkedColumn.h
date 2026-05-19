@@ -174,6 +174,7 @@ class ChunkedColumnBase : public ChunkedColumnInterface {
                     fn(true, i);
                 }
             }
+            return;
         }
         // nullable:
         if (offsets == nullptr) {
@@ -377,6 +378,11 @@ class ChunkedColumnBase : public ChunkedColumnInterface {
     }
 
  protected:
+    std::optional<DataType>
+    GetDefaultScanDataType() const override {
+        return data_type_;
+    }
+
     bool nullable_{false};
     DataType data_type_{DataType::NONE};
     size_t num_rows_{0};

@@ -37,6 +37,7 @@ var ErrLoonTransient = errors.New("loon FFI transient error")
 
 // Property keys exported by milvus-storage/ffi_c.h.
 var (
+	PropertyFormat                = C.GoString(C.loon_properties_format)
 	PropertyFSAddress             = C.GoString(C.loon_properties_fs_address)
 	PropertyFSBucketName          = C.GoString(C.loon_properties_fs_bucket_name)
 	PropertyFSAccessKeyID         = C.GoString(C.loon_properties_fs_access_key_id)
@@ -193,6 +194,12 @@ func MakePropertiesFromStorageConfig(storageConfig *indexpb.StorageConfig, extra
 	// No extfs.default.* properties here. Per-collection extfs properties
 	// (extfs.{collectionID}.*) are injected downstream via
 	// InjectExternalSpecProperties (C++ InjectExternalSpecProperties pipeline).
+
+	// Add format property
+	if storageConfig.GetFormat() != "" {
+		keys = append(keys, PropertyFormat)
+		values = append(values, storageConfig.GetFormat())
+	}
 
 	// Add extra kvs (override existing keys if present)
 	for k, v := range extraKVs {

@@ -20,6 +20,7 @@
 #include <simdjson.h>
 #include <stdint.h>
 #include <cstddef>
+#include <deque>
 #include <memory>
 #include <optional>
 #include <string>
@@ -43,6 +44,7 @@
 #include "expr/ITypeExpr.h"
 #include "index/ScalarIndex.h"
 #include "index/json_stats/bson_inverted.h"
+#include "mmap/ChunkedColumnInterface.h"
 #include "pb/plan.pb.h"
 #include "segcore/SegmentInterface.h"
 #include "simdjson/error.h"
@@ -376,6 +378,10 @@ class PhyBinaryRangeFilterExpr : public SegmentExpr {
     SingleElement upper_arg_;
     bool arg_inited_{false};
     PinWrapper<index::BsonInvertedIndex*> bson_index_{nullptr};
+    bool row_id_scan_initialized_{false};
+    std::unique_ptr<ChunkedColumnInterface::RowIdScanCursor>
+        row_id_scan_cursor_{nullptr};
+    std::deque<int64_t> buffered_scan_row_ids_;
 };
 }  //namespace exec
 }  // namespace milvus

@@ -301,6 +301,7 @@ type commonConfig struct {
 	Stv2SplitByAvgSize                   ParamItem `refreshable:"true"`
 	Stv2SplitAvgSizeThreshold            ParamItem `refreshable:"true"`
 	UseLoonFFI                           ParamItem `refreshable:"true"`
+	StorageFormat                        ParamItem `refreshable:"false"`
 
 	StoragePathPrefix        ParamItem `refreshable:"false"`
 	StorageZstdConcurrency   ParamItem `refreshable:"false"`
@@ -1065,6 +1066,15 @@ Large numeric passwords require double quotes to avoid yaml parsing precision is
 		Export:       true,
 	}
 	p.UseLoonFFI.Init(base.mgr)
+
+	p.StorageFormat = ParamItem{
+		Key:          "common.storage.format",
+		Version:      "2.6.7",
+		DefaultValue: "vortex",
+		Doc:          "storage format for column group files, options: parquet, vortex",
+		Export:       true,
+	}
+	p.StorageFormat.Init(base.mgr)
 
 	p.Stv2SplitSystemColumn = ParamItem{
 		Key:          "common.storage.stv2.splitSystemColumn.enabled",

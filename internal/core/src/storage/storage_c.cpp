@@ -101,6 +101,9 @@ InitRemoteChunkManagerSingleton(CStorageConfig c_storage_config) {
         }
         storage_config.use_crc32c_checksum =
             c_storage_config.use_crc32c_checksum;
+        if (c_storage_config.format != nullptr) {
+            storage_config.format = std::string(c_storage_config.format);
+        }
         milvus::storage::RemoteChunkManagerSingleton::GetInstance().Init(
             storage_config);
 

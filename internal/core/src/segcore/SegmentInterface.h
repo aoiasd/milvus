@@ -317,6 +317,11 @@ class SegmentInternalInterface : public SegmentInterface {
         // do nothing
     }
 
+    virtual std::shared_ptr<ChunkedColumnInterface>
+    GetChunkedColumn(FieldId field_id) const {
+        return nullptr;
+    }
+
     template <typename T>
     PinWrapper<Span<T>>
     chunk_data(milvus::OpContext* op_ctx,

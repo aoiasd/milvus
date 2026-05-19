@@ -1625,6 +1625,64 @@ PhyUnaryRangeFilterExpr::ExecRangeVisitorImplForData(EvalCtx& context) {
         return nullptr;
     }
 
+    if (!has_offset_input_ && !expr_->column_.element_level_) {
+        auto column = segment_->GetChunkedColumn(field_id_);
+        if (!row_id_scan_initialized_) {
+            row_id_scan_initialized_ = true;
+            if (column != nullptr) {
+                ChunkedColumnInterface::ScanOptions options;
+                options.output = ChunkedColumnInterface::ScanOutput::RowIds;
+                options.predicate = ChunkedColumnInterface::ScanPredicate::Unary;
+                options.start_offset = current_data_global_pos_;
+                options.length = active_count_ - current_data_global_pos_;
+                options.op_type = expr_->op_type_;
+                options.value = expr_->val_;
+                row_id_scan_cursor_ =
+                    column->Scan(op_ctx_, options).row_id_cursor;
+            }
+        }
+        if (row_id_scan_cursor_ != nullptr) {
+            const int64_t batch_start = current_data_global_pos_;
+            const int64_t batch_end = batch_start + real_batch_size;
+            TargetBitmap result(real_batch_size, false);
+
+            auto apply_row_id = [&](int64_t row_id) {
+                if (row_id < batch_start || row_id >= batch_end) {
+                    return;
+                }
+                const auto local_index =
+                    static_cast<size_t>(row_id - batch_start);
+                if (bitmap_input.empty() || bitmap_input[local_index]) {
+                    result[local_index] = true;
+                }
+            };
+
+            while (!buffered_scan_row_ids_.empty()) {
+                auto row_id = buffered_scan_row_ids_.front();
+                if (row_id >= batch_end) {
+                    break;
+                }
+                buffered_scan_row_ids_.pop_front();
+                apply_row_id(row_id);
+            }
+
+            ChunkedColumnInterface::RowIdScanBatch scan_batch;
+            while (buffered_scan_row_ids_.empty() &&
+                   row_id_scan_cursor_->Next(&scan_batch)) {
+                for (auto row_id : scan_batch.row_ids) {
+                    if (row_id >= batch_end) {
+                        buffered_scan_row_ids_.push_back(row_id);
+                    } else {
+                        apply_row_id(row_id);
+                    }
+                }
+            }
+            MoveCursor();
+            return std::make_shared<ColumnVector>(
+                std::move(result), TargetBitmap(real_batch_size, true));
+        }
+    }
+
     if (!arg_inited_) {
         value_arg_.SetValue<IndexInnerType>(expr_->val_);
         arg_inited_ = true;

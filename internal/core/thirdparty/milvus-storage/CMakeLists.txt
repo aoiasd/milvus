@@ -14,12 +14,13 @@
 # Update milvus-storage_VERSION for the first occurrence
 milvus_add_pkg_config("milvus-storage")
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES "")
-set( milvus-storage_VERSION 0b35d53)
+set( MILVUS_STORAGE_LOCAL_PATH "/home/zhicheng/SecWorkspace/milvus-storage")
+set( milvus-storage_VERSION 4351a0c)
 set( GIT_REPOSITORY  "https://github.com/milvus-io/milvus-storage.git")
-message(STATUS "milvus-storage repo: ${GIT_REPOSITORY}")
+message(STATUS "milvus-storage repo: local path ${MILVUS_STORAGE_LOCAL_PATH}")
 message(STATUS "milvus-storage version: ${milvus-storage_VERSION}")
 
-message(STATUS "Building milvus-storage-${milvus-storage_SOURCE_VER} from source")
+message(STATUS "Building milvus-storage from local source")
 message(STATUS ${CMAKE_BUILD_TYPE})
 
 if ( ENABLE_AZURE_FS STREQUAL "ON" )
@@ -30,6 +31,18 @@ endif ()
 
 # Disable benchmark for milvus-storage (we don't need it and it may have missing deps)
 set(WITH_BENCHMARK OFF CACHE BOOL "" FORCE)
+
+set(WITH_VORTEX ON CACHE BOOL "" FORCE )
+
+# milvus-storage's Rust bridge now depends on crates that require Rust 1.92.
+# The top-level CMake cache may have been initialized by other Rust components
+# that intentionally build with 1.89, so reset Corrosion's cached Rust toolchain
+# before adding milvus-storage.
+set(Rust_TOOLCHAIN "1.92.0-x86_64-unknown-linux-gnu" CACHE STRING "" FORCE)
+unset(Rust_COMPILER_CACHED CACHE)
+unset(Rust_CARGO_CACHED CACHE)
+unset(_CORROSION_RUSTC CACHE)
+unset(_CORROSION_CARGO CACHE)
 
 # Conan 2.x: CMAKE_PREFIX_PATH is set by conan_toolchain.cmake.
 # find_package(Protobuf) sets Protobuf_PROTOC_EXECUTABLE automatically.
@@ -44,9 +57,7 @@ endif()
 
 FetchContent_Declare(
         milvus-storage
-        GIT_REPOSITORY  ${GIT_REPOSITORY}
-        GIT_TAG         ${milvus-storage_VERSION}
-        SOURCE_DIR      ${CMAKE_CURRENT_BINARY_DIR}/milvus-storage-src
+        SOURCE_DIR      ${MILVUS_STORAGE_LOCAL_PATH}
         BINARY_DIR      ${CMAKE_CURRENT_BINARY_DIR}/milvus-storage-build
         SOURCE_SUBDIR   cpp
         DOWNLOAD_DIR    ${THIRDPARTY_DOWNLOAD_PATH} )

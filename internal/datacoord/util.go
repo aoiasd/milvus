@@ -370,6 +370,7 @@ func createStorageConfig() *indexpb.StorageConfig {
 		storageConfig = &indexpb.StorageConfig{
 			RootPath:    Params.LocalStorageCfg.Path.GetValue(),
 			StorageType: Params.CommonCfg.StorageType.GetValue(),
+			Format:      Params.CommonCfg.StorageFormat.GetValue(),
 		}
 	} else {
 		storageConfig = &indexpb.StorageConfig{
@@ -390,6 +391,7 @@ func createStorageConfig() *indexpb.StorageConfig {
 			GcpCredentialJSON: Params.MinioCfg.GcpCredentialJSON.GetValue(),
 			SslTlsMinVersion:  Params.MinioCfg.SslTLSMinVersion.GetValue(),
 			UseCrc32CChecksum: Params.MinioCfg.UseCRC32C.GetAsBool(),
+			Format:            Params.CommonCfg.StorageFormat.GetValue(),
 		}
 	}
 

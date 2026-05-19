@@ -18,6 +18,7 @@
 
 #include <fmt/core.h>
 
+#include <deque>
 #include <optional>
 #include <utility>
 
@@ -38,6 +39,7 @@
 #include "index/json_stats/bson_inverted.h"
 #include "cachinglayer/CacheSlot.h"
 #include "index/NgramInvertedIndex.h"
+#include "mmap/ChunkedColumnInterface.h"
 
 namespace milvus {
 namespace exec {
@@ -1169,6 +1171,11 @@ class PhyUnaryRangeFilterExpr : public SegmentExpr {
                 std::make_unique<VolnitskySearcher>(cached_volnitsky_literal_);
         }
     }
+
+    bool row_id_scan_initialized_{false};
+    std::unique_ptr<ChunkedColumnInterface::RowIdScanCursor>
+        row_id_scan_cursor_{nullptr};
+    std::deque<int64_t> buffered_scan_row_ids_;
 };
 }  // namespace exec
 }  // namespace milvus

@@ -296,6 +296,11 @@ class FieldMeta {
         external_field_mapping_ = external_field;
     }
 
+    const std::string&
+    get_local_format() const {
+        return local_format_;
+    }
+
     milvus::proto::schema::FieldSchema
     ToProto() const;
 
@@ -349,6 +354,7 @@ class FieldMeta {
     // of collection schema, the field id is the json shredding field id
     int64_t main_field_id_ = INVALID_FIELD_ID;
     std::string external_field_mapping_;
+    std::string local_format_ = "row";
 };
 
 }  // namespace milvus

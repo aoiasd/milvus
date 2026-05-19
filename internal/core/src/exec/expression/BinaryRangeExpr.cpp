@@ -478,6 +478,81 @@ PhyBinaryRangeFilterExpr::ExecRangeVisitorImplForData(EvalCtx& context) {
             processed_size = ProcessDataChunksForElementLevel<T>(
                 execute_sub_batch, skip_index_func, res, valid_res, val1, val2);
         } else {
+            auto make_scan_value = [](const HighPrecisionType& value) {
+                proto::plan::GenericValue scan_value;
+                if constexpr (std::is_same_v<HighPrecisionType, bool>) {
+                    scan_value.set_bool_val(value);
+                } else if constexpr (std::is_integral_v<HighPrecisionType>) {
+                    scan_value.set_int64_val(static_cast<int64_t>(value));
+                } else if constexpr (std::is_floating_point_v<
+                                         HighPrecisionType>) {
+                    scan_value.set_float_val(value);
+                } else if constexpr (std::is_same_v<HighPrecisionType,
+                                                    std::string>) {
+                    scan_value.set_string_val(value);
+                }
+                return scan_value;
+            };
+
+            auto column = segment_->GetChunkedColumn(field_id_);
+            if (!row_id_scan_initialized_) {
+                row_id_scan_initialized_ = true;
+                if (column != nullptr) {
+                    ChunkedColumnInterface::ScanOptions options;
+                    options.output = ChunkedColumnInterface::ScanOutput::RowIds;
+                    options.predicate =
+                        ChunkedColumnInterface::ScanPredicate::BinaryRange;
+                    options.start_offset = current_data_global_pos_;
+                    options.length = active_count_ - current_data_global_pos_;
+                    options.lower_value = make_scan_value(val1);
+                    options.lower_inclusive = lower_inclusive;
+                    options.upper_value = make_scan_value(val2);
+                    options.upper_inclusive = upper_inclusive;
+                    row_id_scan_cursor_ =
+                        column->Scan(op_ctx_, options).row_id_cursor;
+                }
+            }
+            if (row_id_scan_cursor_ != nullptr) {
+                const int64_t batch_start = current_data_global_pos_;
+                const int64_t batch_end = batch_start + real_batch_size;
+                TargetBitmap result(real_batch_size, false);
+
+                auto apply_row_id = [&](int64_t row_id) {
+                    if (row_id < batch_start || row_id >= batch_end) {
+                        return;
+                    }
+                    const auto local_index =
+                        static_cast<size_t>(row_id - batch_start);
+                    if (bitmap_input.empty() || bitmap_input[local_index]) {
+                        result[local_index] = true;
+                    }
+                };
+
+                while (!buffered_scan_row_ids_.empty()) {
+                    auto row_id = buffered_scan_row_ids_.front();
+                    if (row_id >= batch_end) {
+                        break;
+                    }
+                    buffered_scan_row_ids_.pop_front();
+                    apply_row_id(row_id);
+                }
+
+                ChunkedColumnInterface::RowIdScanBatch scan_batch;
+                while (buffered_scan_row_ids_.empty() &&
+                       row_id_scan_cursor_->Next(&scan_batch)) {
+                    for (auto row_id : scan_batch.row_ids) {
+                        if (row_id >= batch_end) {
+                            buffered_scan_row_ids_.push_back(row_id);
+                        } else {
+                            apply_row_id(row_id);
+                        }
+                    }
+                }
+                MoveCursor();
+                return std::make_shared<ColumnVector>(
+                    std::move(result), TargetBitmap(real_batch_size, true));
+            }
+
             processed_size = ProcessDataChunks<T>(
                 execute_sub_batch, skip_index_func, res, valid_res, val1, val2);
         }

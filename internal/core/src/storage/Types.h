@@ -118,6 +118,7 @@ struct StorageConfig {
     uint32_t max_connections = 100;
     std::string tls_min_version = "";
     bool use_crc32c_checksum = false;
+    std::string format = "";
 
     std::string
     ToString() const {

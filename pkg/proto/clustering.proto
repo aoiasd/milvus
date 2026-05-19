@@ -24,6 +24,7 @@ message StorageConfig {
   uint32 max_connections = 16;
   string ssl_tls_min_version = 17;
   bool use_crc32c_checksum = 18;
+  string format = 19;
 }
 
 message InsertFiles {

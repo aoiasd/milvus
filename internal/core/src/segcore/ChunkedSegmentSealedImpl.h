@@ -446,6 +446,11 @@ class ChunkedSegmentSealedImpl : public SegmentSealed {
                     FieldId field_id,
                     const std::vector<int64_t>& chunk_ids) const override;
 
+    std::shared_ptr<ChunkedColumnInterface>
+    GetChunkedColumn(FieldId field_id) const override {
+        return get_column(field_id);
+    }
+
  protected:
     // blob and row_count
     PinWrapper<SpanBase>
