@@ -10,6 +10,7 @@ import (
 	"github.com/milvus-io/milvus-proto/go-api/v3/milvuspb"
 	"github.com/milvus-io/milvus-proto/go-api/v3/schemapb"
 	"github.com/milvus-io/milvus/internal/allocator"
+	rlsmanager "github.com/milvus-io/milvus/internal/proxy/rls"
 	"github.com/milvus-io/milvus/pkg/v3/common"
 	"github.com/milvus-io/milvus/pkg/v3/metrics"
 	"github.com/milvus-io/milvus/pkg/v3/mlog"
@@ -289,6 +290,13 @@ func (it *insertTask) PreExecute(ctx context.Context) error {
 	if err := newValidateUtil(withNANCheck(), withOverflowCheck(), withMaxLenCheck(), withMaxCapCheck()).
 		Validate(it.insertMsg.GetFieldsData(), schema.schemaHelper, it.insertMsg.NRows()); err != nil {
 		return merr.WrapErrAsInputError(err)
+	}
+
+	principalName, _ := GetCurUserFromContext(ctx)
+	if err := rlsmanager.ValidateCheckForWrite(ctx, it.insertMsg.GetDbName(), collectionName, it.collectionID, principalName,
+		milvuspb.RowPolicyAction_RowPolicyActionInsert, it.insertMsg.GetFieldsData(), schema.schemaHelper, int(it.insertMsg.NRows()), "insert"); err != nil {
+		log.Warn(ctx, "RLS check expression validation failed for insert", mlog.Err(err))
+		return err
 	}
 
 	log.Debug(ctx, "Proxy Insert PreExecute done")

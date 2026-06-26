@@ -22,6 +22,7 @@ import (
 	"github.com/milvus-io/milvus-proto/go-api/v3/schemapb"
 	"github.com/milvus-io/milvus/internal/json"
 	etcdkv "github.com/milvus-io/milvus/internal/kv/etcd"
+	memkv "github.com/milvus-io/milvus/internal/kv/mem"
 	"github.com/milvus-io/milvus/internal/kv/mocks"
 	"github.com/milvus-io/milvus/internal/metastore"
 	"github.com/milvus-io/milvus/internal/metastore/model"
@@ -1371,6 +1372,15 @@ func withMockMultiSaveAndRemove(err error) mockSnapshotOpt {
 	}
 }
 
+func withMockLoadRLSMetadata(policyKeys []string, principalKeys []string, err error) mockSnapshotOpt {
+	return func(ss *mocks.TxnKV) {
+		ss.EXPECT().LoadWithPrefix(mock.Anything, BuildRLSPolicyPrefix(0, 0)).Return(policyKeys, nil, err)
+		if err == nil {
+			ss.EXPECT().LoadWithPrefix(mock.Anything, BuildRLSPrincipalPrefix(0, 0)).Return(principalKeys, nil, nil)
+		}
+	}
+}
+
 func TestCatalog_CreateCollection(t *testing.T) {
 	t.Run("collection not creating", func(t *testing.T) {
 		kc := NewCatalog(nil)
@@ -1489,7 +1499,7 @@ func TestCatalog_CreateCollection(t *testing.T) {
 
 func TestCatalog_DropCollection(t *testing.T) {
 	t.Run("failed to remove", func(t *testing.T) {
-		mockSnapshot := newMockSnapshot(t, withMockMultiSaveAndRemove(errors.New("error mock MultiSaveAndRemove")))
+		mockSnapshot := newMockSnapshot(t, withMockLoadRLSMetadata(nil, nil, nil), withMockMultiSaveAndRemove(errors.New("error mock MultiSaveAndRemove")))
 		kc := NewCatalog(mockSnapshot)
 		ctx := context.Background()
 		coll := &model.Collection{
@@ -1503,7 +1513,7 @@ func TestCatalog_DropCollection(t *testing.T) {
 	})
 
 	t.Run("succeed to remove first, but failed to remove twice", func(t *testing.T) {
-		mockSnapshot := newMockSnapshot(t)
+		mockSnapshot := newMockSnapshot(t, withMockLoadRLSMetadata(nil, nil, nil))
 		removeOtherCalled := false
 		removeCollectionCalled := false
 		mockSnapshot.EXPECT().MultiSaveAndRemove(mock.Anything, mock.Anything, mock.Anything).
@@ -1531,7 +1541,7 @@ func TestCatalog_DropCollection(t *testing.T) {
 	})
 
 	t.Run("normal case", func(t *testing.T) {
-		mockSnapshot := newMockSnapshot(t, withMockMultiSaveAndRemove(nil))
+		mockSnapshot := newMockSnapshot(t, withMockLoadRLSMetadata(nil, nil, nil), withMockMultiSaveAndRemove(nil))
 		kc := NewCatalog(mockSnapshot)
 		ctx := context.Background()
 		coll := &model.Collection{
@@ -1545,7 +1555,7 @@ func TestCatalog_DropCollection(t *testing.T) {
 	})
 
 	t.Run("drop collection with function", func(t *testing.T) {
-		mockSnapshot := newMockSnapshot(t, withMockMultiSaveAndRemove(nil))
+		mockSnapshot := newMockSnapshot(t, withMockLoadRLSMetadata(nil, nil, nil), withMockMultiSaveAndRemove(nil))
 		kc := NewCatalog(mockSnapshot)
 		ctx := context.Background()
 		coll := &model.Collection{
@@ -1598,6 +1608,86 @@ func TestCatalog_DropCollection(t *testing.T) {
 		err := kc.DropCollection(ctx, coll, 100)
 		assert.NoError(t, err)
 	})
+}
+
+func TestCatalog_RLSMetadata(t *testing.T) {
+	ctx := context.Background()
+	kv := memkv.NewMemoryKV()
+	catalog := NewCatalog(kv).(*Catalog)
+
+	policyA := &model.RLSPolicy{
+		DBID:         10,
+		CollectionID: 20,
+		PolicyID:     100,
+		PolicyName:   "dept_read",
+		PolicyType:   milvuspb.RowPolicyType_RowPolicyTypePermissive,
+		Actions:      []milvuspb.RowPolicyAction{milvuspb.RowPolicyAction_RowPolicyActionQuery},
+		UsingExpr:    "dept == $current_principal_tags['dept']",
+		Description:  "department read policy",
+	}
+	policyB := &model.RLSPolicy{
+		DBID:         10,
+		CollectionID: 20,
+		PolicyID:     101,
+		PolicyName:   "owner_write",
+		PolicyType:   milvuspb.RowPolicyType_RowPolicyTypeRestrictive,
+		Actions:      []milvuspb.RowPolicyAction{milvuspb.RowPolicyAction_RowPolicyActionInsert},
+		CheckExpr:    "owner == $current_principal",
+	}
+
+	require.NoError(t, catalog.SaveRLSPolicy(ctx, policyB))
+	require.NoError(t, catalog.SaveRLSPolicy(ctx, policyA))
+
+	loadedPolicy, err := catalog.GetRLSPolicy(ctx, 10, 20, policyA.PolicyName)
+	require.NoError(t, err)
+	assert.Equal(t, policyA.PolicyID, loadedPolicy.PolicyID)
+	assert.Equal(t, policyA.UsingExpr, loadedPolicy.UsingExpr)
+
+	policies, err := catalog.ListRLSPolicies(ctx, 10, 20)
+	require.NoError(t, err)
+	require.Len(t, policies, 2)
+	assert.Equal(t, "dept_read", policies[0].PolicyName)
+	assert.Equal(t, "owner_write", policies[1].PolicyName)
+	assert.Equal(t, policyA.UsingExpr, policies[0].UsingExpr)
+	assert.Equal(t, policyB.CheckExpr, policies[1].CheckExpr)
+
+	require.NoError(t, catalog.DropRLSPolicy(ctx, 10, 20, policyA.PolicyName))
+	policies, err = catalog.ListRLSPolicies(ctx, 10, 20)
+	require.NoError(t, err)
+	require.Len(t, policies, 1)
+	assert.Equal(t, "owner_write", policies[0].PolicyName)
+	_, err = catalog.GetRLSPolicy(ctx, 10, 20, policyA.PolicyName)
+	assert.ErrorIs(t, err, merr.ErrIoKeyNotFound)
+
+	principal := &model.RLSPrincipal{
+		DBID:          10,
+		CollectionID:  20,
+		PrincipalName: "team/a user",
+		Tags: map[string]string{
+			"dept": "sales",
+			"tier": "gold",
+		},
+	}
+	require.NoError(t, catalog.SaveRLSPrincipal(ctx, principal))
+
+	principalKey := buildRLSPrincipalKey(10, 20, principal.PrincipalName)
+	assert.Contains(t, principalKey, "team%2Fa%20user")
+	_, err = kv.Load(ctx, principalKey)
+	require.NoError(t, err)
+
+	loadedPrincipal, err := catalog.GetRLSPrincipal(ctx, 10, 20, principal.PrincipalName)
+	require.NoError(t, err)
+	assert.Equal(t, principal.PrincipalName, loadedPrincipal.PrincipalName)
+	assert.Equal(t, principal.Tags, loadedPrincipal.Tags)
+
+	principals, err := catalog.ListRLSPrincipals(ctx, 10, 20)
+	require.NoError(t, err)
+	require.Len(t, principals, 1)
+	assert.Equal(t, principal.PrincipalName, principals[0].PrincipalName)
+
+	require.NoError(t, catalog.DropRLSPrincipal(ctx, 10, 20, principal.PrincipalName))
+	_, err = catalog.GetRLSPrincipal(ctx, 10, 20, principal.PrincipalName)
+	assert.ErrorIs(t, err, merr.ErrIoKeyNotFound)
 }
 
 func getUserInfoMetaString(username string) string {

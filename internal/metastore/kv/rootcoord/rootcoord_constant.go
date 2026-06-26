@@ -3,6 +3,7 @@ package rootcoord
 import (
 	"bytes"
 	"fmt"
+	"net/url"
 
 	"github.com/milvus-io/milvus/pkg/v3/util"
 	"github.com/milvus-io/milvus/pkg/v3/util/typeutil"
@@ -57,6 +58,12 @@ const (
 	// PrivilegeGroupPrefix prefix for privilege group
 	PrivilegeGroupPrefix = ComponentPrefix + "/privilege-group"
 
+	// RLSPolicyMetaPrefix prefix for row-level security policies
+	RLSPolicyMetaPrefix = ComponentPrefix + "/rls/policy"
+
+	// RLSPrincipalMetaPrefix prefix for row-level security principals
+	RLSPrincipalMetaPrefix = ComponentPrefix + "/rls/principal"
+
 	// FileResourceMetaPrefix prefix for file resource meta
 	FileResourceMetaPrefix = ComponentPrefix + "/file_resource_info"
 	FileResourceVersionKey = ComponentPrefix + "/file_resource_version"
@@ -83,6 +90,18 @@ func getDatabasePrefix(dbID int64) string {
 
 func BuildPrivilegeGroupkey(groupName string) string {
 	return fmt.Sprintf("%s/%s", PrivilegeGroupPrefix, groupName)
+}
+
+func BuildRLSPolicyPrefix(dbID int64, collectionID int64) string {
+	return fmt.Sprintf("%s/%d/%d/", RLSPolicyMetaPrefix, dbID, collectionID)
+}
+
+func BuildRLSPolicyKey(dbID int64, collectionID int64, policyName string) string {
+	return BuildRLSPolicyPrefix(dbID, collectionID) + url.PathEscape(policyName)
+}
+
+func BuildRLSPrincipalPrefix(dbID int64, collectionID int64) string {
+	return fmt.Sprintf("%s/%d/%d/", RLSPrincipalMetaPrefix, dbID, collectionID)
 }
 
 // Legacy snapshot utilities — kept for migration tool compatibility only.

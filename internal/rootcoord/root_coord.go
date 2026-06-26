@@ -3515,3 +3515,215 @@ func (c *Core) DeleteClientCommand(ctx context.Context, req *milvuspb.DeleteClie
 
 	return c.telemetryMgr.DeleteCommand(ctx, req)
 }
+
+func (c *Core) CreateRowPolicy(ctx context.Context, req *milvuspb.CreateRowPolicyRequest) (*commonpb.Status, error) {
+	method := "CreateRowPolicy"
+	metrics.RootCoordDDLReqCounter.WithLabelValues(method, metrics.TotalLabel).Inc()
+	tr := timerecord.NewTimeRecorder(method)
+	logger := mlog.With(
+		mlog.String("role", typeutil.RootCoordRole),
+		mlog.String("dbName", req.GetDbName()),
+		mlog.String("collectionName", req.GetCollectionName()),
+		mlog.String("policyName", req.GetPolicyName()),
+	)
+
+	if err := merr.CheckHealthy(c.GetStateCode()); err != nil {
+		return merr.Status(err), nil
+	}
+
+	policyID, err := c.idAllocator.AllocOne()
+	if err != nil {
+		logger.Warn(ctx, "failed to allocate RLS policy ID", mlog.Err(err))
+		metrics.RootCoordDDLReqCounter.WithLabelValues(method, metrics.FailLabel).Inc()
+		return merr.Status(err), nil
+	}
+	if err := c.meta.CreateRLSPolicy(ctx, req, policyID); err != nil {
+		logger.Warn(ctx, "failed to create RLS policy", mlog.Err(err))
+		metrics.RootCoordDDLReqCounter.WithLabelValues(method, metrics.FailLabel).Inc()
+		return merr.Status(err), nil
+	}
+
+	metrics.RootCoordDDLReqCounter.WithLabelValues(method, metrics.SuccessLabel).Inc()
+	metrics.RootCoordDDLReqLatency.WithLabelValues(method).Observe(float64(tr.ElapseSpan().Milliseconds()))
+	return merr.Success(), nil
+}
+
+func (c *Core) DropRowPolicy(ctx context.Context, req *milvuspb.DropRowPolicyRequest) (*commonpb.Status, error) {
+	method := "DropRowPolicy"
+	metrics.RootCoordDDLReqCounter.WithLabelValues(method, metrics.TotalLabel).Inc()
+	tr := timerecord.NewTimeRecorder(method)
+	logger := mlog.With(
+		mlog.String("role", typeutil.RootCoordRole),
+		mlog.String("dbName", req.GetDbName()),
+		mlog.String("collectionName", req.GetCollectionName()),
+		mlog.String("policyName", req.GetPolicyName()),
+	)
+
+	if err := merr.CheckHealthy(c.GetStateCode()); err != nil {
+		return merr.Status(err), nil
+	}
+	if err := c.meta.DropRLSPolicy(ctx, req); err != nil {
+		logger.Warn(ctx, "failed to drop RLS policy", mlog.Err(err))
+		metrics.RootCoordDDLReqCounter.WithLabelValues(method, metrics.FailLabel).Inc()
+		return merr.Status(err), nil
+	}
+
+	metrics.RootCoordDDLReqCounter.WithLabelValues(method, metrics.SuccessLabel).Inc()
+	metrics.RootCoordDDLReqLatency.WithLabelValues(method).Observe(float64(tr.ElapseSpan().Milliseconds()))
+	return merr.Success(), nil
+}
+
+func (c *Core) ListRowPolicies(ctx context.Context, req *milvuspb.ListRowPoliciesRequest) (*milvuspb.ListRowPoliciesResponse, error) {
+	method := "ListRowPolicies"
+	metrics.RootCoordDDLReqCounter.WithLabelValues(method, metrics.TotalLabel).Inc()
+	tr := timerecord.NewTimeRecorder(method)
+
+	if err := merr.CheckHealthy(c.GetStateCode()); err != nil {
+		return &milvuspb.ListRowPoliciesResponse{
+			Status:         merr.Status(err),
+			DbName:         req.GetDbName(),
+			CollectionName: req.GetCollectionName(),
+		}, nil
+	}
+
+	policies, err := c.meta.ListRLSPolicies(ctx, req)
+	if err != nil {
+		mlog.Warn(ctx, "failed to list RLS policies", mlog.Err(err))
+		metrics.RootCoordDDLReqCounter.WithLabelValues(method, metrics.FailLabel).Inc()
+		return &milvuspb.ListRowPoliciesResponse{
+			Status:         merr.Status(err),
+			DbName:         req.GetDbName(),
+			CollectionName: req.GetCollectionName(),
+		}, nil
+	}
+
+	metrics.RootCoordDDLReqCounter.WithLabelValues(method, metrics.SuccessLabel).Inc()
+	metrics.RootCoordDDLReqLatency.WithLabelValues(method).Observe(float64(tr.ElapseSpan().Milliseconds()))
+	return &milvuspb.ListRowPoliciesResponse{
+		Status:         merr.Success(),
+		Policies:       policies,
+		DbName:         req.GetDbName(),
+		CollectionName: req.GetCollectionName(),
+	}, nil
+}
+
+func (c *Core) SetRLSPrincipalTags(ctx context.Context, req *milvuspb.SetRLSPrincipalTagsRequest) (*commonpb.Status, error) {
+	method := "SetRLSPrincipalTags"
+	metrics.RootCoordDDLReqCounter.WithLabelValues(method, metrics.TotalLabel).Inc()
+	tr := timerecord.NewTimeRecorder(method)
+	logger := mlog.With(
+		mlog.String("role", typeutil.RootCoordRole),
+		mlog.String("dbName", req.GetDbName()),
+		mlog.String("collectionName", req.GetCollectionName()),
+		mlog.String("principalName", req.GetPrincipalName()),
+	)
+
+	if err := merr.CheckHealthy(c.GetStateCode()); err != nil {
+		return merr.Status(err), nil
+	}
+	if err := c.meta.SetRLSPrincipalTags(ctx, req); err != nil {
+		logger.Warn(ctx, "failed to set RLS principal tags", mlog.Err(err))
+		metrics.RootCoordDDLReqCounter.WithLabelValues(method, metrics.FailLabel).Inc()
+		return merr.Status(err), nil
+	}
+
+	metrics.RootCoordDDLReqCounter.WithLabelValues(method, metrics.SuccessLabel).Inc()
+	metrics.RootCoordDDLReqLatency.WithLabelValues(method).Observe(float64(tr.ElapseSpan().Milliseconds()))
+	return merr.Success(), nil
+}
+
+func (c *Core) GetRLSPrincipalTags(ctx context.Context, req *milvuspb.GetRLSPrincipalTagsRequest) (*milvuspb.GetRLSPrincipalTagsResponse, error) {
+	method := "GetRLSPrincipalTags"
+	metrics.RootCoordDDLReqCounter.WithLabelValues(method, metrics.TotalLabel).Inc()
+	tr := timerecord.NewTimeRecorder(method)
+
+	if err := merr.CheckHealthy(c.GetStateCode()); err != nil {
+		return &milvuspb.GetRLSPrincipalTagsResponse{
+			Status:         merr.Status(err),
+			DbName:         req.GetDbName(),
+			CollectionName: req.GetCollectionName(),
+			PrincipalName:  req.GetPrincipalName(),
+		}, nil
+	}
+
+	tags, err := c.meta.GetRLSPrincipalTags(ctx, req)
+	if err != nil {
+		mlog.Warn(ctx, "failed to get RLS principal tags", mlog.Err(err))
+		metrics.RootCoordDDLReqCounter.WithLabelValues(method, metrics.FailLabel).Inc()
+		return &milvuspb.GetRLSPrincipalTagsResponse{
+			Status:         merr.Status(err),
+			DbName:         req.GetDbName(),
+			CollectionName: req.GetCollectionName(),
+			PrincipalName:  req.GetPrincipalName(),
+		}, nil
+	}
+
+	metrics.RootCoordDDLReqCounter.WithLabelValues(method, metrics.SuccessLabel).Inc()
+	metrics.RootCoordDDLReqLatency.WithLabelValues(method).Observe(float64(tr.ElapseSpan().Milliseconds()))
+	return &milvuspb.GetRLSPrincipalTagsResponse{
+		Status:         merr.Success(),
+		Tags:           tags,
+		DbName:         req.GetDbName(),
+		CollectionName: req.GetCollectionName(),
+		PrincipalName:  req.GetPrincipalName(),
+	}, nil
+}
+
+func (c *Core) ListRLSPrincipals(ctx context.Context, req *milvuspb.ListRLSPrincipalsRequest) (*milvuspb.ListRLSPrincipalsResponse, error) {
+	method := "ListRLSPrincipals"
+	metrics.RootCoordDDLReqCounter.WithLabelValues(method, metrics.TotalLabel).Inc()
+	tr := timerecord.NewTimeRecorder(method)
+
+	if err := merr.CheckHealthy(c.GetStateCode()); err != nil {
+		return &milvuspb.ListRLSPrincipalsResponse{
+			Status:         merr.Status(err),
+			DbName:         req.GetDbName(),
+			CollectionName: req.GetCollectionName(),
+		}, nil
+	}
+
+	principals, err := c.meta.ListRLSPrincipals(ctx, req)
+	if err != nil {
+		mlog.Warn(ctx, "failed to list RLS principals", mlog.Err(err))
+		metrics.RootCoordDDLReqCounter.WithLabelValues(method, metrics.FailLabel).Inc()
+		return &milvuspb.ListRLSPrincipalsResponse{
+			Status:         merr.Status(err),
+			DbName:         req.GetDbName(),
+			CollectionName: req.GetCollectionName(),
+		}, nil
+	}
+
+	metrics.RootCoordDDLReqCounter.WithLabelValues(method, metrics.SuccessLabel).Inc()
+	metrics.RootCoordDDLReqLatency.WithLabelValues(method).Observe(float64(tr.ElapseSpan().Milliseconds()))
+	return &milvuspb.ListRLSPrincipalsResponse{
+		Status:         merr.Success(),
+		PrincipalNames: principals,
+		DbName:         req.GetDbName(),
+		CollectionName: req.GetCollectionName(),
+	}, nil
+}
+
+func (c *Core) DeleteRLSPrincipalTags(ctx context.Context, req *milvuspb.DeleteRLSPrincipalTagsRequest) (*commonpb.Status, error) {
+	method := "DeleteRLSPrincipalTags"
+	metrics.RootCoordDDLReqCounter.WithLabelValues(method, metrics.TotalLabel).Inc()
+	tr := timerecord.NewTimeRecorder(method)
+	logger := mlog.With(
+		mlog.String("role", typeutil.RootCoordRole),
+		mlog.String("dbName", req.GetDbName()),
+		mlog.String("collectionName", req.GetCollectionName()),
+		mlog.String("principalName", req.GetPrincipalName()),
+	)
+
+	if err := merr.CheckHealthy(c.GetStateCode()); err != nil {
+		return merr.Status(err), nil
+	}
+	if err := c.meta.DeleteRLSPrincipalTags(ctx, req); err != nil {
+		logger.Warn(ctx, "failed to delete RLS principal tags", mlog.Err(err))
+		metrics.RootCoordDDLReqCounter.WithLabelValues(method, metrics.FailLabel).Inc()
+		return merr.Status(err), nil
+	}
+
+	metrics.RootCoordDDLReqCounter.WithLabelValues(method, metrics.SuccessLabel).Inc()
+	metrics.RootCoordDDLReqLatency.WithLabelValues(method).Observe(float64(tr.ElapseSpan().Milliseconds()))
+	return merr.Success(), nil
+}

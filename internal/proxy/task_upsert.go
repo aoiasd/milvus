@@ -29,6 +29,7 @@ import (
 	"github.com/milvus-io/milvus-proto/go-api/v3/schemapb"
 	"github.com/milvus-io/milvus/internal/allocator"
 	"github.com/milvus-io/milvus/internal/parser/planparserv2"
+	rlsmanager "github.com/milvus-io/milvus/internal/proxy/rls"
 	"github.com/milvus-io/milvus/internal/types"
 	"github.com/milvus-io/milvus/internal/util/segcore"
 	"github.com/milvus-io/milvus/pkg/v3/common"
@@ -235,6 +236,50 @@ func retrieveByPKs(ctx context.Context, t *upsertTask, ids *schemapb.IDs, output
 	return queryResult, storageCost, err
 }
 
+func addUpsertStorageCost(dst *segcore.StorageCost, src segcore.StorageCost) {
+	dst.ScannedRemoteBytes += src.ScannedRemoteBytes
+	dst.ScannedTotalBytes += src.ScannedTotalBytes
+}
+
+func (it *upsertTask) validateRLSUsingForFullUpsert(ctx context.Context) error {
+	if typeutil.GetSizeOfIDs(it.oldIDs) == 0 {
+		return nil
+	}
+
+	principalName, _ := GetCurUserFromContext(ctx)
+	usingExpr, hasPolicies, err := rlsmanager.DefaultManager().GetRLSUsingPredicate(ctx, it.req.GetDbName(), it.req.GetCollectionName(), it.collectionID, principalName, milvuspb.RowPolicyAction_RowPolicyActionUpsert, it.schema.schemaHelper, nil)
+	if err != nil {
+		return err
+	}
+	if !hasPolicies {
+		return nil
+	}
+
+	resp, storageCost, err := retrieveByPKs(ctx, it, it.oldIDs, []string{"*"})
+	if err != nil {
+		return err
+	}
+	addUpsertStorageCost(&it.storageCost, storageCost)
+	if len(resp.GetFieldsData()) == 0 {
+		return nil
+	}
+
+	primaryFieldSchema, err := typeutil.GetPrimaryFieldSchema(it.schema.CollectionSchema)
+	if err != nil {
+		return err
+	}
+	primaryFieldData, err := typeutil.GetPrimaryFieldData(resp.GetFieldsData(), primaryFieldSchema)
+	if err != nil {
+		return err
+	}
+	existIDs, err := parsePrimaryFieldData2IDs(primaryFieldData)
+	if err != nil {
+		return err
+	}
+
+	return rlsmanager.ValidateUsingPredicateForExistingRows(ctx, resp.GetFieldsData(), typeutil.GetSizeOfIDs(existIDs), "upsert", usingExpr, hasPolicies)
+}
+
 func (it *upsertTask) queryPreExecute(ctx context.Context) error {
 	log := mlog.With(mlog.String("collectionName", it.req.CollectionName))
 
@@ -285,6 +330,12 @@ func (it *upsertTask) queryPreExecute(ctx context.Context) error {
 	existIDs, err := parsePrimaryFieldData2IDs(pkFieldData)
 	if err != nil {
 		log.Info(ctx, "parse primary field data to ids failed", mlog.Err(err))
+		return err
+	}
+	principalName, _ := GetCurUserFromContext(ctx)
+	if err := rlsmanager.ValidateUsingForExistingRows(ctx, it.req.GetDbName(), it.req.GetCollectionName(), it.collectionID, principalName,
+		existFieldData, it.schema.schemaHelper, typeutil.GetSizeOfIDs(existIDs), "upsert"); err != nil {
+		log.Warn(ctx, "RLS using expression validation failed for upsert", mlog.Err(err))
 		return err
 	}
 	log.Info(ctx, "retrieveByPKs cost",
@@ -1187,6 +1238,13 @@ func (it *upsertTask) insertPreExecute(ctx context.Context) error {
 		return err
 	}
 
+	principalName, _ := GetCurUserFromContext(ctx)
+	if err := rlsmanager.ValidateCheckForWrite(ctx, it.req.GetDbName(), collectionName, it.collectionID, principalName,
+		milvuspb.RowPolicyAction_RowPolicyActionUpsert, it.upsertMsg.InsertMsg.GetFieldsData(), it.schema.schemaHelper, int(it.upsertMsg.InsertMsg.NRows()), "upsert"); err != nil {
+		log.Warn(ctx, "RLS check expression validation failed for upsert", mlog.Err(err))
+		return err
+	}
+
 	log.Debug(ctx, "Proxy Upsert insertPreExecute done")
 
 	return nil
@@ -1410,6 +1468,14 @@ func (it *upsertTask) PreExecute(ctx context.Context) error {
 	if err != nil {
 		log.Warn(ctx, "Fail to insertPreExecute", mlog.Err(err))
 		return err
+	}
+
+	if !it.req.GetPartialUpdate() {
+		err = it.validateRLSUsingForFullUpsert(ctx)
+		if err != nil {
+			log.Warn(ctx, "Fail to validate RLS using expression for upsert", mlog.Err(err))
+			return err
+		}
 	}
 
 	err = it.deletePreExecute(ctx)

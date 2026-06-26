@@ -63,6 +63,102 @@ import (
 	"github.com/milvus-io/milvus/pkg/v3/util/typeutil"
 )
 
+func TestProxyRLSAPIsForwardToMixCoord(t *testing.T) {
+	ctx := context.Background()
+	mixCoord := &mocks.MockMixCoordClient{}
+	t.Cleanup(func() {
+		mixCoord.AssertExpectations(t)
+	})
+
+	node := &Proxy{mixCoord: mixCoord}
+	node.UpdateStateCode(commonpb.StateCode_Healthy)
+
+	mixCoord.EXPECT().CreateRowPolicy(mock.Anything, mock.MatchedBy(func(req *milvuspb.CreateRowPolicyRequest) bool {
+		return req != nil && req.GetBase().GetMsgType() == commonpb.MsgType_CreateRowPolicy
+	})).Return(merr.Success(), nil).Once()
+	status, err := node.CreateRowPolicy(ctx, &milvuspb.CreateRowPolicyRequest{})
+	require.NoError(t, err)
+	require.Equal(t, commonpb.ErrorCode_Success, status.GetErrorCode())
+
+	mixCoord.EXPECT().DropRowPolicy(mock.Anything, mock.MatchedBy(func(req *milvuspb.DropRowPolicyRequest) bool {
+		return req != nil && req.GetBase().GetMsgType() == commonpb.MsgType_DropRowPolicy
+	})).Return(merr.Success(), nil).Once()
+	status, err = node.DropRowPolicy(ctx, &milvuspb.DropRowPolicyRequest{})
+	require.NoError(t, err)
+	require.Equal(t, commonpb.ErrorCode_Success, status.GetErrorCode())
+
+	mixCoord.EXPECT().ListRowPolicies(mock.Anything, mock.MatchedBy(func(req *milvuspb.ListRowPoliciesRequest) bool {
+		return req != nil && req.GetBase().GetMsgType() == commonpb.MsgType_ListRowPolicies
+	})).Return(&milvuspb.ListRowPoliciesResponse{
+		Status:         merr.Success(),
+		DbName:         "db",
+		CollectionName: "coll",
+		Policies:       []*milvuspb.RowPolicy{{PolicyName: "policy"}},
+	}, nil).Once()
+	listPoliciesResp, err := node.ListRowPolicies(ctx, &milvuspb.ListRowPoliciesRequest{
+		DbName:         "db",
+		CollectionName: "coll",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "db", listPoliciesResp.GetDbName())
+	require.Equal(t, "coll", listPoliciesResp.GetCollectionName())
+	require.Equal(t, "policy", listPoliciesResp.GetPolicies()[0].GetPolicyName())
+	require.Equal(t, commonpb.ErrorCode_Success, listPoliciesResp.GetStatus().GetErrorCode())
+
+	mixCoord.EXPECT().SetRLSPrincipalTags(mock.Anything, mock.MatchedBy(func(req *milvuspb.SetRLSPrincipalTagsRequest) bool {
+		return req != nil && req.GetBase().GetMsgType() == commonpb.MsgType_SetRLSPrincipalTags
+	})).Return(merr.Success(), nil).Once()
+	status, err = node.SetRLSPrincipalTags(ctx, &milvuspb.SetRLSPrincipalTagsRequest{})
+	require.NoError(t, err)
+	require.Equal(t, commonpb.ErrorCode_Success, status.GetErrorCode())
+
+	mixCoord.EXPECT().GetRLSPrincipalTags(mock.Anything, mock.MatchedBy(func(req *milvuspb.GetRLSPrincipalTagsRequest) bool {
+		return req != nil && req.GetBase().GetMsgType() == commonpb.MsgType_GetRLSPrincipalTags
+	})).Return(&milvuspb.GetRLSPrincipalTagsResponse{
+		Status:         merr.Success(),
+		DbName:         "db",
+		CollectionName: "coll",
+		PrincipalName:  "alice",
+		Tags:           map[string]string{"dept": "engineering"},
+	}, nil).Once()
+	getTagsResp, err := node.GetRLSPrincipalTags(ctx, &milvuspb.GetRLSPrincipalTagsRequest{
+		DbName:         "db",
+		CollectionName: "coll",
+		PrincipalName:  "alice",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "db", getTagsResp.GetDbName())
+	require.Equal(t, "coll", getTagsResp.GetCollectionName())
+	require.Equal(t, "alice", getTagsResp.GetPrincipalName())
+	require.Equal(t, "engineering", getTagsResp.GetTags()["dept"])
+	require.Equal(t, commonpb.ErrorCode_Success, getTagsResp.GetStatus().GetErrorCode())
+
+	mixCoord.EXPECT().ListRLSPrincipals(mock.Anything, mock.MatchedBy(func(req *milvuspb.ListRLSPrincipalsRequest) bool {
+		return req != nil && req.GetBase().GetMsgType() == commonpb.MsgType_ListRLSPrincipals
+	})).Return(&milvuspb.ListRLSPrincipalsResponse{
+		Status:         merr.Success(),
+		DbName:         "db",
+		CollectionName: "coll",
+		PrincipalNames: []string{"alice"},
+	}, nil).Once()
+	listPrincipalsResp, err := node.ListRLSPrincipals(ctx, &milvuspb.ListRLSPrincipalsRequest{
+		DbName:         "db",
+		CollectionName: "coll",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "db", listPrincipalsResp.GetDbName())
+	require.Equal(t, "coll", listPrincipalsResp.GetCollectionName())
+	require.Equal(t, []string{"alice"}, listPrincipalsResp.GetPrincipalNames())
+	require.Equal(t, commonpb.ErrorCode_Success, listPrincipalsResp.GetStatus().GetErrorCode())
+
+	mixCoord.EXPECT().DeleteRLSPrincipalTags(mock.Anything, mock.MatchedBy(func(req *milvuspb.DeleteRLSPrincipalTagsRequest) bool {
+		return req != nil && req.GetBase().GetMsgType() == commonpb.MsgType_DeleteRLSPrincipalTags
+	})).Return(merr.Success(), nil).Once()
+	status, err = node.DeleteRLSPrincipalTags(ctx, &milvuspb.DeleteRLSPrincipalTagsRequest{})
+	require.NoError(t, err)
+	require.Equal(t, commonpb.ErrorCode_Success, status.GetErrorCode())
+}
+
 func TestProxy_InvalidateCollectionMetaCache_remove_stream(t *testing.T) {
 	paramtable.Init()
 	cache := globalMetaCache

@@ -7,7 +7,7 @@ require (
 	github.com/cockroachdb/errors v1.9.1
 	github.com/google/uuid v1.6.0
 	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0
-	github.com/milvus-io/milvus-proto/go-api/v3 v3.0.0-20260612100615-43795e8f8f6e
+	github.com/milvus-io/milvus-proto/go-api/v3 v3.0.0-20260625114124-ae7252fbd6be
 	github.com/milvus-io/milvus/pkg/v3 v3.0.0-beta
 	github.com/quasilyte/go-ruleguard/dsl v0.3.23
 	github.com/samber/lo v1.52.0
@@ -122,3 +122,5 @@ require (
 )
 
 replace github.com/milvus-io/milvus/pkg/v3 => ../pkg
+
+replace github.com/milvus-io/milvus-proto/go-api/v3 => /home/zhicheng/SecWorkspace/milvus-proto/go-api

@@ -49,6 +49,7 @@ import (
 	"github.com/milvus-io/milvus/internal/proxy/connection"
 	"github.com/milvus-io/milvus/internal/proxy/privilege"
 	"github.com/milvus-io/milvus/internal/proxy/replicate"
+	rlsmanager "github.com/milvus-io/milvus/internal/proxy/rls"
 	"github.com/milvus-io/milvus/internal/types"
 	"github.com/milvus-io/milvus/internal/util/hookutil"
 	"github.com/milvus-io/milvus/internal/util/segcore"
@@ -6694,6 +6695,230 @@ func (node *Proxy) OperatePrivilegeGroup(ctx context.Context, req *milvuspb.Oper
 	if err != nil {
 		mlog.Warn(context.TODO(), "fail to operate privilege group", mlog.Err(err))
 		return merr.Status(err), nil
+	}
+	return result, nil
+}
+
+func prepareRLSMsgBase(base **commonpb.MsgBase, msgType commonpb.MsgType) {
+	if *base == nil {
+		*base = &commonpb.MsgBase{}
+	}
+	(*base).MsgType = msgType
+}
+
+func setRLSPolicyByCollectionName(ctx context.Context, database, collectionName string, policy *milvuspb.RowPolicy) {
+	if globalMetaCache == nil || policy == nil {
+		return
+	}
+	collectionID, err := globalMetaCache.GetCollectionID(ctx, database, collectionName)
+	if err != nil {
+		mlog.Debug(ctx, "failed to get collection id when setting RLS policy cache",
+			mlog.String("db", database), mlog.String("collectionName", collectionName), mlog.Err(err))
+		return
+	}
+	rlsmanager.DefaultManager().SetRLSPolicy(ctx, database, collectionID, policy)
+}
+
+func removeRLSPolicyByCollectionName(ctx context.Context, database, collectionName string, policyName string) {
+	if globalMetaCache == nil || policyName == "" {
+		return
+	}
+	collectionID, err := globalMetaCache.GetCollectionID(ctx, database, collectionName)
+	if err != nil {
+		mlog.Debug(ctx, "failed to get collection id when removing RLS policy cache",
+			mlog.String("db", database), mlog.String("collectionName", collectionName), mlog.String("policyName", policyName), mlog.Err(err))
+		return
+	}
+	rlsmanager.DefaultManager().RemoveRLSPolicy(ctx, database, collectionID, policyName)
+}
+
+func rowPolicyFromCreateRequest(req *milvuspb.CreateRowPolicyRequest) *milvuspb.RowPolicy {
+	if req == nil {
+		return nil
+	}
+	return &milvuspb.RowPolicy{
+		PolicyName:  req.GetPolicyName(),
+		PolicyType:  req.GetPolicyType(),
+		Actions:     req.GetActions(),
+		UsingExpr:   req.GetUsingExpr(),
+		CheckExpr:   req.GetCheckExpr(),
+		Description: req.GetDescription(),
+	}
+}
+
+func removeRLSPrincipalTagsByCollectionName(ctx context.Context, database, collectionName string, principalName string) {
+	if globalMetaCache == nil || principalName == "" {
+		return
+	}
+	collectionID, err := globalMetaCache.GetCollectionID(ctx, database, collectionName)
+	if err != nil {
+		mlog.Debug(ctx, "failed to get collection id when removing RLS principal tag cache",
+			mlog.String("db", database), mlog.String("collectionName", collectionName), mlog.String("principalName", principalName), mlog.Err(err))
+		return
+	}
+	rlsmanager.DefaultManager().RemoveRLSPrincipalTags(ctx, database, collectionID, principalName)
+}
+
+func (node *Proxy) CreateRowPolicy(ctx context.Context, req *milvuspb.CreateRowPolicyRequest) (*commonpb.Status, error) {
+	ctx, sp := otel.Tracer(typeutil.ProxyRole).Start(ctx, "Proxy-CreateRowPolicy")
+	defer sp.End()
+
+	if err := merr.CheckHealthy(node.GetStateCode()); err != nil {
+		return merr.Status(err), nil
+	}
+	if req != nil {
+		prepareRLSMsgBase(&req.Base, commonpb.MsgType_CreateRowPolicy)
+	}
+	result, err := node.mixCoord.CreateRowPolicy(ctx, req)
+	if err != nil {
+		mlog.Warn(ctx, "fail to create row policy", mlog.Err(err))
+		return merr.Status(err), nil
+	}
+	if req != nil && merr.Error(result) == nil {
+		setRLSPolicyByCollectionName(ctx, req.GetDbName(), req.GetCollectionName(), rowPolicyFromCreateRequest(req))
+	}
+	return result, nil
+}
+
+func (node *Proxy) DropRowPolicy(ctx context.Context, req *milvuspb.DropRowPolicyRequest) (*commonpb.Status, error) {
+	ctx, sp := otel.Tracer(typeutil.ProxyRole).Start(ctx, "Proxy-DropRowPolicy")
+	defer sp.End()
+
+	if err := merr.CheckHealthy(node.GetStateCode()); err != nil {
+		return merr.Status(err), nil
+	}
+	if req != nil {
+		prepareRLSMsgBase(&req.Base, commonpb.MsgType_DropRowPolicy)
+	}
+	result, err := node.mixCoord.DropRowPolicy(ctx, req)
+	if err != nil {
+		mlog.Warn(ctx, "fail to drop row policy", mlog.Err(err))
+		return merr.Status(err), nil
+	}
+	if req != nil && merr.Error(result) == nil {
+		removeRLSPolicyByCollectionName(ctx, req.GetDbName(), req.GetCollectionName(), req.GetPolicyName())
+	}
+	return result, nil
+}
+
+func (node *Proxy) ListRowPolicies(ctx context.Context, req *milvuspb.ListRowPoliciesRequest) (*milvuspb.ListRowPoliciesResponse, error) {
+	ctx, sp := otel.Tracer(typeutil.ProxyRole).Start(ctx, "Proxy-ListRowPolicies")
+	defer sp.End()
+
+	if err := merr.CheckHealthy(node.GetStateCode()); err != nil {
+		return &milvuspb.ListRowPoliciesResponse{
+			Status:         merr.Status(err),
+			DbName:         req.GetDbName(),
+			CollectionName: req.GetCollectionName(),
+		}, nil
+	}
+	if req != nil {
+		prepareRLSMsgBase(&req.Base, commonpb.MsgType_ListRowPolicies)
+	}
+	resp, err := node.mixCoord.ListRowPolicies(ctx, req)
+	if err != nil {
+		mlog.Warn(ctx, "fail to list row policies", mlog.Err(err))
+		return &milvuspb.ListRowPoliciesResponse{
+			Status:         merr.Status(err),
+			DbName:         req.GetDbName(),
+			CollectionName: req.GetCollectionName(),
+		}, nil
+	}
+	return resp, nil
+}
+
+func (node *Proxy) SetRLSPrincipalTags(ctx context.Context, req *milvuspb.SetRLSPrincipalTagsRequest) (*commonpb.Status, error) {
+	ctx, sp := otel.Tracer(typeutil.ProxyRole).Start(ctx, "Proxy-SetRLSPrincipalTags")
+	defer sp.End()
+
+	if err := merr.CheckHealthy(node.GetStateCode()); err != nil {
+		return merr.Status(err), nil
+	}
+	if req != nil {
+		prepareRLSMsgBase(&req.Base, commonpb.MsgType_SetRLSPrincipalTags)
+	}
+	result, err := node.mixCoord.SetRLSPrincipalTags(ctx, req)
+	if err != nil {
+		mlog.Warn(ctx, "fail to set RLS principal tags", mlog.Err(err))
+		return merr.Status(err), nil
+	}
+	if req != nil && merr.Error(result) == nil {
+		removeRLSPrincipalTagsByCollectionName(ctx, req.GetDbName(), req.GetCollectionName(), req.GetPrincipalName())
+	}
+	return result, nil
+}
+
+func (node *Proxy) GetRLSPrincipalTags(ctx context.Context, req *milvuspb.GetRLSPrincipalTagsRequest) (*milvuspb.GetRLSPrincipalTagsResponse, error) {
+	ctx, sp := otel.Tracer(typeutil.ProxyRole).Start(ctx, "Proxy-GetRLSPrincipalTags")
+	defer sp.End()
+
+	if err := merr.CheckHealthy(node.GetStateCode()); err != nil {
+		return &milvuspb.GetRLSPrincipalTagsResponse{
+			Status:         merr.Status(err),
+			DbName:         req.GetDbName(),
+			CollectionName: req.GetCollectionName(),
+			PrincipalName:  req.GetPrincipalName(),
+		}, nil
+	}
+	if req != nil {
+		prepareRLSMsgBase(&req.Base, commonpb.MsgType_GetRLSPrincipalTags)
+	}
+	resp, err := node.mixCoord.GetRLSPrincipalTags(ctx, req)
+	if err != nil {
+		mlog.Warn(ctx, "fail to get RLS principal tags", mlog.Err(err))
+		return &milvuspb.GetRLSPrincipalTagsResponse{
+			Status:         merr.Status(err),
+			DbName:         req.GetDbName(),
+			CollectionName: req.GetCollectionName(),
+			PrincipalName:  req.GetPrincipalName(),
+		}, nil
+	}
+	return resp, nil
+}
+
+func (node *Proxy) ListRLSPrincipals(ctx context.Context, req *milvuspb.ListRLSPrincipalsRequest) (*milvuspb.ListRLSPrincipalsResponse, error) {
+	ctx, sp := otel.Tracer(typeutil.ProxyRole).Start(ctx, "Proxy-ListRLSPrincipals")
+	defer sp.End()
+
+	if err := merr.CheckHealthy(node.GetStateCode()); err != nil {
+		return &milvuspb.ListRLSPrincipalsResponse{
+			Status:         merr.Status(err),
+			DbName:         req.GetDbName(),
+			CollectionName: req.GetCollectionName(),
+		}, nil
+	}
+	if req != nil {
+		prepareRLSMsgBase(&req.Base, commonpb.MsgType_ListRLSPrincipals)
+	}
+	resp, err := node.mixCoord.ListRLSPrincipals(ctx, req)
+	if err != nil {
+		mlog.Warn(ctx, "fail to list RLS principals", mlog.Err(err))
+		return &milvuspb.ListRLSPrincipalsResponse{
+			Status:         merr.Status(err),
+			DbName:         req.GetDbName(),
+			CollectionName: req.GetCollectionName(),
+		}, nil
+	}
+	return resp, nil
+}
+
+func (node *Proxy) DeleteRLSPrincipalTags(ctx context.Context, req *milvuspb.DeleteRLSPrincipalTagsRequest) (*commonpb.Status, error) {
+	ctx, sp := otel.Tracer(typeutil.ProxyRole).Start(ctx, "Proxy-DeleteRLSPrincipalTags")
+	defer sp.End()
+
+	if err := merr.CheckHealthy(node.GetStateCode()); err != nil {
+		return merr.Status(err), nil
+	}
+	if req != nil {
+		prepareRLSMsgBase(&req.Base, commonpb.MsgType_DeleteRLSPrincipalTags)
+	}
+	result, err := node.mixCoord.DeleteRLSPrincipalTags(ctx, req)
+	if err != nil {
+		mlog.Warn(ctx, "fail to delete RLS principal tags", mlog.Err(err))
+		return merr.Status(err), nil
+	}
+	if req != nil && merr.Error(result) == nil {
+		removeRLSPrincipalTagsByCollectionName(ctx, req.GetDbName(), req.GetCollectionName(), req.GetPrincipalName())
 	}
 	return result, nil
 }

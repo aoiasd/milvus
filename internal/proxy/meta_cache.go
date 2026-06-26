@@ -33,6 +33,7 @@ import (
 	"github.com/milvus-io/milvus-proto/go-api/v3/schemapb"
 	internalhttp "github.com/milvus-io/milvus/internal/http"
 	"github.com/milvus-io/milvus/internal/proxy/privilege"
+	rlsmanager "github.com/milvus-io/milvus/internal/proxy/rls"
 	"github.com/milvus-io/milvus/internal/types"
 	"github.com/milvus-io/milvus/pkg/v3/common"
 	"github.com/milvus-io/milvus/pkg/v3/metrics"
@@ -597,6 +598,59 @@ func (m *MetaCache) UpdateByID(ctx context.Context, database string, collectionI
 	return collection, err
 }
 
+func (m *MetaCache) SetRLSPolicy(ctx context.Context, database string, collectionID UniqueID, policy *milvuspb.RowPolicy) {
+	if m == nil {
+		return
+	}
+	rlsmanager.DefaultManager().SetRLSPolicy(ctx, database, collectionID, policy)
+}
+
+func (m *MetaCache) RemoveRLSPolicy(ctx context.Context, database string, collectionID UniqueID, policyName string) {
+	if m == nil {
+		return
+	}
+	rlsmanager.DefaultManager().RemoveRLSPolicy(ctx, database, collectionID, policyName)
+}
+
+func (m *MetaCache) SetRLSPolicies(ctx context.Context, database string, collectionID UniqueID, policies []*milvuspb.RowPolicy) {
+	if m == nil {
+		return
+	}
+	manager := rlsmanager.DefaultManager()
+	manager.RemoveRLSPolicies(ctx, database, collectionID)
+	for _, policy := range policies {
+		manager.SetRLSPolicy(ctx, database, collectionID, policy)
+	}
+}
+
+func (m *MetaCache) RemoveRLSPolicies(ctx context.Context, database string, collectionID UniqueID) {
+	if m == nil {
+		return
+	}
+	rlsmanager.DefaultManager().RemoveRLSPolicies(ctx, database, collectionID)
+}
+
+func (m *MetaCache) RemoveRLSPrincipalTags(ctx context.Context, database string, collectionID UniqueID, principalName string) {
+	if m == nil {
+		return
+	}
+	rlsmanager.DefaultManager().RemoveRLSPrincipalTags(ctx, database, collectionID, principalName)
+}
+
+func (m *MetaCache) SetRLSPrincipalTags(ctx context.Context, database string, collectionID UniqueID, principalName string, tags map[string]string) {
+	if m == nil {
+		return
+	}
+	rlsmanager.DefaultManager().SetRLSPrincipalTags(ctx, database, collectionID, principalName, tags)
+}
+
+func (m *MetaCache) RemoveRLSCollection(ctx context.Context, database string, collectionID UniqueID) {
+	if m == nil {
+		return
+	}
+	rlsmanager.DefaultManager().RemoveRLSCollection(ctx, database, collectionID)
+}
+
 // GetCollectionID returns the corresponding collection id for provided collection name
 func (m *MetaCache) GetCollectionID(ctx context.Context, database, collectionName string) (UniqueID, error) {
 	method := "GetCollectionID"
@@ -1110,6 +1164,7 @@ func (m *MetaCache) removeCollectionByID(ctx context.Context, collectionID Uniqu
 			if v.collID == collectionID {
 				if version == 0 || curVersion <= version {
 					delete(m.collInfo[database], k)
+					m.RemoveRLSCollection(ctx, database, collectionID)
 					collNames = append(collNames, k)
 					collectionKey := buildSfKeyByName(database, k)
 					m.sfGlobal.Forget(collectionKey)
@@ -1149,10 +1204,13 @@ func (m *MetaCache) RemoveDatabase(ctx context.Context, database string) {
 
 	// Forget singleflight keys for all collections in this database
 	if db, ok := m.collInfo[database]; ok {
-		for collectionName := range db {
+		for collectionName, collInfo := range db {
 			collectionKey := buildSfKeyByName(database, collectionName)
 			m.sfCollLevelPartitionCache.Forget(collectionKey)
 			m.sfPartitionCache.Forget(collectionKey)
+			if collInfo != nil {
+				m.RemoveRLSCollection(ctx, database, collInfo.collID)
+			}
 		}
 	}
 

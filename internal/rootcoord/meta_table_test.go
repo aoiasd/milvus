@@ -56,6 +56,34 @@ func generateMetaTable(_ *testing.T) *MetaTable {
 	return &MetaTable{catalog: rootcoord.NewCatalog(catalogKV)}
 }
 
+func newRLSMetaTableForTest(t *testing.T) (*MetaTable, *mocks.RootCoordCatalog) {
+	catalog := mocks.NewRootCoordCatalog(t)
+	names := newNameDb()
+	names.insert("db1", "coll1", 20)
+
+	return &MetaTable{
+		catalog: catalog,
+		names:   names,
+		aliases: newNameDb(),
+		dbName2Meta: map[string]*model.Database{
+			"db1": model.NewDatabase(10, "db1", pb.DatabaseState_DatabaseCreated, nil),
+		},
+		collID2Meta: map[typeutil.UniqueID]*model.Collection{
+			20: {
+				DBID:            10,
+				CollectionID:    20,
+				DBName:          "db1",
+				Name:            "coll1",
+				State:           pb.CollectionState_CollectionCreated,
+				UpdateTimestamp: 1,
+				Partitions: []*model.Partition{
+					{PartitionID: 1, PartitionName: Params.CommonCfg.DefaultPartitionName.GetValue(), State: pb.PartitionState_PartitionCreated},
+				},
+			},
+		},
+	}, catalog
+}
+
 func buildAlterUserMessage(credInfo *internalpb.CredentialInfo, timetick uint64) message.BroadcastResultAlterUserMessageV2 {
 	msg := message.NewAlterUserMessageBuilderV2().
 		WithHeader(&message.AlterUserMessageHeader{
@@ -90,6 +118,167 @@ func buildDropUserMessage(credInfo *internalpb.CredentialInfo, timetick uint64) 
 			funcutil.GetControlChannel("by-dev-rootcoord-dml_1"): {TimeTick: timetick},
 		},
 	}
+}
+
+func TestMetaTable_RLSMetadata(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("create duplicate and list policies", func(t *testing.T) {
+		meta, catalog := newRLSMetaTableForTest(t)
+		createReq := &milvuspb.CreateRowPolicyRequest{
+			DbName:         "db1",
+			CollectionName: "coll1",
+			PolicyName:     "dept_read",
+			PolicyType:     milvuspb.RowPolicyType_RowPolicyTypePermissive,
+			Actions:        []milvuspb.RowPolicyAction{milvuspb.RowPolicyAction_RowPolicyActionQuery},
+			UsingExpr:      "dept == $current_principal_tags['dept']",
+			Description:    "department read policy",
+		}
+
+		catalog.EXPECT().GetRLSPolicy(mock.Anything, int64(10), int64(20), "dept_read").Return(nil, merr.ErrIoKeyNotFound).Once()
+		catalog.EXPECT().ListRLSPolicies(mock.Anything, int64(10), int64(20)).Return(nil, nil).Once()
+		catalog.EXPECT().SaveRLSPolicy(mock.Anything, mock.Anything).RunAndReturn(
+			func(_ context.Context, policy *model.RLSPolicy) error {
+				assert.Equal(t, int64(10), policy.DBID)
+				assert.Equal(t, int64(20), policy.CollectionID)
+				assert.Equal(t, int64(100), policy.PolicyID)
+				assert.Equal(t, createReq.GetPolicyName(), policy.PolicyName)
+				assert.Equal(t, createReq.GetActions(), policy.Actions)
+				return nil
+			}).Once()
+		require.NoError(t, meta.CreateRLSPolicy(ctx, createReq, 100))
+
+		catalog.EXPECT().GetRLSPolicy(mock.Anything, int64(10), int64(20), "dept_read").Return(&model.RLSPolicy{
+			PolicyID:   100,
+			PolicyName: "dept_read",
+		}, nil).Once()
+		err := meta.CreateRLSPolicy(ctx, createReq, 101)
+		require.ErrorIs(t, err, merr.ErrParameterInvalid)
+
+		catalog.EXPECT().ListRLSPolicies(mock.Anything, int64(10), int64(20)).Return([]*model.RLSPolicy{
+			{
+				PolicyID:   100,
+				PolicyName: "dept_read",
+				PolicyType: milvuspb.RowPolicyType_RowPolicyTypePermissive,
+				Actions:    []milvuspb.RowPolicyAction{milvuspb.RowPolicyAction_RowPolicyActionQuery},
+				UsingExpr:  "dept == $current_principal_tags['dept']",
+			},
+		}, nil).Once()
+		policies, err := meta.ListRLSPolicies(ctx, &milvuspb.ListRowPoliciesRequest{DbName: "db1", CollectionName: "coll1"})
+		require.NoError(t, err)
+		require.Len(t, policies, 1)
+		assert.Equal(t, "dept_read", policies[0].PolicyName)
+		assert.Equal(t, "dept == $current_principal_tags['dept']", policies[0].UsingExpr)
+	})
+
+	t.Run("reject get action", func(t *testing.T) {
+		meta, _ := newRLSMetaTableForTest(t)
+		err := meta.CreateRLSPolicy(ctx, &milvuspb.CreateRowPolicyRequest{
+			DbName:         "db1",
+			CollectionName: "coll1",
+			PolicyName:     "get_only",
+			PolicyType:     milvuspb.RowPolicyType_RowPolicyTypePermissive,
+			Actions:        []milvuspb.RowPolicyAction{milvuspb.RowPolicyAction_RowPolicyActionGet},
+			UsingExpr:      "dept == $current_principal_tags['dept']",
+		}, 101)
+		require.ErrorIs(t, err, merr.ErrParameterInvalid)
+		assert.Contains(t, err.Error(), "invalid RLS policy action")
+	})
+
+	t.Run("drop policy by name", func(t *testing.T) {
+		meta, catalog := newRLSMetaTableForTest(t)
+		catalog.EXPECT().GetRLSPolicy(mock.Anything, int64(10), int64(20), "dept_read").Return(&model.RLSPolicy{
+			PolicyID:   100,
+			PolicyName: "dept_read",
+		}, nil).Once()
+		catalog.EXPECT().DropRLSPolicy(mock.Anything, int64(10), int64(20), "dept_read").Return(nil).Once()
+
+		err := meta.DropRLSPolicy(ctx, &milvuspb.DropRowPolicyRequest{
+			DbName:         "db1",
+			CollectionName: "coll1",
+			PolicyName:     "dept_read",
+		})
+		require.NoError(t, err)
+	})
+
+	t.Run("principal tags", func(t *testing.T) {
+		meta, catalog := newRLSMetaTableForTest(t)
+		setReq := &milvuspb.SetRLSPrincipalTagsRequest{
+			DbName:         "db1",
+			CollectionName: "coll1",
+			PrincipalName:  "alice",
+			Tags: map[string]string{
+				"dept": "sales",
+				"tier": "gold",
+			},
+		}
+		catalog.EXPECT().SaveRLSPrincipal(mock.Anything, mock.Anything).RunAndReturn(
+			func(_ context.Context, principal *model.RLSPrincipal) error {
+				assert.Equal(t, int64(10), principal.DBID)
+				assert.Equal(t, int64(20), principal.CollectionID)
+				assert.Equal(t, "alice", principal.PrincipalName)
+				assert.Equal(t, setReq.GetTags(), principal.Tags)
+				return nil
+			}).Once()
+		require.NoError(t, meta.SetRLSPrincipalTags(ctx, setReq))
+
+		catalog.EXPECT().GetRLSPrincipal(mock.Anything, int64(10), int64(20), "alice").Return(&model.RLSPrincipal{
+			DBID:          10,
+			CollectionID:  20,
+			PrincipalName: "alice",
+			Tags: map[string]string{
+				"dept": "sales",
+				"tier": "gold",
+			},
+		}, nil).Once()
+		tags, err := meta.GetRLSPrincipalTags(ctx, &milvuspb.GetRLSPrincipalTagsRequest{DbName: "db1", CollectionName: "coll1", PrincipalName: "alice"})
+		require.NoError(t, err)
+		assert.Equal(t, map[string]string{"dept": "sales", "tier": "gold"}, tags)
+
+		catalog.EXPECT().ListRLSPrincipals(mock.Anything, int64(10), int64(20)).Return([]*model.RLSPrincipal{
+			{PrincipalName: "bob"},
+			{PrincipalName: "alice"},
+		}, nil).Once()
+		principals, err := meta.ListRLSPrincipals(ctx, &milvuspb.ListRLSPrincipalsRequest{DbName: "db1", CollectionName: "coll1"})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"alice", "bob"}, principals)
+
+		catalog.EXPECT().GetRLSPrincipal(mock.Anything, int64(10), int64(20), "alice").Return(&model.RLSPrincipal{
+			DBID:          10,
+			CollectionID:  20,
+			PrincipalName: "alice",
+			Tags: map[string]string{
+				"dept": "sales",
+				"tier": "gold",
+			},
+		}, nil).Once()
+		catalog.EXPECT().SaveRLSPrincipal(mock.Anything, mock.Anything).RunAndReturn(
+			func(_ context.Context, principal *model.RLSPrincipal) error {
+				assert.Equal(t, map[string]string{"tier": "gold"}, principal.Tags)
+				return nil
+			}).Once()
+		err = meta.DeleteRLSPrincipalTags(ctx, &milvuspb.DeleteRLSPrincipalTagsRequest{
+			DbName:         "db1",
+			CollectionName: "coll1",
+			PrincipalName:  "alice",
+			TagKeys:        []string{"dept"},
+		})
+		require.NoError(t, err)
+
+		catalog.EXPECT().GetRLSPrincipal(mock.Anything, int64(10), int64(20), "alice").Return(&model.RLSPrincipal{
+			DBID:          10,
+			CollectionID:  20,
+			PrincipalName: "alice",
+			Tags:          map[string]string{"tier": "gold"},
+		}, nil).Once()
+		catalog.EXPECT().DropRLSPrincipal(mock.Anything, int64(10), int64(20), "alice").Return(nil).Once()
+		err = meta.DeleteRLSPrincipalTags(ctx, &milvuspb.DeleteRLSPrincipalTagsRequest{
+			DbName:         "db1",
+			CollectionName: "coll1",
+			PrincipalName:  "alice",
+		})
+		require.NoError(t, err)
+	})
 }
 
 func TestRbacCredential(t *testing.T) {

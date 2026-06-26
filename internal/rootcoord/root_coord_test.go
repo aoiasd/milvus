@@ -1772,6 +1772,77 @@ func TestCore_BackupRBAC(t *testing.T) {
 	assert.False(t, merr.Ok(resp.GetStatus()))
 }
 
+func TestCore_RLSAPIs(t *testing.T) {
+	ctx := context.Background()
+	meta := mockrootcoord.NewIMetaTable(t)
+	idAllocator := newMockIDAllocator()
+	idAllocator.AllocOneF = func() (UniqueID, error) {
+		return 123, nil
+	}
+	c := newTestCore(withHealthyCode(), withMeta(meta), withIDAllocator(idAllocator))
+
+	createReq := &milvuspb.CreateRowPolicyRequest{
+		DbName:         "db1",
+		CollectionName: "coll1",
+		PolicyName:     "policy1",
+		PolicyType:     milvuspb.RowPolicyType_RowPolicyTypePermissive,
+		Actions:        []milvuspb.RowPolicyAction{milvuspb.RowPolicyAction_RowPolicyActionQuery},
+		UsingExpr:      "dept == $current_principal_tags['dept']",
+	}
+	meta.EXPECT().CreateRLSPolicy(mock.Anything, createReq, int64(123)).Return(nil).Once()
+	status, err := c.CreateRowPolicy(ctx, createReq)
+	require.NoError(t, err)
+	assert.True(t, merr.Ok(status))
+
+	dropReq := &milvuspb.DropRowPolicyRequest{DbName: "db1", CollectionName: "coll1", PolicyName: "policy1"}
+	meta.EXPECT().DropRLSPolicy(mock.Anything, dropReq).Return(nil).Once()
+	status, err = c.DropRowPolicy(ctx, dropReq)
+	require.NoError(t, err)
+	assert.True(t, merr.Ok(status))
+
+	listReq := &milvuspb.ListRowPoliciesRequest{DbName: "db1", CollectionName: "coll1"}
+	meta.EXPECT().ListRLSPolicies(mock.Anything, listReq).Return([]*milvuspb.RowPolicy{{PolicyName: "policy1"}}, nil).Once()
+	listResp, err := c.ListRowPolicies(ctx, listReq)
+	require.NoError(t, err)
+	assert.True(t, merr.Ok(listResp.GetStatus()))
+	require.Len(t, listResp.GetPolicies(), 1)
+	assert.Equal(t, "policy1", listResp.GetPolicies()[0].GetPolicyName())
+	assert.Equal(t, "db1", listResp.GetDbName())
+	assert.Equal(t, "coll1", listResp.GetCollectionName())
+
+	setTagsReq := &milvuspb.SetRLSPrincipalTagsRequest{
+		DbName:         "db1",
+		CollectionName: "coll1",
+		PrincipalName:  "alice",
+		Tags:           map[string]string{"dept": "sales"},
+	}
+	meta.EXPECT().SetRLSPrincipalTags(mock.Anything, setTagsReq).Return(nil).Once()
+	status, err = c.SetRLSPrincipalTags(ctx, setTagsReq)
+	require.NoError(t, err)
+	assert.True(t, merr.Ok(status))
+
+	getTagsReq := &milvuspb.GetRLSPrincipalTagsRequest{DbName: "db1", CollectionName: "coll1", PrincipalName: "alice"}
+	meta.EXPECT().GetRLSPrincipalTags(mock.Anything, getTagsReq).Return(map[string]string{"dept": "sales"}, nil).Once()
+	getTagsResp, err := c.GetRLSPrincipalTags(ctx, getTagsReq)
+	require.NoError(t, err)
+	assert.True(t, merr.Ok(getTagsResp.GetStatus()))
+	assert.Equal(t, map[string]string{"dept": "sales"}, getTagsResp.GetTags())
+	assert.Equal(t, "alice", getTagsResp.GetPrincipalName())
+
+	listPrincipalsReq := &milvuspb.ListRLSPrincipalsRequest{DbName: "db1", CollectionName: "coll1"}
+	meta.EXPECT().ListRLSPrincipals(mock.Anything, listPrincipalsReq).Return([]string{"alice", "bob"}, nil).Once()
+	listPrincipalsResp, err := c.ListRLSPrincipals(ctx, listPrincipalsReq)
+	require.NoError(t, err)
+	assert.True(t, merr.Ok(listPrincipalsResp.GetStatus()))
+	assert.Equal(t, []string{"alice", "bob"}, listPrincipalsResp.GetPrincipalNames())
+
+	deleteTagsReq := &milvuspb.DeleteRLSPrincipalTagsRequest{DbName: "db1", CollectionName: "coll1", PrincipalName: "alice", TagKeys: []string{"dept"}}
+	meta.EXPECT().DeleteRLSPrincipalTags(mock.Anything, deleteTagsReq).Return(nil).Once()
+	status, err = c.DeleteRLSPrincipalTags(ctx, deleteTagsReq)
+	require.NoError(t, err)
+	assert.True(t, merr.Ok(status))
+}
+
 func TestCore_getMetastorePrivilegeName(t *testing.T) {
 	meta := mockrootcoord.NewIMetaTable(t)
 	c := newTestCore(withHealthyCode(), withMeta(meta))

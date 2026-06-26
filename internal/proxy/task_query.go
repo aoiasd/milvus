@@ -17,6 +17,7 @@ import (
 	"github.com/milvus-io/milvus/internal/agg"
 	"github.com/milvus-io/milvus/internal/parser/planparserv2"
 	"github.com/milvus-io/milvus/internal/proxy/accesslog"
+	rlsmanager "github.com/milvus-io/milvus/internal/proxy/rls"
 	"github.com/milvus-io/milvus/internal/proxy/shardclient"
 	"github.com/milvus-io/milvus/internal/types"
 	"github.com/milvus-io/milvus/internal/util/exprutil"
@@ -781,7 +782,20 @@ func (t *queryTask) PreExecute(ctx context.Context) error {
 		log.Debug(ctx, "determine timezone from collection", mlog.Any("collection timezone", t.resolvedTimezoneStr))
 	}
 
-	if err := t.createPlanArgs(ctx, &planparserv2.ParserVisitorArgs{Timezone: t.resolvedTimezoneStr}); err != nil {
+	visitorArgs := &planparserv2.ParserVisitorArgs{Timezone: t.resolvedTimezoneStr}
+	if err := t.createPlanArgs(ctx, visitorArgs); err != nil {
+		return err
+	}
+
+	principalName, _ := GetCurUserFromContext(ctx)
+	rlsPredicate, hasPolicies, err := rlsmanager.DefaultManager().GetRLSUsingPredicate(ctx, t.request.GetDbName(), collectionName, t.CollectionID, principalName, rlsmanager.QueryAction(t.queryParams.isIterator), t.schema.schemaHelper, visitorArgs)
+	if err != nil {
+		return err
+	}
+	if hasPolicies && rlsPredicate == nil {
+		return merr.WrapErrPrivilegeNotPermitted("query operation denied by RLS: no applicable using policies")
+	}
+	if err := rlsmanager.MergePredicateToPlan(t.plan, rlsPredicate); err != nil {
 		return err
 	}
 	t.plan.GetQuery().Limit = t.Limit

@@ -3,6 +3,8 @@ package rootcoord
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +24,7 @@ import (
 	"github.com/milvus-io/milvus/pkg/v3/mlog"
 	pb "github.com/milvus-io/milvus/pkg/v3/proto/etcdpb"
 	"github.com/milvus-io/milvus/pkg/v3/proto/internalpb"
+	"github.com/milvus-io/milvus/pkg/v3/proto/rootcoordpb"
 	"github.com/milvus-io/milvus/pkg/v3/util"
 	"github.com/milvus-io/milvus/pkg/v3/util/conc"
 	"github.com/milvus-io/milvus/pkg/v3/util/crypto"
@@ -707,6 +710,16 @@ func (kc *Catalog) DropCollection(ctx context.Context, collectionInfo *model.Col
 	}
 	for _, function := range collectionInfo.Functions {
 		delMetakeysSnap = append(delMetakeysSnap, BuildFunctionKey(collectionInfo.CollectionID, function.ID))
+	}
+	for _, prefix := range []string{
+		BuildRLSPolicyPrefix(collectionInfo.DBID, collectionInfo.CollectionID),
+		BuildRLSPrincipalPrefix(collectionInfo.DBID, collectionInfo.CollectionID),
+	} {
+		keys, _, err := kc.Txn.LoadWithPrefix(ctx, prefix)
+		if err != nil {
+			return err
+		}
+		delMetakeysSnap = append(delMetakeysSnap, keys...)
 	}
 	// delMetakeysSnap = append(delMetakeysSnap, buildPartitionPrefix(collectionInfo.CollectionID))
 	// delMetakeysSnap = append(delMetakeysSnap, buildFieldPrefix(collectionInfo.CollectionID))
@@ -2214,6 +2227,108 @@ func (kc *Catalog) ListPrivilegeGroups(ctx context.Context) ([]*milvuspb.Privile
 		privGroups = append(privGroups, privGroupInfo)
 	}
 	return privGroups, nil
+}
+
+func (kc *Catalog) SaveRLSPolicy(ctx context.Context, policy *model.RLSPolicy) error {
+	if policy == nil {
+		return merr.WrapErrServiceInternalMsg("RLS policy is nil")
+	}
+	key := BuildRLSPolicyKey(policy.DBID, policy.CollectionID, policy.PolicyName)
+	value, err := proto.Marshal(model.MarshalRLSPolicyModel(policy))
+	if err != nil {
+		return merr.WrapErrSerializationFailed(err, "marshal RLS policy info")
+	}
+	return kc.Txn.Save(ctx, key, string(value))
+}
+
+func (kc *Catalog) GetRLSPolicy(ctx context.Context, dbID int64, collectionID int64, policyName string) (*model.RLSPolicy, error) {
+	value, err := kc.Txn.Load(ctx, BuildRLSPolicyKey(dbID, collectionID, policyName))
+	if err != nil {
+		return nil, err
+	}
+	info := &rootcoordpb.RLSPolicyInfo{}
+	if err := proto.Unmarshal([]byte(value), info); err != nil {
+		return nil, merr.WrapErrDataIntegrity(err, "unmarshal RLS policy info")
+	}
+	return model.UnmarshalRLSPolicyModel(info), nil
+}
+
+func (kc *Catalog) DropRLSPolicy(ctx context.Context, dbID int64, collectionID int64, policyName string) error {
+	return kc.Txn.Remove(ctx, BuildRLSPolicyKey(dbID, collectionID, policyName))
+}
+
+func (kc *Catalog) ListRLSPolicies(ctx context.Context, dbID int64, collectionID int64) ([]*model.RLSPolicy, error) {
+	_, values, err := kc.Txn.LoadWithPrefix(ctx, BuildRLSPolicyPrefix(dbID, collectionID))
+	if err != nil {
+		return nil, err
+	}
+	policies := make([]*model.RLSPolicy, 0, len(values))
+	for _, value := range values {
+		info := &rootcoordpb.RLSPolicyInfo{}
+		if err := proto.Unmarshal([]byte(value), info); err != nil {
+			return nil, merr.WrapErrDataIntegrity(err, "unmarshal RLS policy info")
+		}
+		policies = append(policies, model.UnmarshalRLSPolicyModel(info))
+	}
+	sort.Slice(policies, func(i, j int) bool {
+		if policies[i].PolicyName == policies[j].PolicyName {
+			return policies[i].PolicyID < policies[j].PolicyID
+		}
+		return policies[i].PolicyName < policies[j].PolicyName
+	})
+	return policies, nil
+}
+
+func buildRLSPrincipalKey(dbID int64, collectionID int64, principalName string) string {
+	return BuildRLSPrincipalPrefix(dbID, collectionID) + url.PathEscape(principalName)
+}
+
+func (kc *Catalog) SaveRLSPrincipal(ctx context.Context, principal *model.RLSPrincipal) error {
+	if principal == nil {
+		return merr.WrapErrServiceInternalMsg("RLS principal is nil")
+	}
+	key := buildRLSPrincipalKey(principal.DBID, principal.CollectionID, principal.PrincipalName)
+	value, err := proto.Marshal(model.MarshalRLSPrincipalModel(principal))
+	if err != nil {
+		return merr.WrapErrSerializationFailed(err, "marshal RLS principal info")
+	}
+	return kc.Txn.Save(ctx, key, string(value))
+}
+
+func (kc *Catalog) GetRLSPrincipal(ctx context.Context, dbID int64, collectionID int64, principalName string) (*model.RLSPrincipal, error) {
+	key := buildRLSPrincipalKey(dbID, collectionID, principalName)
+	value, err := kc.Txn.Load(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	info := &rootcoordpb.RLSPrincipalInfo{}
+	if err := proto.Unmarshal([]byte(value), info); err != nil {
+		return nil, merr.WrapErrDataIntegrity(err, "unmarshal RLS principal info")
+	}
+	return model.UnmarshalRLSPrincipalModel(info), nil
+}
+
+func (kc *Catalog) DropRLSPrincipal(ctx context.Context, dbID int64, collectionID int64, principalName string) error {
+	return kc.Txn.Remove(ctx, buildRLSPrincipalKey(dbID, collectionID, principalName))
+}
+
+func (kc *Catalog) ListRLSPrincipals(ctx context.Context, dbID int64, collectionID int64) ([]*model.RLSPrincipal, error) {
+	_, values, err := kc.Txn.LoadWithPrefix(ctx, BuildRLSPrincipalPrefix(dbID, collectionID))
+	if err != nil {
+		return nil, err
+	}
+	principals := make([]*model.RLSPrincipal, 0, len(values))
+	for _, value := range values {
+		info := &rootcoordpb.RLSPrincipalInfo{}
+		if err := proto.Unmarshal([]byte(value), info); err != nil {
+			return nil, merr.WrapErrDataIntegrity(err, "unmarshal RLS principal info")
+		}
+		principals = append(principals, model.UnmarshalRLSPrincipalModel(info))
+	}
+	sort.Slice(principals, func(i, j int) bool {
+		return principals[i].PrincipalName < principals[j].PrincipalName
+	})
+	return principals, nil
 }
 
 func (kc *Catalog) SaveFileResource(ctx context.Context, resource *internalpb.FileResourceInfo, version uint64) error {

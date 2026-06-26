@@ -19,6 +19,7 @@ package rootcoord
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -59,6 +60,16 @@ var (
 	errIgnoredDropPartition    = errors.New("ignored drop partition")    // drop partition not found, so it can be ignored.
 
 	errAlterCollectionNotFound = errors.New("alter collection not found") // alter collection not found, so it can be ignored.
+)
+
+const (
+	defaultMaxRLSPoliciesPerCollection = 100
+	defaultMaxRLSTagsPerPrincipal      = 50
+	defaultMaxRLSExpressionLength      = 4096
+	defaultMaxRLSPolicyNameLength      = 255
+	defaultMaxRLSPrincipalNameLength   = 255
+	defaultMaxRLSTagKeyLength          = 128
+	defaultMaxRLSTagValueLength        = 1024
 )
 
 type MetaTableChecker interface {
@@ -150,6 +161,14 @@ type IMetaTable interface {
 	ListPrivilegeGroups(ctx context.Context) ([]*milvuspb.PrivilegeGroupInfo, error)
 	OperatePrivilegeGroup(ctx context.Context, groupName string, privileges []*milvuspb.PrivilegeEntity, operateType milvuspb.OperatePrivilegeGroupType) error
 	GetPrivilegeGroupRoles(ctx context.Context, groupName string) ([]*milvuspb.RoleEntity, error)
+
+	CreateRLSPolicy(ctx context.Context, req *milvuspb.CreateRowPolicyRequest, policyID int64) error
+	DropRLSPolicy(ctx context.Context, req *milvuspb.DropRowPolicyRequest) error
+	ListRLSPolicies(ctx context.Context, req *milvuspb.ListRowPoliciesRequest) ([]*milvuspb.RowPolicy, error)
+	SetRLSPrincipalTags(ctx context.Context, req *milvuspb.SetRLSPrincipalTagsRequest) error
+	GetRLSPrincipalTags(ctx context.Context, req *milvuspb.GetRLSPrincipalTagsRequest) (map[string]string, error)
+	ListRLSPrincipals(ctx context.Context, req *milvuspb.ListRLSPrincipalsRequest) ([]string, error)
+	DeleteRLSPrincipalTags(ctx context.Context, req *milvuspb.DeleteRLSPrincipalTagsRequest) error
 
 	AddFileResource(ctx context.Context, resource *internalpb.FileResourceInfo) error
 	RemoveFileResource(ctx context.Context, name string) (error, bool)
@@ -2413,6 +2432,331 @@ func (mt *MetaTable) GetPrivilegeGroupRoles(ctx context.Context, groupName strin
 		}
 	}
 	return lo.Keys(rolesMap), nil
+}
+
+func (mt *MetaTable) resolveRLSCollection(ctx context.Context, dbName string, collectionName string) (*model.Collection, error) {
+	if funcutil.IsEmptyString(collectionName) {
+		return nil, merr.WrapErrParameterInvalidMsg("collection name is empty")
+	}
+	if funcutil.IsEmptyString(dbName) {
+		dbName = util.DefaultDBName
+	}
+	return mt.GetCollectionByName(ctx, dbName, collectionName, typeutil.MaxTimestamp, false)
+}
+
+func validateRLSPolicy(policyName string, policyType milvuspb.RowPolicyType, actions []milvuspb.RowPolicyAction, usingExpr string, checkExpr string) error {
+	if funcutil.IsEmptyString(policyName) {
+		return merr.WrapErrParameterInvalidMsg("RLS policy name is empty")
+	}
+	if len(policyName) > defaultMaxRLSPolicyNameLength {
+		return merr.WrapErrParameterInvalidMsg("RLS policy name exceeds max length %d", defaultMaxRLSPolicyNameLength)
+	}
+	switch policyType {
+	case milvuspb.RowPolicyType_RowPolicyTypePermissive, milvuspb.RowPolicyType_RowPolicyTypeRestrictive:
+	default:
+		return merr.WrapErrParameterInvalidMsg("invalid RLS policy type: %s", policyType.String())
+	}
+	if len(actions) == 0 {
+		return merr.WrapErrParameterInvalidMsg("RLS policy actions is empty")
+	}
+	if len(usingExpr) == 0 && len(checkExpr) == 0 {
+		return merr.WrapErrParameterInvalidMsg("RLS policy must define using_expr or check_expr")
+	}
+	if len(usingExpr) > defaultMaxRLSExpressionLength {
+		return merr.WrapErrParameterInvalidMsg("RLS using_expr exceeds max length %d", defaultMaxRLSExpressionLength)
+	}
+	if len(checkExpr) > defaultMaxRLSExpressionLength {
+		return merr.WrapErrParameterInvalidMsg("RLS check_expr exceeds max length %d", defaultMaxRLSExpressionLength)
+	}
+
+	seen := make(map[milvuspb.RowPolicyAction]struct{}, len(actions))
+	needUsingExpr := false
+	needCheckExpr := false
+	for _, action := range actions {
+		if _, ok := seen[action]; ok {
+			return merr.WrapErrParameterInvalidMsg("duplicated RLS policy action: %s", action.String())
+		}
+		seen[action] = struct{}{}
+
+		switch action {
+		case milvuspb.RowPolicyAction_RowPolicyActionQuery,
+			milvuspb.RowPolicyAction_RowPolicyActionQueryIterator,
+			milvuspb.RowPolicyAction_RowPolicyActionSearch,
+			milvuspb.RowPolicyAction_RowPolicyActionSearchIterator,
+			milvuspb.RowPolicyAction_RowPolicyActionHybridSearch,
+			milvuspb.RowPolicyAction_RowPolicyActionDelete:
+			needUsingExpr = true
+		case milvuspb.RowPolicyAction_RowPolicyActionInsert:
+			needCheckExpr = true
+		case milvuspb.RowPolicyAction_RowPolicyActionUpsert:
+			needUsingExpr = true
+			needCheckExpr = true
+		default:
+			return merr.WrapErrParameterInvalidMsg("invalid RLS policy action: %s", action.String())
+		}
+	}
+	if needUsingExpr && len(usingExpr) == 0 {
+		return merr.WrapErrParameterInvalidMsg("RLS policy using_expr is required by selected actions")
+	}
+	if needCheckExpr && len(checkExpr) == 0 {
+		return merr.WrapErrParameterInvalidMsg("RLS policy check_expr is required by selected actions")
+	}
+	return nil
+}
+
+func (mt *MetaTable) CreateRLSPolicy(ctx context.Context, req *milvuspb.CreateRowPolicyRequest, policyID int64) error {
+	if req == nil {
+		return merr.WrapErrParameterInvalidMsg("create RLS policy request is nil")
+	}
+	if err := validateRLSPolicy(req.GetPolicyName(), req.GetPolicyType(), req.GetActions(), req.GetUsingExpr(), req.GetCheckExpr()); err != nil {
+		return err
+	}
+	coll, err := mt.resolveRLSCollection(ctx, req.GetDbName(), req.GetCollectionName())
+	if err != nil {
+		return err
+	}
+
+	mt.permissionLock.Lock()
+	defer mt.permissionLock.Unlock()
+
+	if _, err := mt.catalog.GetRLSPolicy(ctx, coll.DBID, coll.CollectionID, req.GetPolicyName()); err == nil {
+		return merr.WrapErrParameterInvalidMsg("RLS policy [%s] already exists", req.GetPolicyName())
+	} else if !errors.Is(err, merr.ErrIoKeyNotFound) {
+		return merr.Wrap(err, "failed to get RLS policy")
+	}
+
+	policies, err := mt.catalog.ListRLSPolicies(ctx, coll.DBID, coll.CollectionID)
+	if err != nil {
+		return merr.Wrap(err, "failed to list RLS policies")
+	}
+	if len(policies) >= defaultMaxRLSPoliciesPerCollection {
+		return merr.WrapErrServiceQuotaExceeded("unable to create RLS policy because the number of policies has reached the limit")
+	}
+
+	return mt.catalog.SaveRLSPolicy(ctx, &model.RLSPolicy{
+		DBID:         coll.DBID,
+		CollectionID: coll.CollectionID,
+		PolicyID:     policyID,
+		PolicyName:   req.GetPolicyName(),
+		PolicyType:   req.GetPolicyType(),
+		Actions:      req.GetActions(),
+		UsingExpr:    req.GetUsingExpr(),
+		CheckExpr:    req.GetCheckExpr(),
+		Description:  req.GetDescription(),
+	})
+}
+
+func (mt *MetaTable) DropRLSPolicy(ctx context.Context, req *milvuspb.DropRowPolicyRequest) error {
+	if req == nil {
+		return merr.WrapErrParameterInvalidMsg("drop RLS policy request is nil")
+	}
+	if funcutil.IsEmptyString(req.GetPolicyName()) {
+		return merr.WrapErrParameterInvalidMsg("RLS policy name is empty")
+	}
+	coll, err := mt.resolveRLSCollection(ctx, req.GetDbName(), req.GetCollectionName())
+	if err != nil {
+		return err
+	}
+
+	mt.permissionLock.Lock()
+	defer mt.permissionLock.Unlock()
+
+	if _, err := mt.catalog.GetRLSPolicy(ctx, coll.DBID, coll.CollectionID, req.GetPolicyName()); err != nil {
+		if errors.Is(err, merr.ErrIoKeyNotFound) {
+			return merr.WrapErrParameterInvalidMsg("RLS policy [%s] does not exist", req.GetPolicyName())
+		}
+		return merr.Wrap(err, "failed to get RLS policy")
+	}
+	if err := mt.catalog.DropRLSPolicy(ctx, coll.DBID, coll.CollectionID, req.GetPolicyName()); err != nil {
+		return merr.Wrap(err, "failed to drop RLS policy")
+	}
+	return nil
+}
+
+func (mt *MetaTable) ListRLSPolicies(ctx context.Context, req *milvuspb.ListRowPoliciesRequest) ([]*milvuspb.RowPolicy, error) {
+	if req == nil {
+		return nil, merr.WrapErrParameterInvalidMsg("list RLS policies request is nil")
+	}
+	coll, err := mt.resolveRLSCollection(ctx, req.GetDbName(), req.GetCollectionName())
+	if err != nil {
+		return nil, err
+	}
+
+	mt.permissionLock.RLock()
+	defer mt.permissionLock.RUnlock()
+
+	policies, err := mt.catalog.ListRLSPolicies(ctx, coll.DBID, coll.CollectionID)
+	if err != nil {
+		return nil, merr.Wrap(err, "failed to list RLS policies")
+	}
+	return lo.Map(policies, func(policy *model.RLSPolicy, _ int) *milvuspb.RowPolicy {
+		return policy.ToMilvusRowPolicy()
+	}), nil
+}
+
+func validateRLSPrincipalName(principalName string) error {
+	if funcutil.IsEmptyString(principalName) {
+		return merr.WrapErrParameterInvalidMsg("RLS principal name is empty")
+	}
+	if len(principalName) > defaultMaxRLSPrincipalNameLength {
+		return merr.WrapErrParameterInvalidMsg("RLS principal name exceeds max length %d", defaultMaxRLSPrincipalNameLength)
+	}
+	return nil
+}
+
+func validateRLSTagKey(tagKey string) error {
+	if funcutil.IsEmptyString(tagKey) {
+		return merr.WrapErrParameterInvalidMsg("RLS principal tag key is empty")
+	}
+	if len(tagKey) > defaultMaxRLSTagKeyLength {
+		return merr.WrapErrParameterInvalidMsg("RLS principal tag key exceeds max length %d", defaultMaxRLSTagKeyLength)
+	}
+	return nil
+}
+
+func validateRLSTags(tags map[string]string) error {
+	if len(tags) > defaultMaxRLSTagsPerPrincipal {
+		return merr.WrapErrServiceQuotaExceeded("unable to set RLS principal tags because the number of tags has reached the limit")
+	}
+	for key, value := range tags {
+		if err := validateRLSTagKey(key); err != nil {
+			return err
+		}
+		if len(value) > defaultMaxRLSTagValueLength {
+			return merr.WrapErrParameterInvalidMsg("RLS principal tag value exceeds max length %d", defaultMaxRLSTagValueLength)
+		}
+	}
+	return nil
+}
+
+func cloneRLSTags(tags map[string]string) map[string]string {
+	if tags == nil {
+		return nil
+	}
+	cloned := make(map[string]string, len(tags))
+	for key, value := range tags {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func (mt *MetaTable) SetRLSPrincipalTags(ctx context.Context, req *milvuspb.SetRLSPrincipalTagsRequest) error {
+	if req == nil {
+		return merr.WrapErrParameterInvalidMsg("set RLS principal tags request is nil")
+	}
+	if err := validateRLSPrincipalName(req.GetPrincipalName()); err != nil {
+		return err
+	}
+	if err := validateRLSTags(req.GetTags()); err != nil {
+		return err
+	}
+	coll, err := mt.resolveRLSCollection(ctx, req.GetDbName(), req.GetCollectionName())
+	if err != nil {
+		return err
+	}
+
+	mt.permissionLock.Lock()
+	defer mt.permissionLock.Unlock()
+
+	return mt.catalog.SaveRLSPrincipal(ctx, &model.RLSPrincipal{
+		DBID:          coll.DBID,
+		CollectionID:  coll.CollectionID,
+		PrincipalName: req.GetPrincipalName(),
+		Tags:          cloneRLSTags(req.GetTags()),
+	})
+}
+
+func (mt *MetaTable) GetRLSPrincipalTags(ctx context.Context, req *milvuspb.GetRLSPrincipalTagsRequest) (map[string]string, error) {
+	if req == nil {
+		return nil, merr.WrapErrParameterInvalidMsg("get RLS principal tags request is nil")
+	}
+	if err := validateRLSPrincipalName(req.GetPrincipalName()); err != nil {
+		return nil, err
+	}
+	coll, err := mt.resolveRLSCollection(ctx, req.GetDbName(), req.GetCollectionName())
+	if err != nil {
+		return nil, err
+	}
+
+	mt.permissionLock.RLock()
+	defer mt.permissionLock.RUnlock()
+
+	principal, err := mt.catalog.GetRLSPrincipal(ctx, coll.DBID, coll.CollectionID, req.GetPrincipalName())
+	if err != nil {
+		if errors.Is(err, merr.ErrIoKeyNotFound) {
+			return nil, merr.WrapErrParameterInvalidMsg("RLS principal [%s] does not exist", req.GetPrincipalName())
+		}
+		return nil, merr.Wrap(err, "failed to get RLS principal")
+	}
+	return cloneRLSTags(principal.Tags), nil
+}
+
+func (mt *MetaTable) ListRLSPrincipals(ctx context.Context, req *milvuspb.ListRLSPrincipalsRequest) ([]string, error) {
+	if req == nil {
+		return nil, merr.WrapErrParameterInvalidMsg("list RLS principals request is nil")
+	}
+	coll, err := mt.resolveRLSCollection(ctx, req.GetDbName(), req.GetCollectionName())
+	if err != nil {
+		return nil, err
+	}
+
+	mt.permissionLock.RLock()
+	defer mt.permissionLock.RUnlock()
+
+	principals, err := mt.catalog.ListRLSPrincipals(ctx, coll.DBID, coll.CollectionID)
+	if err != nil {
+		return nil, merr.Wrap(err, "failed to list RLS principals")
+	}
+	names := lo.Map(principals, func(principal *model.RLSPrincipal, _ int) string {
+		return principal.PrincipalName
+	})
+	sort.Strings(names)
+	return names, nil
+}
+
+func (mt *MetaTable) DeleteRLSPrincipalTags(ctx context.Context, req *milvuspb.DeleteRLSPrincipalTagsRequest) error {
+	if req == nil {
+		return merr.WrapErrParameterInvalidMsg("delete RLS principal tags request is nil")
+	}
+	if err := validateRLSPrincipalName(req.GetPrincipalName()); err != nil {
+		return err
+	}
+	for _, key := range req.GetTagKeys() {
+		if err := validateRLSTagKey(key); err != nil {
+			return err
+		}
+	}
+	coll, err := mt.resolveRLSCollection(ctx, req.GetDbName(), req.GetCollectionName())
+	if err != nil {
+		return err
+	}
+
+	mt.permissionLock.Lock()
+	defer mt.permissionLock.Unlock()
+
+	principal, err := mt.catalog.GetRLSPrincipal(ctx, coll.DBID, coll.CollectionID, req.GetPrincipalName())
+	if err != nil {
+		if errors.Is(err, merr.ErrIoKeyNotFound) {
+			return merr.WrapErrParameterInvalidMsg("RLS principal [%s] does not exist", req.GetPrincipalName())
+		}
+		return merr.Wrap(err, "failed to get RLS principal")
+	}
+	if len(req.GetTagKeys()) == 0 {
+		return mt.catalog.DropRLSPrincipal(ctx, coll.DBID, coll.CollectionID, req.GetPrincipalName())
+	}
+
+	tags := cloneRLSTags(principal.Tags)
+	for _, key := range req.GetTagKeys() {
+		delete(tags, key)
+	}
+	if len(tags) == 0 {
+		return mt.catalog.DropRLSPrincipal(ctx, coll.DBID, coll.CollectionID, req.GetPrincipalName())
+	}
+	principal.Tags = tags
+	if err := mt.catalog.SaveRLSPrincipal(ctx, principal); err != nil {
+		return merr.Wrap(err, "failed to save RLS principal")
+	}
+	return nil
 }
 
 func (mt *MetaTable) AddFileResource(ctx context.Context, resource *internalpb.FileResourceInfo) error {
