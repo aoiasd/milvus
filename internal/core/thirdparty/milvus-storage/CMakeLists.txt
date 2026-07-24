@@ -14,7 +14,7 @@
 # Update milvus-storage_VERSION for the first occurrence
 milvus_add_pkg_config("milvus-storage")
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES "")
-set( milvus-storage_VERSION 911ca29)
+set( milvus-storage_VERSION aoiasd-vortex-io-trace)
 set( GIT_REPOSITORY  "https://github.com/aoiasd/milvus-storage.git")
 message(STATUS "milvus-storage repo: ${GIT_REPOSITORY}")
 message(STATUS "milvus-storage version: ${milvus-storage_VERSION}")
@@ -32,6 +32,7 @@ endif ()
 set(WITH_BENCHMARK OFF CACHE BOOL "" FORCE)
 
 set(WITH_VORTEX ON CACHE BOOL "" FORCE )
+set(WITH_VORTEX_IO_TRACE ON CACHE BOOL "" FORCE )
 
 # milvus-storage's Rust bridge now depends on crates that require Rust 1.92.
 # The top-level CMake cache may have been initialized by other Rust components
