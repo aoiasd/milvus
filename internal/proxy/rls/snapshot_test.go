@@ -194,7 +194,7 @@ func TestManagerEnsureFreshMetadataRefreshesExpiredSnapshots(t *testing.T) {
 	require.True(t, m.setRLSPolicySnapshot("db", 100, policySnapshot{
 		Version:     10,
 		RefreshedAt: oldRefresh,
-		Policies:    []*rootcoordpb.RLSPolicyInfo{{PolicyName: "old-policy"}},
+		Policies:    []*rlsutil.RowPolicy{{PolicyName: "old-policy"}},
 	}))
 	require.True(t, m.setRLSPrincipalTagsSnapshot("db", 100, principalTagsSnapshot{
 		Version:     10,
@@ -267,7 +267,7 @@ func TestManagerTargetedRefreshUpdatesOnlyRequestedSnapshot(t *testing.T) {
 	m := newManager()
 	require.True(t, m.setRLSPolicySnapshot("db", 100, policySnapshot{
 		Version:  10,
-		Policies: []*rootcoordpb.RLSPolicyInfo{{PolicyName: "old-policy"}},
+		Policies: []*rlsutil.RowPolicy{{PolicyName: "old-policy"}},
 	}))
 	require.True(t, m.setRLSPrincipalTagsSnapshot("db", 100, principalTagsSnapshot{
 		Version: 10,
@@ -307,7 +307,7 @@ func TestManagerSnapshotsUseSeparateVersionWatermarks(t *testing.T) {
 	m := newManager()
 	require.True(t, m.setRLSPolicySnapshot("db", 100, policySnapshot{
 		Version: 10,
-		Policies: []*rootcoordpb.RLSPolicyInfo{
+		Policies: []*rlsutil.RowPolicy{
 			{PolicyName: "new"},
 		},
 	}))
@@ -320,7 +320,7 @@ func TestManagerSnapshotsUseSeparateVersionWatermarks(t *testing.T) {
 
 	require.False(t, m.setRLSPolicySnapshot("db", 100, policySnapshot{
 		Version: 9,
-		Policies: []*rootcoordpb.RLSPolicyInfo{
+		Policies: []*rlsutil.RowPolicy{
 			{PolicyName: "stale"},
 		},
 	}))
@@ -343,7 +343,7 @@ func TestManagerRemoveCollection(t *testing.T) {
 	m := newManager()
 	require.True(t, m.setRLSPolicySnapshot("db", 100, policySnapshot{
 		Version: 1,
-		Policies: []*rootcoordpb.RLSPolicyInfo{
+		Policies: []*rlsutil.RowPolicy{
 			{PolicyName: "tenant"},
 		},
 	}))
@@ -393,11 +393,11 @@ func TestManagerRefreshDoesNotRecreateRemovedCollection(t *testing.T) {
 
 func TestManagerSnapshotsOwnImmutableData(t *testing.T) {
 	m := newManager()
-	policy := &rootcoordpb.RLSPolicyInfo{PolicyName: "tenant"}
+	policy := &rlsutil.RowPolicy{PolicyName: "tenant"}
 	tags := map[string]rlsutil.TagValue{"tenant": rlsutil.NewStringTagValue("acme")}
 	require.True(t, m.setRLSPolicySnapshot("db", 100, policySnapshot{
 		Version:  1,
-		Policies: []*rootcoordpb.RLSPolicyInfo{policy},
+		Policies: []*rlsutil.RowPolicy{policy},
 	}))
 	require.True(t, m.setRLSPrincipalTagsSnapshot("db", 100, principalTagsSnapshot{
 		Version:       1,
