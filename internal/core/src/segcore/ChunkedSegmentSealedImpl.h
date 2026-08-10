@@ -2124,6 +2124,7 @@ class ChunkedSegmentSealedImpl : public SegmentSealed {
         const SealedFieldLayoutPtr& schema_snapshot,
         bool eager_load,
         const std::string& aggregated_warmup_policy,
+        bool use_mmap,
         milvus::OpContext* op_ctx,
         bool is_replace,
         StagedStateCommitter& committer);
