@@ -3874,7 +3874,7 @@ func (c *Core) GetRLSMetadata(ctx context.Context, req *rootcoordpb.GetRLSMetada
 		}, nil
 	}
 
-	metadata, err := c.meta.GetRLSMetadata(ctx, req.GetCollectionId(), req.GetKind())
+	metadata, err := c.meta.GetRLSMetadata(ctx, req.GetCollectionId(), req.GetKind(), req.GetPrincipalName())
 	if err != nil {
 		mlog.Warn(ctx, "failed to get RLS metadata",
 			mlog.FieldCollectionID(req.GetCollectionId()),

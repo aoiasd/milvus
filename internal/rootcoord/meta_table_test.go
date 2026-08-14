@@ -953,7 +953,7 @@ func TestMetaTable_RLSMetadata(t *testing.T) {
 			},
 		}
 
-		metadata, err := meta.GetRLSMetadata(ctx, 20, rootcoordpb.RLSMetadataKind_RLS_METADATA_KIND_ALL)
+		metadata, err := meta.GetRLSMetadata(ctx, 20, rootcoordpb.RLSMetadataKind_RLS_METADATA_KIND_ALL, "")
 		require.NoError(t, err)
 		require.Equal(t, "db1", metadata.DBName)
 		require.Equal(t, "coll1", metadata.CollectionName)
@@ -970,24 +970,34 @@ func TestMetaTable_RLSMetadata(t *testing.T) {
 		require.Equal(t, rlsutil.PolicyActionQuery, meta.collID2Meta[20].RLSPolicies["dept_read"].Actions[0])
 		require.Equal(t, rlsutil.NewStringTagValue("sales"), meta.collID2Meta[20].RLSPrincipals[0].Tags["dept"])
 
-		policyMetadata, err := meta.GetRLSMetadata(ctx, 20, rootcoordpb.RLSMetadataKind_RLS_METADATA_KIND_POLICIES)
+		policyMetadata, err := meta.GetRLSMetadata(ctx, 20, rootcoordpb.RLSMetadataKind_RLS_METADATA_KIND_POLICIES, "")
 		require.NoError(t, err)
 		require.Len(t, policyMetadata.Policies, 1)
 		require.Empty(t, policyMetadata.Principals)
 		policyMetadata.Policies[0].Actions[0] = rlsutil.PolicyActionInsert
 		require.Equal(t, rlsutil.PolicyActionQuery, meta.collID2Meta[20].RLSPolicies["dept_read"].Actions[0])
 
-		principalMetadata, err := meta.GetRLSMetadata(ctx, 20, rootcoordpb.RLSMetadataKind_RLS_METADATA_KIND_PRINCIPALS)
+		principalMetadata, err := meta.GetRLSMetadata(ctx, 20, rootcoordpb.RLSMetadataKind_RLS_METADATA_KIND_PRINCIPALS, "")
 		require.NoError(t, err)
 		require.Empty(t, principalMetadata.Policies)
 		require.Len(t, principalMetadata.Principals, 1)
 		principalMetadata.Principals[0].Tags["dept"] = rlsutil.NewStringTagValue("engineering")
 		require.Equal(t, rlsutil.NewStringTagValue("sales"), meta.collID2Meta[20].RLSPrincipals[0].Tags["dept"])
 
-		_, err = meta.GetRLSMetadata(ctx, 20, rootcoordpb.RLSMetadataKind(100))
+		filtered, err := meta.GetRLSMetadata(ctx, 20, rootcoordpb.RLSMetadataKind_RLS_METADATA_KIND_PRINCIPALS, "alice")
+		require.NoError(t, err)
+		require.Len(t, filtered.Principals, 1)
+		require.Equal(t, "alice", filtered.Principals[0].PrincipalName)
+		missing, err := meta.GetRLSMetadata(ctx, 20, rootcoordpb.RLSMetadataKind_RLS_METADATA_KIND_PRINCIPALS, "bob")
+		require.NoError(t, err)
+		require.Empty(t, missing.Principals)
+		_, err = meta.GetRLSMetadata(ctx, 20, rootcoordpb.RLSMetadataKind_RLS_METADATA_KIND_POLICIES, "alice")
 		require.ErrorIs(t, err, merr.ErrServiceInternal)
 
-		_, err = meta.GetRLSMetadata(ctx, 0, rootcoordpb.RLSMetadataKind_RLS_METADATA_KIND_ALL)
+		_, err = meta.GetRLSMetadata(ctx, 20, rootcoordpb.RLSMetadataKind(100), "")
+		require.ErrorIs(t, err, merr.ErrServiceInternal)
+
+		_, err = meta.GetRLSMetadata(ctx, 0, rootcoordpb.RLSMetadataKind_RLS_METADATA_KIND_ALL, "")
 		require.ErrorIs(t, err, merr.ErrServiceInternal)
 	})
 
@@ -1081,7 +1091,9 @@ func TestMetaTable_RLSMetadata(t *testing.T) {
 			DBID:          10,
 			CollectionID:  20,
 			PrincipalName: "alice",
-			Tags:          map[string]rlsutil.TagValue{"dept": rlsutil.NewStringTagValue("sales")},
+			Tags: map[string]rlsutil.TagValue{
+				"dept": rlsutil.NewStringTagValue("sales"),
+			},
 		}, nil).Once()
 
 		principal, drop, err := meta.PrepareDeleteRLSPrincipalTags(ctx, &rlsutil.DeleteRLSPrincipalTagsRequest{
@@ -1115,7 +1127,11 @@ func TestMetaTable_RLSMetadata(t *testing.T) {
 				return nil
 			}).Once()
 		catalog.EXPECT().GetRLSPrincipal(mock.Anything, int64(20), "alice").Return(nil, merr.ErrIoKeyNotFound).Once()
-		collectionID, err := meta.SetRLSPrincipalTags(ctx, setReq)
+		prepared, err := meta.PrepareSetRLSPrincipalTags(ctx, setReq)
+		require.NoError(t, err)
+		require.True(t, prepared.IsNew)
+		require.NoError(t, meta.ApplyAlterRLSPrincipal(ctx, prepared))
+		collectionID := prepared.CollectionID
 		require.NoError(t, err)
 		require.Equal(t, int64(20), collectionID)
 		require.Len(t, meta.collID2Meta[20].RLSPrincipals, 1)
@@ -1128,7 +1144,11 @@ func TestMetaTable_RLSMetadata(t *testing.T) {
 		})).Return(nil).Once()
 		catalog.EXPECT().GetRLSPrincipal(mock.Anything, int64(20), "alice").Return(&model.RLSPrincipal{PrincipalName: "alice"}, nil).Once()
 		setReq.Tags["dept"] = rlsutil.NewStringTagValue("engineering")
-		collectionID, err = meta.SetRLSPrincipalTags(ctx, setReq)
+		prepared, err = meta.PrepareSetRLSPrincipalTags(ctx, setReq)
+		require.NoError(t, err)
+		require.False(t, prepared.IsNew)
+		require.NoError(t, meta.ApplyAlterRLSPrincipal(ctx, prepared))
+		collectionID = prepared.CollectionID
 		require.NoError(t, err)
 		require.Equal(t, int64(20), collectionID)
 
@@ -1200,7 +1220,9 @@ func TestMetaTable_RLSMetadata(t *testing.T) {
 		}, nil).Once()
 		catalog.EXPECT().SaveRLSPrincipal(mock.Anything, mock.Anything).RunAndReturn(
 			func(_ context.Context, principal *model.RLSPrincipal) error {
-				assert.Equal(t, map[string]rlsutil.TagValue{"tier": rlsutil.NewStringTagValue("gold")}, principal.Tags)
+				assert.Equal(t, map[string]rlsutil.TagValue{
+					"tier": rlsutil.NewStringTagValue("gold"),
+				}, principal.Tags)
 				return nil
 			}).Once()
 		collectionID, err = meta.DeleteRLSPrincipalTags(ctx, &rlsutil.DeleteRLSPrincipalTagsRequest{
@@ -1212,13 +1234,17 @@ func TestMetaTable_RLSMetadata(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, int64(20), collectionID)
 		require.Len(t, meta.collID2Meta[20].RLSPrincipals, 1)
-		assert.Equal(t, map[string]rlsutil.TagValue{"tier": rlsutil.NewStringTagValue("gold")}, meta.collID2Meta[20].RLSPrincipals[0].Tags)
+		assert.Equal(t, map[string]rlsutil.TagValue{
+			"tier": rlsutil.NewStringTagValue("gold"),
+		}, meta.collID2Meta[20].RLSPrincipals[0].Tags)
 
 		catalog.EXPECT().GetRLSPrincipal(mock.Anything, int64(20), "alice").Return(&model.RLSPrincipal{
 			DBID:          10,
 			CollectionID:  20,
 			PrincipalName: "alice",
-			Tags:          map[string]rlsutil.TagValue{"tier": rlsutil.NewStringTagValue("gold")},
+			Tags: map[string]rlsutil.TagValue{
+				"tier": rlsutil.NewStringTagValue("gold"),
+			},
 		}, nil).Once()
 		catalog.EXPECT().DropRLSPrincipal(mock.Anything, int64(20), "alice").Return(nil).Once()
 		collectionID, err = meta.DeleteRLSPrincipalTags(ctx, &rlsutil.DeleteRLSPrincipalTagsRequest{

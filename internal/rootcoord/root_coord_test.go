@@ -1895,7 +1895,9 @@ func TestCore_RLSAPIs(t *testing.T) {
 		DBID:          10,
 		CollectionID:  20,
 		PrincipalName: setTagsReq.GetPrincipalName(),
-		Tags:          setTagsReq.GetTags(),
+		Tags: map[string]rlsutil.TagValue{
+			"dept": rlsutil.NewStringTagValue("sales"),
+		},
 	}, nil).Once()
 	status, err = c.setRLSPrincipalTags(ctx, setTagsReq)
 	require.NoError(t, err)
@@ -1918,7 +1920,7 @@ func TestCore_RLSAPIs(t *testing.T) {
 	assert.True(t, merr.Ok(listPrincipalsResp.Status))
 	assert.Equal(t, []string{"alice", "bob"}, listPrincipalsResp.PrincipalNames)
 
-	meta.EXPECT().GetRLSMetadata(mock.Anything, int64(20), rootcoordpb.RLSMetadataKind_RLS_METADATA_KIND_ALL).Return(&model.RLSMetadata{
+	meta.EXPECT().GetRLSMetadata(mock.Anything, int64(20), rootcoordpb.RLSMetadataKind_RLS_METADATA_KIND_ALL, "").Return(&model.RLSMetadata{
 		DBName:         "db1",
 		CollectionName: "coll1",
 		CollectionID:   20,
@@ -1959,7 +1961,7 @@ func TestCore_RLSAPIs(t *testing.T) {
 
 func TestCore_GetRLSMetadataRejectsInvalidPrincipalState(t *testing.T) {
 	meta := mockrootcoord.NewIMetaTable(t)
-	meta.EXPECT().GetRLSMetadata(mock.Anything, int64(20), rootcoordpb.RLSMetadataKind_RLS_METADATA_KIND_ALL).Return(&model.RLSMetadata{
+	meta.EXPECT().GetRLSMetadata(mock.Anything, int64(20), rootcoordpb.RLSMetadataKind_RLS_METADATA_KIND_ALL, "").Return(&model.RLSMetadata{
 		CollectionID: 20,
 		Principals: []*model.RLSPrincipal{{
 			CollectionID:  20,

@@ -50,6 +50,26 @@ func (c *managerTestCoordClient) GetRLSMetadata(ctx context.Context, req *rootco
 	return c.getRLSMetadata(ctx, req)
 }
 
+func newManagerWithAlice() *manager {
+	return newManagerWithPrincipal(100, "alice")
+}
+
+func newManagerWithPrincipal(collectionID UniqueID, principalName string) *manager {
+	m := newManager()
+	if !setManagerTestPrincipalTags(m, collectionID, principalName, nil) {
+		panic("failed to initialize manager test principal")
+	}
+	return m
+}
+
+func setManagerTestPrincipalTags(m *manager, collectionID UniqueID, principalName string, tags map[string]rlsutil.TagValue) bool {
+	m.getOrCreateCollectionState(newCollectionKey(collectionID))
+	return m.setPrincipalTags(principalKey{collectionID: collectionID, principalName: principalName}, &principalTagsEntry{
+		refreshedAt: time.Now(),
+		tags:        clonePrincipalTags(tags),
+	})
+}
+
 func TestToTemplateExprPreservesQuotedVariables(t *testing.T) {
 	expr := `dept == "$current_principal" and owner == "$current_principal_tags['owner']"`
 	templateExpr, needsPrincipal, tagVariables := toTemplateExpr(expr)
@@ -67,7 +87,7 @@ func TestReferencedFieldIDs(t *testing.T) {
 
 func TestManagerPolicyCombination(t *testing.T) {
 	ctx := context.Background()
-	manager := newManager()
+	manager := newManagerWithAlice()
 	helper := newManagerTestSchemaHelper(t)
 
 	require.True(t, manager.setRLSPolicySnapshot("db", 100, policySnapshot{
@@ -114,7 +134,7 @@ func TestManagerPolicyCombination(t *testing.T) {
 
 func TestManagerRestrictiveOnlyIsFalse(t *testing.T) {
 	ctx := context.Background()
-	manager := newManager()
+	manager := newManagerWithAlice()
 	helper := newManagerTestSchemaHelper(t)
 
 	require.True(t, manager.setRLSPolicySnapshot("db", 100, policySnapshot{
@@ -137,7 +157,7 @@ func TestManagerRestrictiveOnlyIsFalse(t *testing.T) {
 
 func TestManagerPolicyTagsAndPrincipal(t *testing.T) {
 	ctx := context.Background()
-	manager := newManager()
+	manager := newManagerWithAlice()
 	helper := newManagerTestPrincipalSchemaHelper(t)
 
 	require.True(t, manager.setRLSPolicySnapshot("db", 100, policySnapshot{
@@ -157,14 +177,9 @@ func TestManagerPolicyTagsAndPrincipal(t *testing.T) {
 			},
 		},
 	}))
-	require.True(t, manager.setRLSPrincipalTagsSnapshot("db", 100, principalTagsSnapshot{
-		Version: 2,
-		PrincipalTags: map[string]map[string]rlsutil.TagValue{
-			"alice": {
-				"dept":   rlsutil.NewStringTagValue("sales"),
-				"region": rlsutil.NewStringTagValue("us"),
-			},
-		},
+	require.True(t, setManagerTestPrincipalTags(manager, 100, "alice", map[string]rlsutil.TagValue{
+		"dept":   rlsutil.NewStringTagValue("sales"),
+		"region": rlsutil.NewStringTagValue("us"),
 	}))
 
 	expr, err := manager.GetRLSUsingPredicate(ctx, 100, "alice", rlsutil.PolicyActionQuery, true, helper, nil)
@@ -173,11 +188,8 @@ func TestManagerPolicyTagsAndPrincipal(t *testing.T) {
 	require.NoError(t, ValidateRowsByPredicate(ctx, managerTestPrincipalFieldsData("sales", "alice", "us"), 1, expr, "query", "using"))
 	require.Error(t, ValidateRowsByPredicate(ctx, managerTestPrincipalFieldsData("sales", "bob", "us"), 1, expr, "query", "using"))
 
-	require.True(t, manager.setRLSPrincipalTagsSnapshot("db", 100, principalTagsSnapshot{
-		Version: 3,
-		PrincipalTags: map[string]map[string]rlsutil.TagValue{
-			"alice": {"dept": rlsutil.NewStringTagValue("sales")},
-		},
+	require.True(t, setManagerTestPrincipalTags(manager, 100, "alice", map[string]rlsutil.TagValue{
+		"dept": rlsutil.NewStringTagValue("sales"),
 	}))
 	expr, err = manager.GetRLSUsingPredicate(ctx, 100, "alice", rlsutil.PolicyActionQuery, true, helper, nil)
 	require.NoError(t, err)
@@ -187,7 +199,7 @@ func TestManagerPolicyTagsAndPrincipal(t *testing.T) {
 
 func TestManagerMissingTagOnlyDeniesReferencingPolicy(t *testing.T) {
 	ctx := context.Background()
-	manager := newManager()
+	manager := newManagerWithAlice()
 	helper := newManagerTestSchemaHelper(t)
 
 	require.True(t, manager.setRLSPolicySnapshot("db", 100, policySnapshot{
@@ -207,12 +219,7 @@ func TestManagerMissingTagOnlyDeniesReferencingPolicy(t *testing.T) {
 			},
 		},
 	}))
-	require.True(t, manager.setRLSPrincipalTagsSnapshot("db", 100, principalTagsSnapshot{
-		Version: 2,
-		PrincipalTags: map[string]map[string]rlsutil.TagValue{
-			"alice": {},
-		},
-	}))
+	require.True(t, setManagerTestPrincipalTags(manager, 100, "alice", nil))
 
 	expr, err := manager.GetRLSUsingPredicate(ctx, 100, "alice", rlsutil.PolicyActionQuery, true, helper, nil)
 	require.NoError(t, err)
@@ -223,7 +230,7 @@ func TestManagerMissingTagOnlyDeniesReferencingPolicy(t *testing.T) {
 
 func TestManagerTypedPrincipalTagMatching(t *testing.T) {
 	ctx := context.Background()
-	manager := newManager()
+	manager := newManagerWithAlice()
 	helper := newManagerTestSchemaHelper(t)
 
 	testCases := []struct {
@@ -253,13 +260,7 @@ func TestManagerTypedPrincipalTagMatching(t *testing.T) {
 					UsingExpr:  testCase.field + " == $current_principal_tags['value']",
 				}},
 			}))
-			require.True(t, manager.setRLSPrincipalTagsSnapshot("db", 100, principalTagsSnapshot{
-				Version: int64(index + 1),
-				PrincipalTags: map[string]map[string]rlsutil.TagValue{
-					"alice": {"value": testCase.tag},
-				},
-			}))
-
+			require.True(t, setManagerTestPrincipalTags(manager, 100, "alice", map[string]rlsutil.TagValue{"value": testCase.tag}))
 			expr, err := manager.GetRLSUsingPredicate(ctx, 100, "alice", rlsutil.PolicyActionQuery, true, helper, nil)
 			require.NoError(t, err)
 			require.NotNil(t, expr)
@@ -300,11 +301,8 @@ func TestManagerRejectsInexactDoubleToFloatTag(t *testing.T) {
 					UsingExpr:  usingExpr,
 				}},
 			}))
-			require.True(t, manager.setRLSPrincipalTagsSnapshot("db", 100, principalTagsSnapshot{
-				Version: 1,
-				PrincipalTags: map[string]map[string]rlsutil.TagValue{
-					"alice": {"value": rlsutil.NewDoubleTagValue(16777217)},
-				},
+			require.True(t, setManagerTestPrincipalTags(manager, 100, "alice", map[string]rlsutil.TagValue{
+				"value": rlsutil.NewDoubleTagValue(16777217),
 			}))
 
 			expr, err := manager.GetRLSUsingPredicate(ctx, 100, "alice", rlsutil.PolicyActionQuery, true, helper, nil)
@@ -316,7 +314,7 @@ func TestManagerRejectsInexactDoubleToFloatTag(t *testing.T) {
 
 func TestManagerRejectsTagUsedWithMixedFieldTypes(t *testing.T) {
 	ctx := context.Background()
-	manager := newManager()
+	manager := newManagerWithAlice()
 	helper := newManagerTestSchemaHelper(t)
 	require.True(t, manager.setRLSPolicySnapshot("db", 100, policySnapshot{
 		Version: 1,
@@ -327,11 +325,8 @@ func TestManagerRejectsTagUsedWithMixedFieldTypes(t *testing.T) {
 			UsingExpr:  "age == $current_principal_tags['value'] or dept == $current_principal_tags['value']",
 		}},
 	}))
-	require.True(t, manager.setRLSPrincipalTagsSnapshot("db", 100, principalTagsSnapshot{
-		Version: 1,
-		PrincipalTags: map[string]map[string]rlsutil.TagValue{
-			"alice": {"value": rlsutil.NewInt64TagValue(18)},
-		},
+	require.True(t, setManagerTestPrincipalTags(manager, 100, "alice", map[string]rlsutil.TagValue{
+		"value": rlsutil.NewInt64TagValue(18),
 	}))
 
 	expr, err := manager.GetRLSUsingPredicate(ctx, 100, "alice", rlsutil.PolicyActionQuery, true, helper, nil)
@@ -345,7 +340,7 @@ func TestManagerRejectsTagUsedWithMixedFieldTypes(t *testing.T) {
 
 func TestManagerSnapshotReplace(t *testing.T) {
 	ctx := context.Background()
-	manager := newManager()
+	manager := newManagerWithAlice()
 	helper := newManagerTestSchemaHelper(t)
 	policy := &rlsutil.RowPolicy{
 		PolicyName: "p1",
@@ -359,22 +354,14 @@ func TestManagerSnapshotReplace(t *testing.T) {
 		Version:  1,
 		Policies: []*rlsutil.RowPolicy{policy},
 	}))
-	require.True(t, manager.setRLSPrincipalTagsSnapshot("db", 100, principalTagsSnapshot{
-		Version: 2,
-		PrincipalTags: map[string]map[string]rlsutil.TagValue{
-			"alice": tags,
-		},
-	}))
+	require.True(t, setManagerTestPrincipalTags(manager, 100, "alice", tags))
 
 	expr, err := manager.GetRLSUsingPredicate(ctx, 100, "alice", rlsutil.PolicyActionQuery, true, helper, nil)
 	require.NoError(t, err)
 	require.NotNil(t, expr)
 	require.NoError(t, ValidateRowsByPredicate(ctx, managerTestFieldsData("sales"), 1, expr, "query", "using"))
 
-	require.True(t, manager.setRLSPrincipalTagsSnapshot("db", 100, principalTagsSnapshot{
-		Version:       3,
-		PrincipalTags: map[string]map[string]rlsutil.TagValue{},
-	}))
+	require.True(t, setManagerTestPrincipalTags(manager, 100, "alice", nil))
 	expr, err = manager.GetRLSUsingPredicate(ctx, 100, "alice", rlsutil.PolicyActionQuery, true, helper, nil)
 	require.NoError(t, err)
 	require.NotNil(t, expr)
@@ -389,13 +376,12 @@ func TestManagerSnapshotReplace(t *testing.T) {
 	assert.Nil(t, expr)
 }
 
-func TestManagerEmptySnapshotFailsClosed(t *testing.T) {
+func TestManagerEmptyPolicySnapshotFailsClosed(t *testing.T) {
 	ctx := context.Background()
-	manager := newManager()
+	manager := newManagerWithAlice()
 	helper := newManagerTestSchemaHelper(t)
 
 	require.True(t, manager.setRLSPolicySnapshot("db", 100, policySnapshot{Version: 0}))
-	require.True(t, manager.setRLSPrincipalTagsSnapshot("db", 100, principalTagsSnapshot{Version: 0}))
 
 	expr, err := manager.GetRLSUsingPredicate(ctx, 100, "alice", rlsutil.PolicyActionQuery, true, helper, nil)
 	require.ErrorIs(t, err, merr.ErrPrivilegeNotPermitted)
@@ -404,7 +390,7 @@ func TestManagerEmptySnapshotFailsClosed(t *testing.T) {
 
 func TestManagerDisabledIgnoresSnapshots(t *testing.T) {
 	ctx := context.Background()
-	manager := newManager()
+	manager := newManagerWithAlice()
 	helper := newManagerTestSchemaHelper(t)
 
 	require.True(t, manager.setRLSPolicySnapshot("db", 100, policySnapshot{
@@ -418,11 +404,8 @@ func TestManagerDisabledIgnoresSnapshots(t *testing.T) {
 			},
 		},
 	}))
-	require.True(t, manager.setRLSPrincipalTagsSnapshot("db", 100, principalTagsSnapshot{
-		Version: 2,
-		PrincipalTags: map[string]map[string]rlsutil.TagValue{
-			"alice": {"dept": rlsutil.NewStringTagValue("sales")},
-		},
+	require.True(t, setManagerTestPrincipalTags(manager, 100, "alice", map[string]rlsutil.TagValue{
+		"dept": rlsutil.NewStringTagValue("sales"),
 	}))
 
 	expr, err := manager.GetRLSUsingPredicate(ctx, 100, "alice", rlsutil.PolicyActionQuery, false, helper, nil)
@@ -436,7 +419,7 @@ func TestManagerDisabledIgnoresSnapshots(t *testing.T) {
 
 func TestManagerCombinedExpressionLengthLimit(t *testing.T) {
 	ctx := context.Background()
-	manager := newManager()
+	manager := newManagerWithAlice()
 	helper := newManagerTestSchemaHelper(t)
 
 	paramtable.Get().Save(paramtable.Get().ProxyCfg.RLSMaxCombinedExpressionLength.Key, "8")
@@ -463,7 +446,7 @@ func TestManagerCombinedExpressionLengthLimit(t *testing.T) {
 
 func TestManagerAlwaysTruePredicateReturnsNil(t *testing.T) {
 	ctx := context.Background()
-	manager := newManager()
+	manager := newManagerWithAlice()
 	helper := newManagerTestSchemaHelper(t)
 
 	require.True(t, manager.setRLSPolicySnapshot("db", 100, policySnapshot{
@@ -493,6 +476,20 @@ func TestManagerRequestPathLoadsMissingStartupState(t *testing.T) {
 		getRLSMetadata: func(ctx context.Context, req *rootcoordpb.GetRLSMetadataRequest) (*rootcoordpb.GetRLSMetadataResponse, error) {
 			require.NotNil(t, req)
 			require.Equal(t, int64(collectionID), req.GetCollectionId())
+			if req.GetPrincipalName() != "" {
+				require.Equal(t, "alice", req.GetPrincipalName())
+				payload, err := rlsutil.TagsToJSON(map[string]rlsutil.TagValue{"dept": rlsutil.NewStringTagValue("sales")})
+				require.NoError(t, err)
+				return &rootcoordpb.GetRLSMetadataResponse{
+					Status:       merr.Success(),
+					CollectionId: collectionID,
+					Principals: []*rootcoordpb.RLSPrincipalInfo{{
+						CollectionId:  collectionID,
+						PrincipalName: "alice",
+						Tags:          payload,
+					}},
+				}, nil
+			}
 			return &rootcoordpb.GetRLSMetadataResponse{
 				Status:         merr.Success(),
 				DbName:         "db",
@@ -504,12 +501,6 @@ func TestManagerRequestPathLoadsMissingStartupState(t *testing.T) {
 						PolicyType: milvuspb.RowPolicyType(rlsutil.PolicyTypePermissive),
 						Actions:    []milvuspb.RowPolicyAction{milvuspb.RowPolicyAction(rlsutil.PolicyActionQuery)},
 						UsingExpr:  "dept == $current_principal_tags['dept']",
-					},
-				},
-				Principals: []*rootcoordpb.RLSPrincipalInfo{
-					{
-						PrincipalName: "alice",
-						Tags:          `{"dept":"sales"}`,
 					},
 				},
 			}, nil
@@ -545,10 +536,6 @@ func TestManagerRequestPathRefreshFailsClosed(t *testing.T) {
 			},
 		},
 	}))
-	require.True(t, manager.setRLSPrincipalTagsSnapshot("db", collectionID, principalTagsSnapshot{
-		Version:     1,
-		RefreshedAt: staleRefresh,
-	}))
 	coord := &managerTestCoordClient{
 		getRLSMetadata: func(ctx context.Context, req *rootcoordpb.GetRLSMetadataRequest) (*rootcoordpb.GetRLSMetadataResponse, error) {
 			return &rootcoordpb.GetRLSMetadataResponse{
@@ -567,7 +554,7 @@ func TestManagerRequestPathRefreshFailsClosed(t *testing.T) {
 
 func TestManagerCollectionStateIsScopedByCollectionID(t *testing.T) {
 	ctx := context.Background()
-	manager := newManager()
+	manager := newManagerWithAlice()
 	helper := newManagerTestSchemaHelper(t)
 
 	require.True(t, manager.setRLSPolicySnapshot("db1", 100, policySnapshot{
@@ -581,8 +568,6 @@ func TestManagerCollectionStateIsScopedByCollectionID(t *testing.T) {
 			},
 		},
 	}))
-	require.True(t, manager.setRLSPrincipalTagsSnapshot("db1", 100, principalTagsSnapshot{Version: 1}))
-
 	expr, err := manager.GetRLSUsingPredicate(ctx, 100, "alice", rlsutil.PolicyActionQuery, true, helper, nil)
 	require.NoError(t, err)
 	require.NotNil(t, expr)
@@ -594,7 +579,7 @@ func TestManagerCollectionStateIsScopedByCollectionID(t *testing.T) {
 
 func TestManagerCollectionPredicateLocksAreIndependent(t *testing.T) {
 	ctx := context.Background()
-	manager := newManager()
+	manager := newManagerWithAlice()
 	helper := newManagerTestSchemaHelper(t)
 	for _, collectionID := range []UniqueID{100, 200} {
 		require.True(t, manager.setRLSPolicySnapshot("db", collectionID, policySnapshot{
@@ -608,7 +593,7 @@ func TestManagerCollectionPredicateLocksAreIndependent(t *testing.T) {
 				},
 			},
 		}))
-		require.True(t, manager.setRLSPrincipalTagsSnapshot("db", collectionID, principalTagsSnapshot{Version: 1}))
+		require.True(t, setManagerTestPrincipalTags(manager, collectionID, "alice", nil))
 	}
 
 	state := manager.getCollectionState(newCollectionKey(100))
@@ -646,7 +631,7 @@ func TestManagerCollectionPredicateLocksAreIndependent(t *testing.T) {
 
 func TestManagerDefaultDatabaseNameDoesNotAffectLookup(t *testing.T) {
 	ctx := context.Background()
-	manager := newManager()
+	manager := newManagerWithAlice()
 	helper := newManagerTestSchemaHelper(t)
 
 	require.True(t, manager.setRLSPolicySnapshot("default", 100, policySnapshot{
@@ -660,8 +645,6 @@ func TestManagerDefaultDatabaseNameDoesNotAffectLookup(t *testing.T) {
 			},
 		},
 	}))
-	require.True(t, manager.setRLSPrincipalTagsSnapshot("default", 100, principalTagsSnapshot{Version: 1}))
-
 	expr, err := manager.GetRLSUsingPredicate(ctx, 100, "alice", rlsutil.PolicyActionQuery, true, helper, nil)
 	require.NoError(t, err)
 	require.NotNil(t, expr)
@@ -688,28 +671,23 @@ func TestManagerMissingEntriesFailClosed(t *testing.T) {
 			},
 		},
 	}))
+	require.True(t, setManagerTestPrincipalTags(manager, 100, "alice", nil))
 
 	expr, err = manager.GetRLSUsingPredicate(ctx, 100, "alice", rlsutil.PolicyActionQuery, true, helper, nil)
 	require.NoError(t, err)
 	require.NotNil(t, expr)
 	require.Error(t, ValidateRowsByPredicate(ctx, managerTestFieldsData("sales"), 1, expr, "query", "using"))
 
-	require.True(t, manager.setRLSPrincipalTagsSnapshot("db", 100, principalTagsSnapshot{
-		Version: 2,
-		PrincipalTags: map[string]map[string]rlsutil.TagValue{
-			"alice": {"region": rlsutil.NewStringTagValue("us")},
-		},
+	require.True(t, setManagerTestPrincipalTags(manager, 100, "alice", map[string]rlsutil.TagValue{
+		"region": rlsutil.NewStringTagValue("us"),
 	}))
 	expr, err = manager.GetRLSUsingPredicate(ctx, 100, "alice", rlsutil.PolicyActionQuery, true, helper, nil)
 	require.NoError(t, err)
 	require.NotNil(t, expr)
 	require.Error(t, ValidateRowsByPredicate(ctx, managerTestFieldsData("sales"), 1, expr, "query", "using"))
 
-	require.True(t, manager.setRLSPrincipalTagsSnapshot("db", 100, principalTagsSnapshot{
-		Version: 3,
-		PrincipalTags: map[string]map[string]rlsutil.TagValue{
-			"alice": {"dept": rlsutil.NewStringTagValue("sales")},
-		},
+	require.True(t, setManagerTestPrincipalTags(manager, 100, "alice", map[string]rlsutil.TagValue{
+		"dept": rlsutil.NewStringTagValue("sales"),
 	}))
 	expr, err = manager.GetRLSUsingPredicate(ctx, 100, "alice", rlsutil.PolicyActionQuery, true, helper, nil)
 	require.NoError(t, err)
@@ -719,7 +697,7 @@ func TestManagerMissingEntriesFailClosed(t *testing.T) {
 
 func TestManagerPolicySnapshotReplacesByName(t *testing.T) {
 	ctx := context.Background()
-	manager := newManager()
+	manager := newManagerWithAlice()
 	helper := newManagerTestSchemaHelper(t)
 
 	require.True(t, manager.setRLSPolicySnapshot("db", 100, policySnapshot{
@@ -857,6 +835,10 @@ func TestValidateCheckForWriteUsesSchemaTimezone(t *testing.T) {
 			},
 		},
 	}))
+	defaultManager.setPrincipalTags(principalKey{collectionID: collectionID, principalName: "alice"}, &principalTagsEntry{
+		refreshedAt: time.Now(),
+		tags:        map[string]rlsutil.TagValue{},
+	})
 
 	fieldsData := []*schemapb.FieldData{
 		{
@@ -879,8 +861,8 @@ func TestValidateCheckForWriteUsesSchemaTimezone(t *testing.T) {
 
 func TestManagerReadPredicateUsesSchemaTimezone(t *testing.T) {
 	ctx := context.Background()
-	manager := newManager()
 	const collectionID = int64(987654323)
+	manager := newManagerWithPrincipal(collectionID, "alice")
 
 	schema := &schemapb.CollectionSchema{
 		Name:       "rls_read_timestamptz_test",
@@ -930,8 +912,8 @@ func TestManagerReadPredicateUsesSchemaTimezone(t *testing.T) {
 
 func TestManagerCompiledPredicateCacheUsesSchemaContext(t *testing.T) {
 	ctx := context.Background()
-	manager := newManager()
 	const collectionID = int64(987654324)
+	manager := newManagerWithPrincipal(collectionID, "alice")
 
 	newHelper := func(version int32, timezone string) *typeutil.SchemaHelper {
 		helper, err := typeutil.CreateSchemaHelper(&schemapb.CollectionSchema{
@@ -1071,16 +1053,13 @@ func TestValidateRowsTreatsEmptyValidDataAsDense(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestManagerPredicateEvaluationUsesSeparateSnapshotWatermarks(t *testing.T) {
+func TestManagerPolicySnapshotWatermarkIsIndependentFromPrincipalCache(t *testing.T) {
 	ctx := context.Background()
-	manager := newManager()
+	manager := newManagerWithAlice()
 	helper := newManagerTestSchemaHelper(t)
 
-	require.True(t, manager.setRLSPrincipalTagsSnapshot("db", 100, principalTagsSnapshot{
-		Version: 20,
-		PrincipalTags: map[string]map[string]rlsutil.TagValue{
-			"alice": {"dept": rlsutil.NewStringTagValue("sales")},
-		},
+	require.True(t, setManagerTestPrincipalTags(manager, 100, "alice", map[string]rlsutil.TagValue{
+		"dept": rlsutil.NewStringTagValue("sales"),
 	}))
 	require.True(t, manager.setRLSPolicySnapshot("db", 100, policySnapshot{
 		Version: 10,
@@ -1116,10 +1095,7 @@ func TestManagerPredicateEvaluationUsesSeparateSnapshotWatermarks(t *testing.T) 
 	require.NoError(t, ValidateRowsByPredicate(ctx, managerTestFieldsData("sales"), 1, expr, "query", "using"))
 	require.Error(t, ValidateRowsByPredicate(ctx, managerTestFieldsData("engineering"), 1, expr, "query", "using"))
 
-	require.True(t, manager.setRLSPrincipalTagsSnapshot("db", 100, principalTagsSnapshot{
-		Version:       21,
-		PrincipalTags: map[string]map[string]rlsutil.TagValue{},
-	}))
+	require.True(t, setManagerTestPrincipalTags(manager, 100, "alice", nil))
 	expr, err = manager.GetRLSUsingPredicate(ctx, 100, "alice", rlsutil.PolicyActionQuery, true, helper, nil)
 	require.NoError(t, err)
 	require.NotNil(t, expr)
@@ -1273,7 +1249,7 @@ func TestMergePredicateToPlan(t *testing.T) {
 
 func TestManagerApplyRLSUsingPredicate(t *testing.T) {
 	ctx := context.Background()
-	manager := newManager()
+	manager := newManagerWithAlice()
 	helper := newManagerTestSchemaHelper(t)
 	visitorArgs := &planparserv2.ParserVisitorArgs{}
 
@@ -1288,11 +1264,8 @@ func TestManagerApplyRLSUsingPredicate(t *testing.T) {
 			},
 		},
 	}))
-	require.True(t, manager.setRLSPrincipalTagsSnapshot("db", 100, principalTagsSnapshot{
-		Version: 2,
-		PrincipalTags: map[string]map[string]rlsutil.TagValue{
-			"alice": {"dept": rlsutil.NewStringTagValue("sales")},
-		},
+	require.True(t, setManagerTestPrincipalTags(manager, 100, "alice", map[string]rlsutil.TagValue{
+		"dept": rlsutil.NewStringTagValue("sales"),
 	}))
 
 	plan, err := planparserv2.CreateRetrievePlanArgs(helper, "id == 1", nil, visitorArgs)
