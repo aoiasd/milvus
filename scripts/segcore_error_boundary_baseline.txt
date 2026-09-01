@@ -178,6 +178,7 @@ milvus_storage	internal/core/src/segcore/memory_planner.cpp
 milvus_storage	internal/core/src/segcore/memory_planner.h
 milvus_storage	internal/core/src/segcore/packed_reader_c.cpp
 milvus_storage	internal/core/src/segcore/packed_writer_c.cpp
+milvus_storage	internal/core/src/segcore/segcore_init_c.cpp
 milvus_storage	internal/core/src/segcore/segment_c.cpp
 milvus_storage	internal/core/src/segcore/SegmentGrowingImpl.cpp
 milvus_storage	internal/core/src/segcore/SegmentGrowingImpl.h
