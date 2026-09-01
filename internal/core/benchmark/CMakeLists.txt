@@ -24,3 +24,33 @@ install(TARGETS fastmem_benchmark DESTINATION benchmark)
 add_executable(sorted_int64_lookup_benchmark SortedInt64LookupBenchmark.cpp)
 target_include_directories(sorted_int64_lookup_benchmark PRIVATE ${CMAKE_HOME_DIRECTORY}/src)
 install(TARGETS sorted_int64_lookup_benchmark DESTINATION benchmark)
+
+add_executable(raw_column_access_benchmark RawColumnAccessBenchmark.cpp)
+target_include_directories(raw_column_access_benchmark PRIVATE
+        ${CMAKE_HOME_DIRECTORY}/src
+        ${CMAKE_HOME_DIRECTORY}/unittest
+        ${CMAKE_HOME_DIRECTORY}/output/include
+        ${CMAKE_HOME_DIRECTORY}/thirdparty/tantivy
+        ${CMAKE_HOME_DIRECTORY}/thirdparty/tantivy/tantivy-binding/include
+        ${MILVUS_STORAGE_INCLUDE_DIR}
+)
+target_compile_definitions(raw_column_access_benchmark PRIVATE MILVUS_UNIT_TEST)
+target_link_directories(raw_column_access_benchmark PRIVATE
+        ${CMAKE_HOME_DIRECTORY}/output/lib
+)
+target_link_libraries(raw_column_access_benchmark PRIVATE
+        benchmark::benchmark
+        GTest::gtest
+        milvus_core
+        milvus_conan_deps
+        knowhere
+        milvus-storage
+        milvus-planparser-cpp
+)
+if (LINUX)
+    target_link_options(raw_column_access_benchmark PRIVATE
+            "LINKER:--allow-multiple-definition")
+endif()
+set_target_properties(raw_column_access_benchmark PROPERTIES
+        BUILD_RPATH "${CMAKE_HOME_DIRECTORY}/output/lib"
+)
