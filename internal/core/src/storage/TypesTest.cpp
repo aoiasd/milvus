@@ -21,21 +21,6 @@
 namespace milvus::storage {
 namespace {
 
-consteval bool
-DefaultIndexMetaHasSafeValues() {
-    IndexMeta index_meta;
-    return index_meta.segment_id == 0 && index_meta.field_id == 0 &&
-           index_meta.build_id == 0 && index_meta.index_version == 0 &&
-           index_meta.key.empty() && index_meta.field_name.empty() &&
-           index_meta.field_type == DataType::NONE && index_meta.dim == 0 &&
-           !index_meta.index_non_encoding &&
-           index_meta.index_store_path_version ==
-               milvus::proto::index::IndexStorePathVersion::
-                   INDEX_STORE_PATH_VERSION_BUILD_ROOTED;
-}
-
-static_assert(DefaultIndexMetaHasSafeValues());
-
 TEST(StorageTypesTest, DefaultIndexMetaHasSafeValues) {
     IndexMeta index_meta;
 

@@ -4734,7 +4734,7 @@ TEST(SealedSegmentCowState, ResolvesVortexColumnGroupLocalFormatFallback) {
     ASSERT_NE(sealed, nullptr);
 
     auto column_group = std::make_shared<milvus_storage::api::ColumnGroup>();
-    column_group->format = STORAGE_FORMAT_VORTEX;
+    column_group->format = LOON_FORMAT_VORTEX;
 
     column_group->columns = {schema->get_storage_column_name(vortex)};
     EXPECT_EQ(

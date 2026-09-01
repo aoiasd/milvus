@@ -1,0 +1,78 @@
+diff --git a/cpp/CMakeLists.txt b/cpp/CMakeLists.txt
+--- a/cpp/CMakeLists.txt
++++ b/cpp/CMakeLists.txt
+@@ -13,4 +13,5 @@ option(WITH_PYTHON_BINDING "Build for Python bindings with hidden symbols." OFF)
+ option(WITH_FIU "Build with fault injection support (libfiu)." OFF)
+ option(WITH_CRT "Build with AWS S3 CRT support." OFF)
+ option(WITH_TALON "Build with Talon filesystem support." OFF)
++option(WITH_VORTEX_IO_TRACE "Build Vortex source IO trace diagnostics." OFF)
+ option(ARROW_WITH_JEMALLOC "Build with jemalloc." OFF)
+@@ -66,3 +67,6 @@ if (WITH_TALON)
+   list(APPEND CORROSION_FEATURES talon)
+ endif()
++if (WITH_VORTEX_IO_TRACE)
++  list(APPEND CORROSION_FEATURES io-trace)
++endif()
+ add_subdirectory(${RUST_BRIDGE_PATH})
+diff --git a/cpp/include/milvus-storage/format/vortex/vortex_io_trace.h b/cpp/include/milvus-storage/format/vortex/vortex_io_trace.h
+new file mode 100644
+--- /dev/null
++++ b/cpp/include/milvus-storage/format/vortex/vortex_io_trace.h
+@@ -0,0 +1,22 @@
++// Copyright 2026 Zilliz
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++#pragma once
++
++namespace milvus_storage::vortex {
++
++void StartIOTrace();
++void PrintAndDisableIOTrace();
++
++}  // namespace milvus_storage::vortex
+diff --git a/cpp/src/format/vortex/vortex_io_trace.cpp b/cpp/src/format/vortex/vortex_io_trace.cpp
+new file mode 100644
+--- /dev/null
++++ b/cpp/src/format/vortex/vortex_io_trace.cpp
+@@ -0,0 +1,30 @@
++// Copyright 2026 Zilliz
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++#include "milvus-storage/format/vortex/vortex_io_trace.h"
++
++#include "vortex_bridge.h"
++
++namespace milvus_storage::vortex {
++
++void StartIOTrace() {
++    ResetIOTrace();
++}
++
++void PrintAndDisableIOTrace() {
++    PrintIOTrace();
++    DisableIOTrace();
++}
++
++}  // namespace milvus_storage::vortex

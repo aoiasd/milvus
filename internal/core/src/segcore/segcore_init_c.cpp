@@ -25,6 +25,7 @@
 #include "config/ConfigKnowhere.h"
 #include "glog/logging.h"
 #include "log/Log.h"
+#include "milvus-storage/format/vortex/vortex_io_trace.h"
 #include "pthread.h"
 #include "segcore/SegcoreConfig.h"
 #include "segcore/segcore_init_c.h"
@@ -36,6 +37,7 @@ std::once_flag close_glog_once;
 
 extern "C" void
 SegcoreInit(const char* conf_file) {
+    milvus_storage::vortex::StartIOTrace();
     // Mirrors IndexBuilderInit: a config exception here (bad conf file) must
     // not cross the C ABI and terminate the process; log and keep defaults.
     try {
@@ -316,6 +318,7 @@ SegcoreEnableKnowhereScoreConsistency() {
 extern "C" void
 SegcoreCloseGlog() {
     std::call_once(close_glog_once, [&]() {
+        milvus_storage::vortex::PrintAndDisableIOTrace();
         if (google::IsGoogleLoggingInitialized()) {
             google::ShutdownGoogleLogging();
         }

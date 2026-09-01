@@ -1470,6 +1470,55 @@ TEST(VortexColumnTest, CursorOwnedScanReleasesOldFileBeforePinningNextFile) {
     std::filesystem::remove_all(dir);
 }
 
+TEST(VortexColumnTest, MultiFileTakeUsesSegmentOffsets) {
+    auto schema = MakeSchema();
+    auto properties =
+        std::make_shared<milvus_storage::api::Properties>(MakeProperties());
+    auto dir = std::filesystem::temp_directory_path() /
+               ("milvus_vortex_segment_offset_take_test_" +
+                std::to_string(::getpid()) + "_" +
+                std::to_string(reinterpret_cast<uintptr_t>(properties.get())));
+    std::filesystem::create_directories(dir);
+
+    auto file0 =
+        WriteVortexFile((dir / "cg0.vx").string(), schema, *properties, 0);
+    auto file1 =
+        WriteVortexFile((dir / "cg1.vx").string(), schema, *properties, 16);
+    auto file2 =
+        WriteVortexFile((dir / "cg2.vx").string(), schema, *properties, 32);
+    auto column_group = MakeColumnGroup(
+        {file0, file1, file2}, properties, {std::to_string(kIntFieldId)});
+
+    FieldMeta int_meta(FieldName("int_field"),
+                       FieldId(kIntFieldId),
+                       DataType::INT32,
+                       false,
+                       std::nullopt);
+    VortexColumn column(
+        FieldId(kIntFieldId), int_meta, properties, column_group);
+
+    // The first request is in file 2. Requests are intentionally unordered,
+    // contain a duplicate, and include a consecutive run in file 1.
+    const std::vector<int64_t> offsets{34, 18, 19, 34, 15, 32, 17};
+    auto take = column.Take(nullptr,
+                            ChunkedColumnInterface::TakeOptions{
+                                ChunkedColumnInterface::OffsetView::From(
+                                    offsets.data(), offsets.size()),
+                                ChunkedColumnInterface::TargetType::Int32});
+    ASSERT_NE(take, nullptr);
+    ASSERT_EQ(take->Size(), static_cast<int64_t>(offsets.size()));
+
+    std::vector<int32_t> values;
+    values.reserve(offsets.size());
+    for (int64_t i = 0; i < take->Size(); ++i) {
+        values.emplace_back(*take->Get<int32_t>(i).value);
+    }
+    EXPECT_EQ(values,
+              (std::vector<int32_t>{340, 180, 190, 340, 150, 320, 170}));
+
+    std::filesystem::remove_all(dir);
+}
+
 TEST(VortexColumnTest, MultiFieldColumnsShareColumnGroup) {
     auto schema = MakeSchema();
     auto properties =
