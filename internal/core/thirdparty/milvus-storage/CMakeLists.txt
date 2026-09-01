@@ -31,6 +31,8 @@ endif ()
 # Disable benchmark for milvus-storage (we don't need it and it may have missing deps)
 set(WITH_BENCHMARK OFF CACHE BOOL "" FORCE)
 
+set(WITH_VORTEX_IO_TRACE ON CACHE BOOL "" FORCE )
+
 # milvus-storage's Rust bridge now depends on crates that require Rust 1.92.
 # The top-level CMake cache may have been initialized by other Rust components
 # that intentionally build with 1.89, so reset Corrosion's cached Rust toolchain
@@ -60,7 +62,11 @@ FetchContent_Declare(
         SOURCE_DIR      ${CMAKE_CURRENT_BINARY_DIR}/milvus-storage-src
         BINARY_DIR      ${CMAKE_CURRENT_BINARY_DIR}/milvus-storage-build
         SOURCE_SUBDIR   cpp
-        DOWNLOAD_DIR    ${THIRDPARTY_DOWNLOAD_PATH} )
+        DOWNLOAD_DIR    ${THIRDPARTY_DOWNLOAD_PATH}
+        PATCH_COMMAND   ${CMAKE_COMMAND}
+                        -DSOURCE_DIR=<SOURCE_DIR>
+                        -DPATCH_FILE=${CMAKE_CURRENT_LIST_DIR}/enable-vortex-io-trace.patch
+                        -P ${CMAKE_CURRENT_LIST_DIR}/apply-vortex-io-trace.cmake )
 
 FetchContent_GetProperties( milvus-storage )
 if ( NOT milvus-storage_POPULATED )
