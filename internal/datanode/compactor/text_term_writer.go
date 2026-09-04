@@ -44,9 +44,9 @@ func writeCompactionTextTerms(
 	binlogIO flushio.BinlogIO,
 	logAllocator allocator.Interface,
 	params compaction.Params,
-) (int64, error) {
+) error {
 	if segment.GetNumOfRows() == 0 {
-		return 0, nil
+		return nil
 	}
 	var downloader func(context.Context, []string) ([][]byte, error)
 	if binlogIO != nil {
@@ -63,47 +63,47 @@ func writeCompactionTextTerms(
 		Downloader:     downloader,
 	})
 	if err != nil {
-		return 0, err
+		return err
 	}
 	if len(textTerms.Fields) == 0 {
-		return 0, nil
+		return nil
 	}
 	if logAllocator == nil {
-		return 0, merr.WrapErrServiceInternalMsg("text term FST log allocator is nil")
+		return merr.WrapErrServiceInternalMsg("text term FST log allocator is nil")
 	}
 	if segment.GetStorageVersion() < storage.StorageV3 {
 		if binlogIO == nil {
-			return 0, merr.WrapErrServiceInternalMsg("text term FST binlog IO is nil")
+			return merr.WrapErrServiceInternalMsg("text term FST binlog IO is nil")
 		}
-		logs, size, err := textindex.WriteFieldBinlogs(ctx, binlogIO.Upload,
+		logs, _, err := textindex.WriteFieldBinlogs(ctx, binlogIO.Upload,
 			params.StorageConfig.GetRootPath(), collectionID, partitionID, segment.GetSegmentID(),
 			logAllocator, textTerms.Fields, textTerms.CoverageTimestamp)
 		if err != nil {
-			return 0, err
+			return err
 		}
 		segment.TextLogV2 = logs
-		return size, nil
+		return nil
 	}
 
-	entries, size, err := textindex.BuildReplacementManifestEntries(segment.GetManifest(), params.StorageConfig,
+	entries, _, err := textindex.BuildReplacementManifestEntries(segment.GetManifest(), params.StorageConfig,
 		logAllocator, textTerms.Fields, textTerms.CoverageTimestamp)
 	if err != nil {
-		return 0, err
+		return err
 	}
 	if len(entries) == 0 {
-		return 0, nil
+		return nil
 	}
 	basePath, version, err := packed.UnmarshalManifestPath(segment.GetManifest())
 	if err != nil {
-		return 0, err
+		return err
 	}
 	manifest, err := packed.CommitManifestUpdates(basePath, version, params.StorageConfig,
 		&packed.ManifestUpdates{Stats: entries})
 	if err != nil {
-		return 0, merr.Wrap(err, "commit compaction text term FST manifest")
+		return merr.Wrap(err, "commit compaction text term FST manifest")
 	}
 	segment.Manifest = manifest
-	return size, nil
+	return nil
 }
 
 func writeCompactionTextTermsForSegments(
@@ -116,7 +116,7 @@ func writeCompactionTextTermsForSegments(
 	params compaction.Params,
 ) error {
 	for _, segment := range segments {
-		if _, err := writeCompactionTextTerms(ctx, schema, segment, collectionID, partitionID,
+		if err := writeCompactionTextTerms(ctx, schema, segment, collectionID, partitionID,
 			binlogIO, logAllocator, params); err != nil {
 			return err
 		}

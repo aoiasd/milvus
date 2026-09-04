@@ -17,15 +17,16 @@
 package function
 
 import (
-	"sort"
+	"slices"
 
 	"github.com/milvus-io/milvus-proto/go-api/v3/schemapb"
 	"github.com/milvus-io/milvus/pkg/v3/util/merr"
+	"github.com/milvus-io/milvus/pkg/v3/util/typeutil"
 )
 
 // AnalyzedTextTermBatch contains the message-level unique terms emitted for one
 // field. Multi-analyzer row dispatch does not partition the field vocabulary.
-// Terms are sorted by their original analyzer-output bytes.
+// Term order is unspecified; FST construction owns ordering.
 type AnalyzedTextTermBatch struct {
 	InputFieldID int64
 	Terms        [][]byte
@@ -35,6 +36,7 @@ type AnalyzedTextTermBatch struct {
 // running tokenization a second time.
 type TextTermMaterializer interface {
 	BatchRunWithTextTerms(inputs ...any) ([]any, []AnalyzedTextTermBatch, error)
+	BatchTextTerms(inputs ...any) ([]AnalyzedTextTermBatch, error)
 }
 
 type textTermCollectorRunner struct {
@@ -57,7 +59,8 @@ func NewTextTermCollector(schema *schemapb.CollectionSchema) (*TextTermCollector
 		terms: make(map[int64]map[string]struct{}),
 	}
 	for _, functionSchema := range schema.GetFunctions() {
-		if functionSchema.GetType() != schemapb.FunctionType_BM25 {
+		if functionSchema.GetType() != schemapb.FunctionType_BM25 ||
+			!typeutil.IsFuzzyEnabledBM25Function(functionSchema) {
 			continue
 		}
 		runner, err := NewFunctionRunner(schema, functionSchema)
@@ -69,13 +72,16 @@ func NewTextTermCollector(schema *schemapb.CollectionSchema) (*TextTermCollector
 			collector.Close()
 			return nil, merr.WrapErrFunctionFailedMsg("failed to create BM25 runner for text term collection")
 		}
-		if !fuzzyEnabled(runner) {
+		inputFields := runner.GetInputFields()
+		inputFieldIDs := make([]int64, len(inputFields))
+		for i, field := range inputFields {
+			inputFieldIDs[i] = field.GetFieldID()
+		}
+		if slices.ContainsFunc(collector.runners, func(entry textTermCollectorRunner) bool {
+			return slices.Equal(entry.inputFieldIDs, inputFieldIDs)
+		}) {
 			runner.Close()
 			continue
-		}
-		inputFieldIDs := make([]int64, 0, len(runner.GetInputFields()))
-		for _, field := range runner.GetInputFields() {
-			inputFieldIDs = append(inputFieldIDs, field.GetFieldID())
 		}
 		collector.runners = append(collector.runners, textTermCollectorRunner{
 			runner:        runner,
@@ -129,7 +135,7 @@ func (c *TextTermCollector) Collect(inputs map[int64][]string) error {
 		if !ok {
 			return merr.WrapErrFunctionFailedMsg("fuzzy BM25 runner does not support text term collection")
 		}
-		_, batches, err := materializer.BatchRunWithTextTerms(runnerInputs...)
+		batches, err := materializer.BatchTextTerms(runnerInputs...)
 		if err != nil {
 			return err
 		}
@@ -154,7 +160,7 @@ func (c *TextTermCollector) Drain() map[int64][][]byte {
 	}
 	result := make(map[int64][][]byte, len(c.terms))
 	for fieldID, terms := range c.terms {
-		result[fieldID] = sortedTermBytes(terms)
+		result[fieldID] = termBytes(terms)
 	}
 	c.terms = make(map[int64]map[string]struct{})
 	return result
@@ -170,15 +176,9 @@ func (c *TextTermCollector) Close() {
 	c.runners = nil
 }
 
-func sortedTermBytes(terms map[string]struct{}) [][]byte {
-	values := make([]string, 0, len(terms))
+func termBytes(terms map[string]struct{}) [][]byte {
+	result := make([][]byte, 0, len(terms))
 	for term := range terms {
-		values = append(values, term)
-	}
-	sort.Strings(values)
-
-	result := make([][]byte, 0, len(values))
-	for _, term := range values {
 		result = append(result, []byte(term))
 	}
 	return result

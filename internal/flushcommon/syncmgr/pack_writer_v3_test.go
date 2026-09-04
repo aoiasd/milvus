@@ -220,7 +220,6 @@ func (s *PackWriterV3Suite) TestWriteTextTermFstAccumulatesManifestCoverage() {
 	s.Require().Len(textStat1.Paths, 1)
 	s.Equal(textTermFstFormat, textStat1.Metadata["format"])
 	s.Equal("100", textStat1.Metadata["coverage_timestamp"])
-	s.Equal("2", textStat1.Metadata["fragment_term_count"])
 	firstData, err := packed.ReadFile(s.storageConfig, textStat1.Paths[0])
 	s.Require().NoError(err)
 	s.NotEmpty(firstData)
@@ -241,7 +240,6 @@ func (s *PackWriterV3Suite) TestWriteTextTermFstAccumulatesManifestCoverage() {
 	textStat2 := manifestStats2["text_log_v2.101"]
 	s.Require().Len(textStat2.Paths, 2)
 	s.Equal("200", textStat2.Metadata["coverage_timestamp"])
-	s.Equal("0", textStat2.Metadata["fragment_term_count"])
 	emptyData, err := packed.ReadFile(s.storageConfig, textStat2.Paths[1])
 	s.Require().NoError(err)
 	s.NotEmpty(emptyData)
@@ -268,7 +266,6 @@ func (s *PackWriterV3Suite) TestWriteTextTermFstAccumulatesManifestCoverage() {
 	s.Require().Len(textStat3.Paths, 1)
 	s.NotEqual(textStat1.Paths[0], textStat3.Paths[0])
 	s.Equal("300", textStat3.Metadata["coverage_timestamp"])
-	s.Equal("1", textStat3.Metadata["fragment_term_count"])
 }
 
 func (s *PackWriterV3Suite) TestPackWriterV3_UsesManifestFormatAfterConfigSwitch() {

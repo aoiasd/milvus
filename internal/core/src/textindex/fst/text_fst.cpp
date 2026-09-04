@@ -27,6 +27,8 @@
 #include "levenshtein_dfa.h"
 #include "mapped_file.h"
 
+#include "crc32c/crc32c.h"
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -34,6 +36,7 @@
 #include <fstream>
 #include <limits>
 #include <optional>
+#include <queue>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -52,6 +55,19 @@ constexpr Address kNoneAddress = 1;
 constexpr std::size_t kTransitionIndexThreshold = 32;
 constexpr std::size_t kTrailerBytes = 20;
 constexpr std::size_t kRootAddressOffset = kTrailerBytes + 1;
+
+bool
+ConsumeWork(std::size_t amount,
+            std::size_t work_budget,
+            std::size_t& work_used) {
+    if (work_used > work_budget || amount > work_budget - work_used) {
+        work_used = work_budget;
+        return false;
+    }
+    work_used += amount;
+    return true;
+}
+
 constexpr std::array<std::uint8_t, 63> kCommonInputs = {
     't', 'e', '/', 'o', 'a', 's', 'r', 'i', 'p', 'c', 'n', 'w', '.',
     'h', 'l', 'm', '-', 'd', 'u', '0', '1', '2', 'g', '=', ':', 'b',
@@ -66,31 +82,6 @@ constexpr auto kCommonInputIndexes = [] {
         indexes[kCommonInputs[index]] = static_cast<std::uint8_t>(index + 1);
     }
     return indexes;
-}();
-
-constexpr auto kCrc32cTable = [] {
-    std::array<std::uint32_t, 256> table{};
-    for (std::uint32_t index = 0; index < table.size(); ++index) {
-        auto crc = index;
-        for (std::uint32_t bit = 0; bit < 8; ++bit) {
-            crc = (crc >> 1) ^ (0x82F63B78U & (0U - (crc & 1U)));
-        }
-        table[index] = crc;
-    }
-    return table;
-}();
-
-constexpr auto kCrc32cTable16 = [] {
-    std::array<std::array<std::uint32_t, 256>, 16> tables{};
-    tables[0] = kCrc32cTable;
-    for (std::size_t index = 0; index < 256; ++index) {
-        auto crc = tables[0][index];
-        for (std::size_t slice = 1; slice < tables.size(); ++slice) {
-            crc = (crc >> 8) ^ tables[0][crc & 0xFFU];
-            tables[slice][index] = crc;
-        }
-    }
-    return tables;
 }();
 
 void
@@ -179,35 +170,8 @@ UnpackUInt(std::span<const std::uint8_t> data,
 }
 
 std::uint32_t
-Crc32c(const std::uint8_t* bytes, std::size_t length) {
-    std::uint32_t crc = 0xFFFFFFFFU;
-    while (length >= 16) {
-        crc ^= static_cast<std::uint32_t>(bytes[0]) |
-               (static_cast<std::uint32_t>(bytes[1]) << 8) |
-               (static_cast<std::uint32_t>(bytes[2]) << 16) |
-               (static_cast<std::uint32_t>(bytes[3]) << 24);
-        crc = kCrc32cTable16[0][bytes[15]] ^ kCrc32cTable16[1][bytes[14]] ^
-              kCrc32cTable16[2][bytes[13]] ^ kCrc32cTable16[3][bytes[12]] ^
-              kCrc32cTable16[4][bytes[11]] ^ kCrc32cTable16[5][bytes[10]] ^
-              kCrc32cTable16[6][bytes[9]] ^ kCrc32cTable16[7][bytes[8]] ^
-              kCrc32cTable16[8][bytes[7]] ^ kCrc32cTable16[9][bytes[6]] ^
-              kCrc32cTable16[10][bytes[5]] ^ kCrc32cTable16[11][bytes[4]] ^
-              kCrc32cTable16[12][(crc >> 24) & 0xFFU] ^
-              kCrc32cTable16[13][(crc >> 16) & 0xFFU] ^
-              kCrc32cTable16[14][(crc >> 8) & 0xFFU] ^
-              kCrc32cTable16[15][crc & 0xFFU];
-        bytes += 16;
-        length -= 16;
-    }
-    while (length-- != 0) {
-        crc = kCrc32cTable[(crc ^ *bytes++) & 0xFFU] ^ (crc >> 8);
-    }
-    return ~crc;
-}
-
-std::uint32_t
 MaskedCrc32c(const std::uint8_t* bytes, std::size_t length) {
-    const auto crc = Crc32c(bytes, length);
+    const auto crc = crc32c::Crc32c(bytes, length);
     return ((crc >> 15) | (crc << 17)) + 0xA282EAD8U;
 }
 
@@ -669,12 +633,6 @@ ReadMetadata(std::span<const std::uint8_t> data) {
 enum class NodeKind { kEmptyFinal, kOneTransitionNext, kOneTransition, kAny };
 
 struct NodeView {
-    struct DecodedTransition {
-        std::uint8_t input = 0;
-        Output output = 0;
-        Address address = kNoneAddress;
-    };
-
     std::span<const std::uint8_t> data;
     Address address = kEmptyAddress;
     Address end = kEmptyAddress;
@@ -839,120 +797,97 @@ struct NodeView {
         return end - static_cast<Address>(delta);
     }
 
-    Output
-    TransitionOutput(std::size_t index) const {
-        if (index >= transition_count || output_size == 0 ||
-            kind == NodeKind::kOneTransitionNext) {
-            return 0;
+};
+
+struct ExactPrefixSearchResult {
+    std::optional<NodeView> node;
+    std::size_t work_used = 0;
+    bool work_limit_exceeded = false;
+};
+
+ExactPrefixSearchResult
+FollowExactPrefix(std::span<const std::uint8_t> data,
+                  Address root_address,
+                  std::string_view prefix,
+                  std::size_t work_budget) {
+    ExactPrefixSearchResult result;
+    auto node = NodeView::Read(data, root_address);
+    for (const unsigned char byte : prefix) {
+        if (!ConsumeWork(1, work_budget, result.work_used)) {
+            result.work_limit_exceeded = true;
+            return result;
         }
-        const auto bytes = data;
-        std::size_t offset = 0;
-        if (kind == NodeKind::kOneTransition) {
-            offset = address - input_size - 1 - transition_size - output_size;
-        } else {
-            const auto index_size =
-                transition_count > kTransitionIndexThreshold ? 256 : 0;
-            const auto total_transition_size =
-                index_size + transition_count +
-                transition_count * transition_size;
-            offset = address - count_size - 1 - total_transition_size -
-                     index * output_size - output_size;
+        const auto index = node.FindInput(byte);
+        if (!index.has_value()) {
+            return result;
         }
-        return UnpackUInt(bytes, offset, output_size);
+        node = NodeView::Read(data, node.TransitionAddress(*index));
+    }
+    result.node = node;
+    return result;
+}
+
+struct TextFstMatchBetter {
+    bool
+    operator()(const TextFstMatch& left, const TextFstMatch& right) const {
+        if (left.edit_distance != right.edit_distance) {
+            return left.edit_distance < right.edit_distance;
+        }
+        return left.term < right.term;
+    }
+};
+
+class BoundedTextFstMatches {
+ public:
+    explicit BoundedTextFstMatches(std::size_t limit) : limit_(limit) {
     }
 
-    // This is the direct counterpart of upstream Node::transition. In
-    // particular, dispatch on the compiled node kind exactly once and decode
-    // input/output/address together. Upstream marks this operation
-    // #[inline(always)] because it is on the hottest stream traversal path.
-    [[gnu::always_inline]] inline DecodedTransition
-    FullTransition(std::size_t index) const {
-        if (index >= transition_count || kind == NodeKind::kEmptyFinal) {
-            throw std::out_of_range("text FST transition index");
+    void
+    Add(TextFstMatch match) {
+        if (matches_.size() < limit_) {
+            matches_.push(std::move(match));
+            return;
         }
-        const auto bytes = data;
-        switch (kind) {
-            case NodeKind::kOneTransitionNext: {
-                if (end == 0) {
-                    throw std::runtime_error("invalid text FST OTN target");
-                }
-                const auto common = CommonInput(bytes[address] & 0x3FU);
-                return DecodedTransition{
-                    .input = common.has_value() ? *common : bytes[address - 1],
-                    .output = 0,
-                    .address = end - 1,
-                };
-            }
-            case NodeKind::kOneTransition: {
-                const auto common = CommonInput(bytes[address] & 0x3FU);
-                const auto input =
-                    common.has_value() ? *common : bytes[address - 1];
-                const auto address_offset =
-                    address - input_size - 1 - transition_size;
-                const auto delta =
-                    UnpackUInt(bytes, address_offset, transition_size);
-                if (delta != kEmptyAddress && delta > end) {
-                    throw std::runtime_error(
-                        "invalid text FST transition delta");
-                }
-                const auto output =
-                    output_size == 0
-                        ? 0
-                        : UnpackUInt(
-                              bytes, address_offset - output_size, output_size);
-                return DecodedTransition{
-                    .input = input,
-                    .output = output,
-                    .address = delta == kEmptyAddress
-                                   ? kEmptyAddress
-                                   : end - static_cast<Address>(delta),
-                };
-            }
-            case NodeKind::kAny: {
-                const auto index_size =
-                    transition_count > kTransitionIndexThreshold ? 256 : 0;
-                const auto input_offset =
-                    address - count_size - 1 - index_size - index - 1;
-                const auto address_offset =
-                    address - count_size - 1 - index_size - transition_count -
-                    index * transition_size - transition_size;
-                const auto delta =
-                    UnpackUInt(bytes, address_offset, transition_size);
-                if (delta != kEmptyAddress && delta > end) {
-                    throw std::runtime_error(
-                        "invalid text FST transition delta");
-                }
-                Output output = 0;
-                if (output_size != 0) {
-                    const auto total_transition_size =
-                        index_size + transition_count +
-                        transition_count * transition_size;
-                    const auto output_offset =
-                        address - count_size - 1 - total_transition_size -
-                        index * output_size - output_size;
-                    output = UnpackUInt(bytes, output_offset, output_size);
-                }
-                return DecodedTransition{
-                    .input = bytes[input_offset],
-                    .output = output,
-                    .address = delta == kEmptyAddress
-                                   ? kEmptyAddress
-                                   : end - static_cast<Address>(delta),
-                };
-            }
-            case NodeKind::kEmptyFinal:
-                break;
+        if (TextFstMatchBetter{}(match, matches_.top())) {
+            matches_.pop();
+            matches_.push(std::move(match));
         }
-        throw std::logic_error("unreachable text FST node kind");
     }
+
+    std::vector<TextFstMatch>
+    Take() {
+        std::vector<TextFstMatch> result;
+        result.reserve(matches_.size());
+        while (!matches_.empty()) {
+            result.push_back(matches_.top());
+            matches_.pop();
+        }
+        std::sort(result.begin(), result.end(), TextFstMatchBetter{});
+        return result;
+    }
+
+ private:
+    std::size_t limit_;
+    std::priority_queue<TextFstMatch,
+                        std::vector<TextFstMatch>,
+                        TextFstMatchBetter>
+        matches_;
 };
 
 TextFstSearchResult
 IntersectLevenshteinDfa(std::span<const std::uint8_t> data,
-                        Address root_address,
-                        const LevenshteinDfa& dfa) {
+                        const NodeView& start,
+                        std::string_view exact_prefix,
+                        const LevenshteinDfa& dfa,
+                        std::size_t max_expansions,
+                        std::size_t work_budget) {
     TextFstSearchResult result;
-    std::string term;
+    BoundedTextFstMatches matches(max_expansions);
+    if (!ConsumeWork(exact_prefix.size(), work_budget, result.work_used)) {
+        result.work_limit_exceeded = true;
+        return result;
+    }
+    std::string term(exact_prefix);
     struct Frame {
         NodeView node;
         std::uint32_t dfa_state = 0;
@@ -961,7 +896,7 @@ IntersectLevenshteinDfa(std::span<const std::uint8_t> data,
     };
     std::vector<Frame> stack;
     stack.push_back(Frame{
-        .node = NodeView::Read(data, root_address),
+        .node = start,
         .dfa_state = dfa.InitialState(),
     });
     while (!stack.empty()) {
@@ -969,7 +904,11 @@ IntersectLevenshteinDfa(std::span<const std::uint8_t> data,
         if (!frame.entered) {
             frame.entered = true;
             if (frame.node.is_final && dfa.IsMatch(frame.dfa_state)) {
-                result.matches.push_back(TextFstMatch{
+                if (!ConsumeWork(term.size(), work_budget, result.work_used)) {
+                    result.work_limit_exceeded = true;
+                    return result;
+                }
+                matches.Add(TextFstMatch{
                     term,
                     dfa.Distance(frame.dfa_state),
                 });
@@ -984,7 +923,10 @@ IntersectLevenshteinDfa(std::span<const std::uint8_t> data,
         }
         const auto index = frame.next_transition++;
         {
-            ++result.work_used;
+            if (!ConsumeWork(1, work_budget, result.work_used)) {
+                result.work_limit_exceeded = true;
+                return result;
+            }
             const auto input = frame.node.Input(index);
             const auto next_dfa_state = dfa.Transition(frame.dfa_state, input);
 
@@ -1003,6 +945,7 @@ IntersectLevenshteinDfa(std::span<const std::uint8_t> data,
             });
         }
     }
+    result.matches = matches.Take();
     return result;
 }
 
@@ -1079,60 +1022,59 @@ TextFst::Build(const TextFstTermReader& reader) {
     impl_->metadata = metadata;
 }
 
-bool
-Contains(std::span<const std::uint8_t> data,
-         Address root_address,
-         std::string_view term) {
-    if (data.empty()) {
-        return false;
-    }
-    auto node = NodeView::Read(data, root_address);
-    for (const unsigned char byte : term) {
-        const auto index = node.FindInput(byte);
-        if (!index.has_value()) {
-            return false;
-        }
-        const auto transition = node.FullTransition(*index);
-        node = NodeView::Read(data, transition.address);
-    }
-    return node.is_final;
-}
-
 TextFstSearchResult
-TextFst::FuzzySearch(std::string_view query,
-                     std::uint32_t max_edit_distance,
-                     std::size_t max_expansions) const {
-    if (max_edit_distance > 2) {
-        throw std::invalid_argument(
-            "text FST fuzzy distance must be in [0, 2]");
-    }
+TextFst::FuzzySearchPrepared(const PreparedLevenshteinQuery& query,
+                             std::size_t max_expansions,
+                             std::size_t work_budget) const {
     TextFstSearchResult result;
     if (max_expansions == 0 || impl_->data.empty()) {
         return result;
     }
-    if (max_edit_distance == 0) {
-        ValidateUtf8(query);
-        if (Contains(impl_->data, impl_->metadata.root_address, query)) {
-            result.matches.push_back(TextFstMatch{std::string(query), 0});
+    if (query.max_distance == 0) {
+        const auto exact = FollowExactPrefix(impl_->data,
+                                             impl_->metadata.root_address,
+                                             query.query,
+                                             work_budget);
+        result.work_used = exact.work_used;
+        if (exact.work_limit_exceeded) {
+            result.work_limit_exceeded = true;
+            return result;
+        }
+        if (exact.node.has_value() && exact.node->is_final) {
+            if (!ConsumeWork(
+                    query.query.size(), work_budget, result.work_used)) {
+                result.work_limit_exceeded = true;
+                return result;
+            }
+            result.matches.push_back(TextFstMatch{query.query, 0});
         }
         return result;
     }
-
-    auto dfa = BuildLevenshteinDfa(query, max_edit_distance);
-    result =
-        IntersectLevenshteinDfa(impl_->data, impl_->metadata.root_address, dfa);
-    std::sort(result.matches.begin(),
-              result.matches.end(),
-              [](const TextFstMatch& left, const TextFstMatch& right) {
-                  if (left.edit_distance != right.edit_distance) {
-                      return left.edit_distance < right.edit_distance;
-                  }
-                  return left.term < right.term;
-              });
-    if (result.matches.size() > max_expansions) {
-        result.matches.resize(max_expansions);
+    if (!query.dfa.has_value()) {
+        throw std::invalid_argument("prepared fuzzy query is missing its DFA");
     }
-    return result;
+
+    const auto prefix = FollowExactPrefix(impl_->data,
+                                          impl_->metadata.root_address,
+                                          query.exact_prefix,
+                                          work_budget);
+    result.work_used = prefix.work_used;
+    if (prefix.work_limit_exceeded) {
+        result.work_limit_exceeded = true;
+        return result;
+    }
+    if (!prefix.node.has_value()) {
+        return result;
+    }
+
+    auto suffix = IntersectLevenshteinDfa(impl_->data,
+                                          *prefix.node,
+                                          query.exact_prefix,
+                                          *query.dfa,
+                                          max_expansions,
+                                          work_budget - result.work_used);
+    suffix.work_used += result.work_used;
+    return suffix;
 }
 
 std::size_t

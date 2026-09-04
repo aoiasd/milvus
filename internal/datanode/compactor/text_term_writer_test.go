@@ -77,11 +77,10 @@ func TestWriteCompactionTextTermsStorageV1(t *testing.T) {
 		InsertLogs:     storage.SortFieldBinlogs(fieldBinlogs),
 		StorageVersion: storage.StorageV1,
 	}
-	size, err := writeCompactionTextTerms(context.Background(), schema, segment,
+	err = writeCompactionTextTerms(context.Background(), schema, segment,
 		CollectionID, PartitionID, flushio.NewBinlogIO(cm),
 		allocator.NewLocalAllocator(2000, math.MaxInt64), params)
 	require.NoError(t, err)
-	require.Positive(t, size)
 	require.Len(t, segment.GetTextLogV2(), 1)
 	require.EqualValues(t, 101, segment.GetTextLogV2()[0].GetFieldID())
 	require.Equal(t, textindex.MilvusTextFstFormat, segment.GetTextLogV2()[0].GetFormat())
@@ -91,5 +90,6 @@ func TestWriteCompactionTextTermsStorageV1(t *testing.T) {
 	require.Equal(t, ts, fstLog.GetTimestampTo())
 	fstData, err := cm.Read(context.Background(), fstLog.GetLogPath())
 	require.NoError(t, err)
-	require.Len(t, fstData, int(size))
+	require.NotEmpty(t, fstData)
+	require.Len(t, fstData, int(fstLog.GetLogSize()))
 }

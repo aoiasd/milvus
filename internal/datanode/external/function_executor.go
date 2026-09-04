@@ -13,13 +13,10 @@ import (
 	"github.com/samber/lo"
 
 	"github.com/milvus-io/milvus-proto/go-api/v3/schemapb"
-	"github.com/milvus-io/milvus/internal/allocator"
 	"github.com/milvus-io/milvus/internal/storage"
 	"github.com/milvus-io/milvus/internal/storagecommon"
 	"github.com/milvus-io/milvus/internal/storagev2/packed"
-	"github.com/milvus-io/milvus/internal/util/function"
 	"github.com/milvus-io/milvus/internal/util/function/embedding"
-	"github.com/milvus-io/milvus/internal/util/textindex"
 	"github.com/milvus-io/milvus/pkg/v3/mlog"
 	"github.com/milvus-io/milvus/pkg/v3/proto/indexpb"
 	"github.com/milvus-io/milvus/pkg/v3/util/merr"
@@ -114,14 +111,8 @@ func ExecuteFunctionsForSegment(
 	writer.AsNewColumnGroups()
 
 	bm25Acc := newBM25Accumulators(schema)
-	textTermCollector, err := function.NewTextTermCollector(schema)
-	if err != nil {
-		return "", err
-	}
-	defer textTermCollector.Close()
-
 	totalRows, err := streamBatches(ctx, schema, executionSchema, outputSchema, outputArrow,
-		requiredInputFields, reader, writer, bm25Acc, textTermCollector, clusterID)
+		requiredInputFields, reader, writer, bm25Acc, clusterID)
 	if err != nil {
 		return "", err
 	}
@@ -138,12 +129,6 @@ func ExecuteFunctionsForSegment(
 	if err := appendBM25Stats(ctx, bm25Acc, storageConfig, basePath, updates); err != nil {
 		return "", err
 	}
-	textTermEntries, _, err := textindex.BuildManifestEntries(inputManifestPath, storageConfig,
-		allocator.NewLocalAllocator(0, int64(len(schema.GetFields())+1)), textTermCollector.Drain(), 0)
-	if err != nil {
-		return "", err
-	}
-	updates.Stats = append(updates.Stats, textTermEntries...)
 	manifestPath, err := packed.CommitManifestUpdates(basePath, inputVersion, storageConfig, updates)
 	if err != nil {
 		return "", merr.Wrap(err, "commit function output manifest")
@@ -349,7 +334,6 @@ func streamBatches(
 	reader storage.RecordReader,
 	writer *packed.FFIPackedWriter,
 	bm25Acc map[int64]*storage.BM25Stats,
-	textTermCollector *function.TextTermCollector,
 	clusterID string,
 ) (int64, error) {
 	var totalRows int64
@@ -372,10 +356,6 @@ func streamBatches(
 		if batch.GetRowNum() == 0 {
 			continue
 		}
-		if err := textTermCollector.CollectInsertData(batch); err != nil {
-			return totalRows, err
-		}
-
 		if err := embedding.RunAll(ctx, schema, batch, embedding.RunOptions{
 			ClusterID: clusterID,
 			DBName:    schema.GetDbName(),

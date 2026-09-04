@@ -101,11 +101,6 @@ func (r *StatsResolver) WithBM25Logs(b []*datapb.FieldBinlog) *StatsResolver {
 	return r
 }
 
-func (r *StatsResolver) WithTextLogV2(logs []*datapb.FieldBinlog) *StatsResolver {
-	r.textLogV2 = logs
-	return r
-}
-
 func (r *StatsResolver) WithTextStatsLogs(t map[int64]*datapb.TextIndexStats) *StatsResolver {
 	r.textStatsLogs = t
 	return r

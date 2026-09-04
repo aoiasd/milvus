@@ -1167,7 +1167,7 @@ func TestPrepareInsertMaterializesLegacyBM25Output(t *testing.T) {
 	assert.Equal(t, int64(3), result[0].bm25Stats[102].NumRow())
 	assert.Len(t, result[0].textTerms, 1)
 	assert.EqualValues(t, 101, result[0].textTerms[0].GetInputFieldId())
-	assert.Equal(t, [][]byte{[]byte("bm25"), []byte("hello"), []byte("legacy"), []byte("message"), []byte("milvus"), []byte("world")}, result[0].textTerms[0].GetTerms())
+	assert.ElementsMatch(t, [][]byte{[]byte("bm25"), []byte("hello"), []byte("legacy"), []byte("message"), []byte("milvus"), []byte("world")}, result[0].textTerms[0].GetTerms())
 	assert.NotNil(t, insertMsg.GetFieldsData()[2])
 	assert.Equal(t, int64(102), insertMsg.GetFieldsData()[2].GetFieldId())
 	assert.Equal(t, result[0].textTerms, insertMsg.GetTextTermBatches())

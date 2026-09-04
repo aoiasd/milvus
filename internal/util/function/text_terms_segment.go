@@ -78,7 +78,7 @@ func CollectSegmentTextTerms(
 	case storage.StorageV1, storage.StorageV2:
 		coverageTimestamp, err = collectSegmentBinlogTerms(ctx, collector, schema, source)
 	case storage.StorageV3:
-		coverageTimestamp, err = collectSegmentManifestTerms(collector, schema, source)
+		coverageTimestamp, err = collectSegmentManifestTerms(ctx, collector, schema, source)
 	default:
 		err = merr.WrapErrServiceInternalMsg("unsupported text term storage version %d", source.StorageVersion)
 	}
@@ -138,6 +138,7 @@ func collectSegmentBinlogTerms(
 }
 
 func collectSegmentManifestTerms(
+	ctx context.Context,
 	collector *TextTermCollector,
 	schema *schemapb.CollectionSchema,
 	source SegmentTextTermSource,
@@ -185,6 +186,9 @@ func collectSegmentManifestTerms(
 	}
 	var coverageTimestamp uint64
 	for {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
 		record, err := reader.ReadNext()
 		if err == io.EOF {
 			return coverageTimestamp, nil
@@ -199,7 +203,6 @@ func collectSegmentManifestTerms(
 		if err == nil {
 			err = collector.CollectArrowRecord(record, fieldColumns)
 		}
-		record.Release()
 		if err != nil {
 			return 0, err
 		}

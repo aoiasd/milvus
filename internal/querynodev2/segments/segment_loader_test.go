@@ -66,6 +66,22 @@ type SegmentLoaderSuite struct {
 	segmentNum   int
 }
 
+func (loader *segmentLoader) estimateSegmentLoadingResourceUsage(
+	ctx context.Context,
+	segmentLoadInfos ...*querypb.SegmentLoadInfo,
+) (*ResourceUsage, uint64, error) {
+	return loader.estimateSegmentLoadingResourceUsageForType(ctx, SegmentTypeSealed, segmentLoadInfos...)
+}
+
+func estimateLoadingResourceUsageOfSegment(
+	schema *schemapb.CollectionSchema,
+	loadInfo *querypb.SegmentLoadInfo,
+	multiplyFactor resourceEstimateFactor,
+) (*ResourceUsage, error) {
+	return estimateLoadingResourceUsageOfSegmentForType(
+		schema, loadInfo, SegmentTypeSealed, multiplyFactor)
+}
+
 type eofRecordReader struct{}
 
 func (eofRecordReader) Next() (storage.Record, error) {

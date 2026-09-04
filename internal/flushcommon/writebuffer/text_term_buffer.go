@@ -17,8 +17,6 @@
 package writebuffer
 
 import (
-	"sort"
-
 	"github.com/milvus-io/milvus-proto/go-api/v3/msgpb"
 	"github.com/milvus-io/milvus/internal/flushcommon/syncmgr"
 )
@@ -29,8 +27,17 @@ type segmentTextTermBuffer struct {
 	memorySize        int64
 }
 
+const (
+	textTermBufferOverhead = int64(128)
+	textTermFieldOverhead  = int64(128)
+	textTermEntryOverhead  = int64(64)
+)
+
 func newSegmentTextTermBuffer() *segmentTextTermBuffer {
-	return &segmentTextTermBuffer{fields: make(map[int64]map[string]struct{})}
+	return &segmentTextTermBuffer{
+		fields:     make(map[int64]map[string]struct{}),
+		memorySize: textTermBufferOverhead,
+	}
 }
 
 func (b *segmentTextTermBuffer) Buffer(batches []*msgpb.TextTermBatch, coverageTimestamp uint64) {
@@ -44,6 +51,7 @@ func (b *segmentTextTermBuffer) Buffer(batches []*msgpb.TextTermBatch, coverageT
 		if terms == nil {
 			terms = make(map[string]struct{})
 			b.fields[batch.GetInputFieldId()] = terms
+			b.memorySize += textTermFieldOverhead
 		}
 		for _, term := range batch.GetTerms() {
 			value := string(term)
@@ -51,7 +59,7 @@ func (b *segmentTextTermBuffer) Buffer(batches []*msgpb.TextTermBatch, coverageT
 				continue
 			}
 			terms[value] = struct{}{}
-			b.memorySize += int64(len(value))
+			b.memorySize += textTermEntryOverhead + int64(len(value))
 		}
 	}
 	if buffered && coverageTimestamp > b.coverageTimestamp {
@@ -59,13 +67,51 @@ func (b *segmentTextTermBuffer) Buffer(batches []*msgpb.TextTermBatch, coverageT
 	}
 }
 
-// MemorySize returns the retained key payload in bytes. As with the existing
-// insert-buffer accounting, Go map/object overhead is intentionally excluded.
+func (b *segmentTextTermBuffer) restore(data *syncmgr.TextTermData) {
+	if data == nil {
+		return
+	}
+	for fieldID, encoded := range data.Fields {
+		terms := b.fields[fieldID]
+		if terms == nil {
+			terms = make(map[string]struct{})
+			b.fields[fieldID] = terms
+			b.memorySize += textTermFieldOverhead
+		}
+		for _, term := range encoded {
+			value := string(term)
+			if _, exists := terms[value]; exists {
+				continue
+			}
+			terms[value] = struct{}{}
+			b.memorySize += textTermEntryOverhead + int64(len(value))
+		}
+	}
+	if data.CoverageTimestamp > b.coverageTimestamp {
+		b.coverageTimestamp = data.CoverageTimestamp
+	}
+}
+
+// MemorySize returns a conservative estimate of retained key and map storage.
 func (b *segmentTextTermBuffer) MemorySize() int64 {
 	if b == nil {
 		return 0
 	}
 	return b.memorySize
+}
+
+func textTermDataMemorySize(data *syncmgr.TextTermData) int64 {
+	if data == nil || len(data.Fields) == 0 {
+		return 0
+	}
+	size := textTermBufferOverhead
+	for _, terms := range data.Fields {
+		size += textTermFieldOverhead
+		for _, term := range terms {
+			size += textTermEntryOverhead + int64(len(term))
+		}
+	}
+	return size
 }
 
 func (b *segmentTextTermBuffer) Yield() *syncmgr.TextTermData {
@@ -78,13 +124,8 @@ func (b *segmentTextTermBuffer) Yield() *syncmgr.TextTermData {
 		Fields:            make(map[int64][][]byte, len(b.fields)),
 	}
 	for fieldID, termSet := range b.fields {
-		terms := make([]string, 0, len(termSet))
+		encoded := make([][]byte, 0, len(termSet))
 		for term := range termSet {
-			terms = append(terms, term)
-		}
-		sort.Strings(terms)
-		encoded := make([][]byte, 0, len(terms))
-		for _, term := range terms {
 			encoded = append(encoded, []byte(term))
 		}
 		result.Fields[fieldID] = encoded

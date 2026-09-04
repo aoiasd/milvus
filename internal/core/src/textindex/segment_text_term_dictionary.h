@@ -18,6 +18,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <span>
 #include <string>
@@ -27,10 +28,17 @@
 namespace milvus::textindex {
 
 class TextFst;
+struct PreparedLevenshteinQuery;
 
 struct TextTermMatch {
     std::string term;
     std::uint32_t edit_distance = 0;
+};
+
+struct TextTermFuzzySearchResult {
+    std::vector<TextTermMatch> matches;
+    std::size_t work_used = 0;
+    bool work_limit_exceeded = false;
 };
 
 struct TextTermTrieStats {
@@ -63,12 +71,13 @@ class SegmentTextTermDictionary {
     AddFstTerms(std::int64_t field_id,
                 std::span<const TextFst* const> immutable_fsts);
 
-    [[nodiscard]] std::vector<TextTermMatch>
-    FuzzySearch(std::int64_t field_id,
-                std::span<const TextFst* const> immutable_fsts,
-                std::string_view query,
-                std::uint32_t max_edit_distance,
-                std::size_t max_expansions) const;
+    [[nodiscard]] TextTermFuzzySearchResult
+    FuzzySearchPrepared(std::int64_t field_id,
+                        std::span<const TextFst* const> immutable_fsts,
+                        const PreparedLevenshteinQuery& query,
+                        std::size_t max_expansions,
+                        std::size_t work_budget =
+                            std::numeric_limits<std::size_t>::max()) const;
 
     [[nodiscard]] TextTermTrieStats
     TrieStats() const;

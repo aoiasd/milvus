@@ -47,6 +47,26 @@ func TestTextFstReaderHeapAndMmap(t *testing.T) {
 	assert.Equal(t, artifact.TermCount, mapped.TermCount())
 }
 
+func TestPrepareFuzzySearchTermsBuildsOneQueryPerSource(t *testing.T) {
+	prepared, work, err := PrepareFuzzySearchTerms(
+		[][]byte{[]byte("bok"), []byte("milvuz")}, 1, 0, 1_000_000)
+	require.NoError(t, err)
+	require.Len(t, prepared, 2)
+	assert.Positive(t, work)
+	assert.NotEqual(t, prepared[0].handle, prepared[1].handle)
+	for _, query := range prepared {
+		require.NotNil(t, query.handle)
+		query.Close()
+		assert.Nil(t, query.handle)
+	}
+
+	prepared, work, err = PrepareFuzzySearchTerms(
+		[][]byte{[]byte("bok")}, 1, 0, 1)
+	require.ErrorIs(t, err, ErrFuzzySearchWorkLimitExceeded)
+	assert.Nil(t, prepared)
+	assert.EqualValues(t, 1, work)
+}
+
 func TestTextFstReaderRejectsCorruptChecksum(t *testing.T) {
 	artifact, err := BuildTextFst([][]byte{[]byte("fuzzy")})
 	require.NoError(t, err)

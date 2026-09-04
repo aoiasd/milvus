@@ -1809,10 +1809,6 @@ func (loader *segmentLoader) checkLogicalSegmentSize(ctx context.Context, segmen
 	return predictLogicalMemUsage - logicalMemUsage, predictLogicalDiskUsage - logicalDiskUsage, nil
 }
 
-func (loader *segmentLoader) estimateSegmentLoadingResourceUsage(ctx context.Context, segmentLoadInfos ...*querypb.SegmentLoadInfo) (*ResourceUsage, uint64, error) {
-	return loader.estimateSegmentLoadingResourceUsageForType(ctx, SegmentTypeSealed, segmentLoadInfos...)
-}
-
 func (loader *segmentLoader) estimateSegmentLoadingResourceUsageForType(
 	ctx context.Context,
 	segmentType SegmentType,
@@ -2219,11 +2215,6 @@ func estimateLogicalResourceUsageOfSegment(schema *schemapb.CollectionSchema, lo
 //   - when tiered eviction is enabled, the result is the max resource usage of the segment that cannot be managed by caching layer,
 //     which should be a subset of the segment inevictable part
 //   - when tiered eviction is disabled, the result is the max resource usage of both the segment evictable and inevictable part
-func estimateLoadingResourceUsageOfSegment(schema *schemapb.CollectionSchema, loadInfo *querypb.SegmentLoadInfo, multiplyFactor resourceEstimateFactor) (usage *ResourceUsage, err error) {
-	return estimateLoadingResourceUsageOfSegmentForType(
-		schema, loadInfo, SegmentTypeSealed, multiplyFactor)
-}
-
 func estimateLoadingResourceUsageOfSegmentForType(
 	schema *schemapb.CollectionSchema,
 	loadInfo *querypb.SegmentLoadInfo,

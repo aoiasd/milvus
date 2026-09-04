@@ -32,6 +32,7 @@ import (
 	"github.com/milvus-io/milvus/internal/util/initcore"
 	"github.com/milvus-io/milvus/internal/util/segcore"
 	"github.com/milvus-io/milvus/internal/util/textindex"
+	"github.com/milvus-io/milvus/pkg/v3/util/merr"
 	"github.com/milvus-io/milvus/pkg/v3/util/paramtable"
 	"github.com/milvus-io/milvus/pkg/v3/util/typeutil"
 )
@@ -65,6 +66,41 @@ func newGrowingTextTermDictionary(t *testing.T) *segmentTextTermDictionary {
 		segment.Release()
 	})
 	return dictionary
+}
+
+func (d *segmentTextTermDictionary) expand(
+	fieldID int64,
+	sourceTerms [][]byte,
+	maxEditDistance, maxExpansions, prefixLength uint32,
+) ([][]textindex.FuzzyMatch, error) {
+	result, _, err := d.expandWithinBudget(
+		fieldID, sourceTerms, maxEditDistance, maxExpansions, prefixLength, ^uint64(0))
+	return result, err
+}
+
+func (d *segmentTextTermDictionary) expandWithinBudget(
+	fieldID int64,
+	sourceTerms [][]byte,
+	maxEditDistance, maxExpansions, prefixLength uint32,
+	workBudget uint64,
+) ([][]textindex.FuzzyMatch, uint64, error) {
+	prepared, preparationWork, err := textindex.PrepareFuzzySearchTerms(
+		sourceTerms, maxEditDistance, prefixLength, workBudget)
+	if err != nil {
+		return nil, preparationWork, err
+	}
+	defer func() {
+		for _, query := range prepared {
+			query.Close()
+		}
+	}()
+	if preparationWork > workBudget {
+		return nil, preparationWork, merr.WrapErrServiceInternalMsg(
+			"fuzzy query preparation exceeded its work budget")
+	}
+	result, searchWork, err := d.expandPreparedWithinBudget(
+		fieldID, prepared, maxExpansions, workBudget-preparationWork)
+	return result, preparationWork + searchWork, err
 }
 
 func TestSegmentTextTermDictionaryDeduplicatesGrowingTerms(t *testing.T) {
@@ -153,4 +189,153 @@ func TestSegmentTextTermDictionaryImportFailureReleasesReadersAndCache(t *testin
 	_, statErr := os.Stat(cacheDir)
 	assert.ErrorIs(t, statErr, os.ErrNotExist)
 	assert.Zero(t, dictionary.memoryBytes())
+}
+
+func TestSegmentTextTermDictionaryExpandsCommittedAndGrowingTerms(t *testing.T) {
+	artifact, err := textindex.BuildTextFst([][]byte{[]byte("book"), []byte("other")})
+	require.NoError(t, err)
+	reader, err := textindex.LoadTextFstBytes(artifact.Data)
+	require.NoError(t, err)
+
+	dictionary := newGrowingTextTermDictionary(t)
+	require.NoError(t, dictionary.importLoaded(&loadedTextTermDictionary{
+		readers: map[int64][]*textindex.FstReader{101: {reader}},
+	}))
+	require.NoError(t, dictionary.add([]*msgpb.TextTermBatch{{
+		InputFieldId: 101,
+		Terms:        [][]byte{[]byte("books"), []byte("back")},
+	}}))
+
+	matches, err := dictionary.expand(101, [][]byte{[]byte("bok"), []byte("boks")}, 1, 50, 0)
+	require.NoError(t, err)
+	require.Len(t, matches, 2)
+	require.Len(t, matches[0], 1)
+	assert.Equal(t, []byte("book"), matches[0][0].Term)
+	assert.EqualValues(t, 1, matches[0][0].EditDistance)
+	require.Len(t, matches[1], 1)
+	assert.Equal(t, []byte("books"), matches[1][0].Term)
+	assert.EqualValues(t, 1, matches[1][0].EditDistance)
+}
+
+func TestSegmentTextTermDictionaryBoundsNativeTraversalWork(t *testing.T) {
+	first, err := textindex.BuildTextFst([][]byte{[]byte("book")})
+	require.NoError(t, err)
+	second, err := textindex.BuildTextFst([][]byte{[]byte("books")})
+	require.NoError(t, err)
+	firstReader, err := textindex.LoadTextFstBytes(first.Data)
+	require.NoError(t, err)
+	secondReader, err := textindex.LoadTextFstBytes(second.Data)
+	require.NoError(t, err)
+
+	dictionary := newGrowingTextTermDictionary(t)
+	dictionary.replaceLoaded(&loadedTextTermDictionary{
+		readers: map[int64][]*textindex.FstReader{101: {firstReader, secondReader}},
+	})
+	_, work, err := dictionary.expandWithinBudget(101, [][]byte{[]byte("bok")}, 1, 1, 0, 0)
+	require.ErrorIs(t, err, merr.ErrServiceResourceInsufficient)
+	require.ErrorIs(t, err, textindex.ErrFuzzySearchWorkLimitExceeded)
+	assert.Zero(t, work)
+
+	const completeBudget = uint64(1_000_000)
+	results, work, err := dictionary.expandWithinBudget(101, [][]byte{[]byte("bok")}, 1, 1, 0, completeBudget)
+	require.NoError(t, err)
+	assert.Positive(t, work)
+	assert.LessOrEqual(t, work, completeBudget)
+	require.Len(t, results, 1)
+}
+
+func TestSegmentTextTermDictionaryAppliesExpansionLimitOnceAfterRecovery(t *testing.T) {
+	first, err := textindex.BuildTextFst([][]byte{[]byte("boo")})
+	require.NoError(t, err)
+	second, err := textindex.BuildTextFst([][]byte{[]byte("zoo")})
+	require.NoError(t, err)
+	firstReader, err := textindex.LoadTextFstBytes(first.Data)
+	require.NoError(t, err)
+	secondReader, err := textindex.LoadTextFstBytes(second.Data)
+	require.NoError(t, err)
+
+	dictionary := newGrowingTextTermDictionary(t)
+	require.NoError(t, dictionary.importLoaded(&loadedTextTermDictionary{
+		readers: map[int64][]*textindex.FstReader{101: {firstReader, secondReader}},
+	}))
+
+	results, err := dictionary.expand(101, [][]byte{[]byte("zoo")}, 1, 1, 0)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, []textindex.FuzzyMatch{{Term: []byte("zoo"), EditDistance: 0}}, results[0])
+}
+
+func TestSegmentTextTermDictionaryGrowingTrieSupportsTransposition(t *testing.T) {
+	dictionary := newGrowingTextTermDictionary(t)
+	require.NoError(t, dictionary.add([]*msgpb.TextTermBatch{{
+		InputFieldId: 101,
+		Terms:        [][]byte{[]byte("book")},
+	}}))
+	results, err := dictionary.expand(101, [][]byte{[]byte("boko")}, 1, 50, 0)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	matches := results[0]
+	require.Len(t, matches, 1)
+	assert.Equal(t, []byte("book"), matches[0].Term)
+	assert.EqualValues(t, 1, matches[0].EditDistance)
+}
+
+func TestSegmentTextTermDictionaryPrefixUsesUnicodeCharacters(t *testing.T) {
+	artifact, err := textindex.BuildTextFst([][]byte{[]byte("book")})
+	require.NoError(t, err)
+	reader, err := textindex.LoadTextFstBytes(artifact.Data)
+	require.NoError(t, err)
+
+	dictionary := newGrowingTextTermDictionary(t)
+	require.NoError(t, dictionary.importLoaded(&loadedTextTermDictionary{
+		readers: map[int64][]*textindex.FstReader{101: {reader}},
+	}))
+	require.NoError(t, dictionary.add([]*msgpb.TextTermBatch{{
+		InputFieldId: 101,
+		Terms:        [][]byte{[]byte("你好")},
+	}}))
+
+	results, err := dictionary.expand(
+		101, [][]byte{[]byte("cook"), []byte("你号")}, 1, 50, 0)
+	require.NoError(t, err)
+	require.Len(t, results[0], 1)
+	assert.Equal(t, []byte("book"), results[0][0].Term)
+	require.Len(t, results[1], 1)
+	assert.Equal(t, []byte("你好"), results[1][0].Term)
+
+	results, err = dictionary.expand(
+		101, [][]byte{[]byte("cook"), []byte("你号"), []byte("他好")}, 1, 50, 1)
+	require.NoError(t, err)
+	assert.Empty(t, results[0])
+	require.Len(t, results[1], 1)
+	assert.Equal(t, []byte("你好"), results[1][0].Term)
+	assert.Empty(t, results[2])
+}
+
+func TestSegmentTextTermDictionaryKeepsBoundedBestGrowingMatches(t *testing.T) {
+	dictionary := newGrowingTextTermDictionary(t)
+	require.NoError(t, dictionary.add([]*msgpb.TextTermBatch{{
+		InputFieldId: 101,
+		Terms: [][]byte{
+			[]byte("boo"),
+			[]byte("coo"),
+			[]byte("doo"),
+			[]byte("zoo"),
+		},
+	}}))
+
+	results, err := dictionary.expand(101, [][]byte{[]byte("zoo")}, 1, 2, 0)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	matches := results[0]
+	require.Len(t, matches, 2)
+	assert.Equal(t, textindex.FuzzyMatch{Term: []byte("zoo"), EditDistance: 0}, matches[0])
+	assert.Equal(t, textindex.FuzzyMatch{Term: []byte("boo"), EditDistance: 1}, matches[1])
+
+	results, err = dictionary.expand(101, [][]byte{[]byte("zoo")}, 1, 1, 0)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	matches = results[0]
+	require.Len(t, matches, 1)
+	assert.Equal(t, textindex.FuzzyMatch{Term: []byte("zoo"), EditDistance: 0}, matches[0])
 }

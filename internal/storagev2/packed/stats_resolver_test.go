@@ -203,9 +203,9 @@ func TestStatsResolverLegacy(t *testing.T) {
 	resolver := NewStatsResolver("", nil).
 		WithStatslogs(statslogs).
 		WithBM25Logs(bm25Logs).
-		WithTextLogV2(textLogV2).
 		WithTextStatsLogs(textStats).
 		WithJSONKeyStats(jsonStats)
+	resolver.textLogV2 = textLogV2
 
 	t.Run("isManifest", func(t *testing.T) {
 		assert.False(t, resolver.isManifest())

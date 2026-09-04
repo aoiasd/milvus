@@ -1,8 +1,8 @@
 package writebuffer
 
 import (
-	"container/heap"
 	"math/rand"
+	"sort"
 	"time"
 
 	"github.com/samber/lo"
@@ -10,6 +10,7 @@ import (
 
 	"github.com/milvus-io/milvus-proto/go-api/v3/commonpb"
 	"github.com/milvus-io/milvus/internal/flushcommon/metacache"
+	"github.com/milvus-io/milvus/internal/flushcommon/syncmgr"
 	"github.com/milvus-io/milvus/pkg/v3/util/tsoutil"
 	"github.com/milvus-io/milvus/pkg/v3/util/typeutil"
 )
@@ -98,38 +99,74 @@ func GetFlushTsPolicy(flushTimestamp *atomic.Uint64, meta metacache.MetaCache) S
 }
 
 func GetOldestBufferPolicy(num int) SyncPolicy {
-	return wrapSelectSegmentFuncPolicy(func(buffers []*segmentBuffer, ts typeutil.Timestamp) []int64 {
-		h := &SegStartPosHeap{}
-		heap.Init(h)
+	return &oldestBufferPolicy{num: num}
+}
 
-		for _, buf := range buffers {
-			heap.Push(h, buf)
-			if h.Len() > num {
-				heap.Pop(h)
-			}
+type oldestBufferPolicy struct {
+	num int
+}
+
+func (p *oldestBufferPolicy) SelectSegments(buffers []*segmentBuffer, _ typeutil.Timestamp) []int64 {
+	return p.selectSegments(buffers, nil, nil, nil)
+}
+
+func (p *oldestBufferPolicy) Reason() string { return "oldest buffers" }
+
+func (p *oldestBufferPolicy) selectSegments(
+	buffers []*segmentBuffer,
+	growing map[int64]*growingSourceProgress,
+	textTerms map[int64]*segmentTextTermBuffer,
+	eligible func(int64) bool,
+) []int64 {
+	if p.num <= 0 {
+		return nil
+	}
+	oldest := make(map[int64]typeutil.Timestamp, len(buffers)+len(growing))
+	for _, buffer := range buffers {
+		oldest[buffer.segmentID] = buffer.MinTimestamp()
+	}
+	for segmentID, progress := range growing {
+		if progress == nil || progress.nonRetryableFailure {
+			continue
 		}
-
-		return lo.Map(*h, func(buf *segmentBuffer, _ int) int64 { return buf.segmentID })
-	}, "oldest buffers")
-}
-
-// SegMemSizeHeap implement max-heap for sorting.
-type SegStartPosHeap []*segmentBuffer
-
-func (h SegStartPosHeap) Len() int { return len(h) }
-func (h SegStartPosHeap) Less(i, j int) bool {
-	return h[i].MinTimestamp() > h[j].MinTimestamp()
-}
-func (h SegStartPosHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
-
-func (h *SegStartPosHeap) Push(x any) {
-	*h = append(*h, x.(*segmentBuffer))
-}
-
-func (h *SegStartPosHeap) Pop() interface{} {
-	old := *h
-	n := len(old)
-	x := old[n-1]
-	*h = old[0 : n-1]
-	return x
+		var pendingTerms *syncmgr.TextTermData
+		if progress.pendingCommitted != nil {
+			pendingTerms = progress.pendingCommitted.textTerms
+		}
+		if textTerms[segmentID].MemorySize()+textTermDataMemorySize(pendingTerms) == 0 {
+			continue
+		}
+		position := progress.firstUncommittedPosition()
+		var ts typeutil.Timestamp
+		if position != nil {
+			ts = position.GetTimestamp()
+		} else if pendingTerms != nil {
+			ts = pendingTerms.CoverageTimestamp
+		} else {
+			continue
+		}
+		if current, ok := oldest[segmentID]; !ok || ts < current {
+			oldest[segmentID] = ts
+		}
+	}
+	type candidate struct {
+		segmentID int64
+		ts        typeutil.Timestamp
+	}
+	candidates := make([]candidate, 0, len(oldest))
+	for segmentID, ts := range oldest {
+		candidates = append(candidates, candidate{segmentID: segmentID, ts: ts})
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].ts < candidates[j].ts })
+	result := make([]int64, 0, min(len(candidates), p.num))
+	for _, candidate := range candidates {
+		if eligible != nil && !eligible(candidate.segmentID) {
+			continue
+		}
+		result = append(result, candidate.segmentID)
+		if len(result) == p.num {
+			break
+		}
+	}
+	return result
 }

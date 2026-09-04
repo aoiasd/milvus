@@ -546,6 +546,11 @@ func (wb *writeBufferBase) MemorySize() int64 {
 	for _, textTermBuffer := range wb.textTermBuffers {
 		size += textTermBuffer.MemorySize()
 	}
+	for _, progress := range wb.growingSourceProgress {
+		if progress != nil && progress.pendingCommitted != nil {
+			size += textTermDataMemorySize(progress.pendingCommitted.textTerms)
+		}
+	}
 	return size
 }
 
@@ -992,6 +997,8 @@ func (wb *writeBufferBase) submitSyncTasks(ctx context.Context, syncTasks []sync
 								pkStats:       growingSourceTask.CommittedPKStats(),
 								textTerms:     growingSourceTask.UncommittedTextTerms(),
 							}
+						} else {
+							wb.restoreTextTerms(growingSourceTask.SegmentID(), growingSourceTask.UncommittedTextTerms())
 						}
 						progress.failSync(err)
 						wb.rollbackGrowingSourceSyncTaskLocked(growingSourceTask)
@@ -1068,7 +1075,22 @@ func (wb *writeBufferBase) getSegmentsToSync(ts typeutil.Timestamp, policies ...
 	buffers := lo.Values(wb.buffers)
 	segments := typeutil.NewSet[int64]()
 	for _, policy := range policies {
-		result := policy.SelectSegments(buffers, ts)
+		var result []int64
+		if oldest, ok := policy.(*oldestBufferPolicy); ok {
+			result = oldest.selectSegments(buffers, wb.growingSourceProgress, wb.textTermBuffers, func(segmentID int64) bool {
+				progress, ok := wb.growingSourceProgress[segmentID]
+				if !ok {
+					return true
+				}
+				syncable, retry := wb.growingSourceProgressSyncable(segmentID, progress, true, false)
+				if retry {
+					wb.scheduleGrowingSourceRetryLocked()
+				}
+				return syncable
+			})
+		} else {
+			result = policy.SelectSegments(buffers, ts)
+		}
 		if len(result) > 0 {
 			mlog.Info(context.TODO(), "SyncPolicy selects segments", mlog.Int64s("segmentIDs", result), mlog.String("reason", policy.Reason()))
 			segments.Insert(result...)
@@ -1250,6 +1272,21 @@ func (wb *writeBufferBase) yieldTextTerms(segmentID int64) *syncmgr.TextTermData
 	}
 	delete(wb.textTermBuffers, segmentID)
 	return buffer.Yield()
+}
+
+// restoreTextTerms returns an uncommitted frozen generation after a failed
+// growing-source sync. The caller holds wb.mut, so it can safely merge with
+// terms received while that generation was in flight.
+func (wb *writeBufferBase) restoreTextTerms(segmentID int64, data *syncmgr.TextTermData) {
+	if data == nil {
+		return
+	}
+	buffer := wb.textTermBuffers[segmentID]
+	if buffer == nil {
+		buffer = newSegmentTextTermBuffer()
+		wb.textTermBuffers[segmentID] = buffer
+	}
+	buffer.restore(data)
 }
 
 func (wb *writeBufferBase) yieldBuffer(segmentID int64) ([]*storage.InsertData, map[int64]*storage.BM25Stats, *storage.DeleteData, *schemapb.CollectionSchema, *TimeRange, *msgpb.MsgPosition) {

@@ -34,6 +34,7 @@ import (
 	"github.com/milvus-io/milvus/pkg/v3/proto/internalpb"
 	"github.com/milvus-io/milvus/pkg/v3/util/merr"
 	"github.com/milvus-io/milvus/pkg/v3/util/paramtable"
+	"github.com/milvus-io/milvus/pkg/v3/util/retry"
 	"github.com/milvus-io/milvus/pkg/v3/util/typeutil"
 )
 
@@ -702,6 +703,42 @@ func (s *LBPolicySuite) TestExecuteWithRetryInputErrorSkipsBlacklist() {
 	s.Equal(1, execCount)
 	// serving node not blacklisted for the request's own fault
 	s.NotContains(s.lbPolicy.blacklist.GetBlacklistedNodes(channel), int64(1))
+}
+
+func (s *LBPolicySuite) TestExecuteWithRetryUnrecoverableErrorSkipsReplicasAndBlacklist() {
+	ctx := context.Background()
+	channel := s.channels[0]
+	nodes := []NodeInfo{
+		{NodeID: 1, Address: "localhost:9000", Serviceable: true},
+		{NodeID: 2, Address: "localhost:9001", Serviceable: true},
+	}
+	s.lbPolicy.retryOnReplica = 3
+
+	s.mgr.ExpectedCalls = nil
+	s.lbBalancer.ExpectedCalls = nil
+	s.mgr.EXPECT().GetShard(mock.Anything, true, s.dbName, s.collectionName, s.collectionID, channel).Return(nodes, nil)
+	s.mgr.EXPECT().GetClient(mock.Anything, mock.Anything).Return(s.qn, nil).Once()
+	s.lbBalancer.EXPECT().RegisterNodeInfo(mock.Anything)
+	s.lbBalancer.EXPECT().SelectNode(mock.Anything, mock.Anything, mock.Anything).Return(int64(1), nil).Once()
+	s.lbBalancer.EXPECT().CancelWorkload(mock.Anything, mock.Anything).Once()
+
+	execCount := 0
+	err := s.lbPolicy.ExecuteWithRetry(ctx, ChannelWorkload{
+		Db:             s.dbName,
+		CollectionName: s.collectionName,
+		CollectionID:   s.collectionID,
+		Channel:        channel,
+		Nq:             1,
+		Exec: func(context.Context, UniqueID, types.QueryNodeClient, string) error {
+			execCount++
+			return retry.Unrecoverable(merr.ErrServiceResourceInsufficient)
+		},
+	})
+
+	s.ErrorIs(err, merr.ErrServiceResourceInsufficient)
+	s.Equal(merr.Code(merr.ErrServiceResourceInsufficient), merr.Code(err))
+	s.Equal(1, execCount)
+	s.Empty(s.lbPolicy.blacklist.GetBlacklistedNodes(channel))
 }
 
 func (s *LBPolicySuite) TestExecuteOneChannel() {

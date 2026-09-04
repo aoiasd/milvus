@@ -408,10 +408,9 @@ func (s *MixCompactionTaskStorageV3Suite) TestWriteCompactionTextTermsReplacesMa
 				Manifest:       currentManifest,
 			}
 
-			size, err := writeCompactionTextTerms(context.Background(), s.meta.GetSchema(), segment,
+			err := writeCompactionTextTerms(context.Background(), s.meta.GetSchema(), segment,
 				CollectionID, PartitionID, nil, alloc, params)
 			s.Require().NoError(err)
-			s.Positive(size)
 			s.NotEqual(currentManifest, segment.GetManifest())
 			currentManifest = segment.GetManifest()
 
@@ -424,7 +423,7 @@ func (s *MixCompactionTaskStorageV3Suite) TestWriteCompactionTextTermsReplacesMa
 			s.Require().Len(stat.Paths, 1)
 			data, err := packed.ReadFile(storageConfig, stat.Paths[0])
 			s.Require().NoError(err)
-			s.Len(data, int(size))
+			s.NotEmpty(data)
 		})
 	}
 }

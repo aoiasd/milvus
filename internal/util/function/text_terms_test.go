@@ -61,7 +61,7 @@ func TestTextTermCollectorDrainsPerSegmentGeneration(t *testing.T) {
 
 	first := collector.Drain()
 	require.Len(t, first, 1)
-	require.Equal(t, [][]byte{[]byte("again"), []byte("fuzzy"), []byte("hello"), []byte("world")}, first[101])
+	require.ElementsMatch(t, [][]byte{[]byte("again"), []byte("fuzzy"), []byte("hello"), []byte("world")}, first[101])
 	require.Nil(t, collector.Drain())
 
 	require.NoError(t, collector.Collect(map[int64][]string{101: {"next segment"}}))
@@ -130,5 +130,5 @@ func TestTextTermCollectorCollectInsertDataSkipsNullRows(t *testing.T) {
 		},
 	}})
 	require.NoError(t, err)
-	require.Equal(t, [][]byte{[]byte("kept"), []byte("value")}, collector.Drain()[101])
+	require.ElementsMatch(t, [][]byte{[]byte("kept"), []byte("value")}, collector.Drain()[101])
 }

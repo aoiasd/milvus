@@ -247,7 +247,7 @@ var errUnrecoverable = errors.New("unrecoverable error")
 // Unrecoverable method wrap an error to unrecoverableError. This will make retry
 // quick return.
 func Unrecoverable(err error) error {
-	return merr.Combine(err, errUnrecoverable)
+	return merr.Mark(err, errUnrecoverable)
 }
 
 // IsRecoverable is used to judge whether the error is wrapped by unrecoverableError.

@@ -284,6 +284,11 @@ func (t *ImportTask) sync(hashedData HashedData) ([]*conc.Future[struct{}], []sy
 	mlog.Info(t.ctx, "start to sync import data", WrapLogFields(t)...)
 	futures := make([]*conc.Future[struct{}], 0)
 	syncTasks := make([]syncmgr.Task, 0)
+	termCollector, err := function.NewTextTermCollector(t.req.GetSchema())
+	if err != nil {
+		return nil, nil, err
+	}
+	defer termCollector.Close()
 	for channelIdx, datas := range hashedData {
 		channel := t.GetVchannels()[channelIdx]
 		for partitionIdx, data := range datas {
@@ -304,16 +309,10 @@ func (t *ImportTask) sync(hashedData HashedData) ([]*conc.Future[struct{}], []sy
 					bm25Stats[outputSparseFieldId].AppendFieldData(data.Data[outputSparseFieldId].(*storage.SparseFloatVectorFieldData))
 				}
 			}
-			termCollector, err := function.NewTextTermCollector(t.req.GetSchema())
-			if err != nil {
-				return nil, nil, err
-			}
 			if err := termCollector.CollectInsertData(data); err != nil {
-				termCollector.Close()
 				return nil, nil, err
 			}
 			textTerms := termCollector.Drain()
-			termCollector.Close()
 			var textTermData *syncmgr.TextTermData
 			if textTerms != nil {
 				textTermData = &syncmgr.TextTermData{

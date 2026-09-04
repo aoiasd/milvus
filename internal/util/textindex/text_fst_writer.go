@@ -19,6 +19,7 @@ package textindex
 import (
 	"context"
 	"fmt"
+	"math"
 	"path"
 	"sort"
 	"strconv"
@@ -148,17 +149,25 @@ func buildManifestEntries(
 			if !ok || prefix != "text_log_v2" {
 				continue
 			}
-			fs := &fieldStats{files: stat.Paths}
-			if value, ok := stat.Metadata["log_size"]; ok {
-				fs.logSize, _ = strconv.ParseInt(value, 10, 64)
+			if len(stat.Paths) == 0 || stat.Metadata["format"] != MilvusTextFstFormat {
+				return nil, 0, merr.WrapErrDataIntegrityMsg(
+					"invalid retained text-log-v2 metadata for field %d", fieldID)
 			}
-			if value, ok := stat.Metadata["memory_size"]; ok {
-				fs.memorySize, _ = strconv.ParseInt(value, 10, 64)
+			logSize, err := strconv.ParseInt(stat.Metadata["log_size"], 10, 64)
+			if err != nil || logSize <= 0 {
+				return nil, 0, merr.WrapErrDataIntegrityMsg(
+					"invalid retained text-log-v2 size for field %d", fieldID)
 			}
-			if fs.logSize == 0 {
-				fs.logSize = fs.memorySize
+			memorySize, err := strconv.ParseInt(stat.Metadata["memory_size"], 10, 64)
+			if err != nil || memorySize <= 0 {
+				return nil, 0, merr.WrapErrDataIntegrityMsg(
+					"invalid retained text-log-v2 memory size for field %d", fieldID)
 			}
-			existing[fieldID] = fs
+			existing[fieldID] = &fieldStats{
+				files:      stat.Paths,
+				logSize:    logSize,
+				memorySize: memorySize,
+			}
 		}
 	}
 
@@ -185,6 +194,10 @@ func buildManifestEntries(
 		if fs == nil {
 			fs = &fieldStats{}
 		}
+		if fs.logSize > math.MaxInt64-size || fs.memorySize > math.MaxInt64-size {
+			return nil, 0, merr.WrapErrDataIntegrityMsg(
+				"text-log-v2 aggregate size overflows for field %d", fieldID)
+		}
 		fs.files = append(fs.files, fullPath)
 		fs.logSize += size
 		fs.memorySize += size
@@ -192,11 +205,10 @@ func buildManifestEntries(
 			Key:   fmt.Sprintf("text_log_v2.%d", fieldID),
 			Files: fs.files,
 			Metadata: map[string]string{
-				"format":              MilvusTextFstFormat,
-				"log_size":            strconv.FormatInt(fs.logSize, 10),
-				"memory_size":         strconv.FormatInt(fs.memorySize, 10),
-				"coverage_timestamp":  strconv.FormatUint(coverageTimestamp, 10),
-				"fragment_term_count": strconv.FormatInt(artifact.TermCount, 10),
+				"format":             MilvusTextFstFormat,
+				"log_size":           strconv.FormatInt(fs.logSize, 10),
+				"memory_size":        strconv.FormatInt(fs.memorySize, 10),
+				"coverage_timestamp": strconv.FormatUint(coverageTimestamp, 10),
 			},
 		})
 	}
