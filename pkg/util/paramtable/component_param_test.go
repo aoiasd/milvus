@@ -731,6 +731,12 @@ func TestComponentParam(t *testing.T) {
 		params.Save(Params.MmapTextLogV2.Key, "false")
 		assert.False(t, Params.MmapTextLogV2.GetAsBool())
 		params.Reset(Params.MmapTextLogV2.Key)
+		assert.Equal(t, 32.0, Params.TextLogV2GrowingTrieExpansionFactor.GetAsFloat())
+		params.Save(Params.TextLogV2GrowingTrieExpansionFactor.Key, "16.0")
+		assert.Equal(t, 16.0, Params.TextLogV2GrowingTrieExpansionFactor.GetAsFloat())
+		params.Save(Params.TextLogV2GrowingTrieExpansionFactor.Key, "0.5")
+		assert.Equal(t, 1.0, Params.TextLogV2GrowingTrieExpansionFactor.GetAsFloat())
+		params.Reset(Params.TextLogV2GrowingTrieExpansionFactor.Key)
 
 		assert.Equal(t, 60*time.Second, Params.DiskSizeFetchInterval.GetAsDuration(time.Second))
 

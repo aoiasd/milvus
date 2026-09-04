@@ -3992,10 +3992,11 @@ type queryNodeConfig struct {
 	DelegatorPostLoadConcurrencyFactor ParamItem `refreshable:"true"`
 
 	// loader
-	DeltaDataExpansionRate      ParamItem `refreshable:"true"`
-	JSONKeyStatsExpansionFactor ParamItem `refreshable:"true"`
-	TextIndexExpansionFactor    ParamItem `refreshable:"true"`
-	DiskSizeFetchInterval       ParamItem `refreshable:"false"`
+	DeltaDataExpansionRate              ParamItem `refreshable:"true"`
+	JSONKeyStatsExpansionFactor         ParamItem `refreshable:"true"`
+	TextIndexExpansionFactor            ParamItem `refreshable:"true"`
+	TextLogV2GrowingTrieExpansionFactor ParamItem `refreshable:"true"`
+	DiskSizeFetchInterval               ParamItem `refreshable:"false"`
 
 	// schedule task policy.
 	SchedulePolicyName                    ParamItem `refreshable:"false"`
@@ -5200,6 +5201,24 @@ Max read concurrency must greater than or equal to 1, and less than or equal to 
 		Doc:          "the expansion factor for text match index memory size estimation during segment loading",
 	}
 	p.TextIndexExpansionFactor.Init(base.mgr)
+
+	p.TextLogV2GrowingTrieExpansionFactor = ParamItem{
+		Key:          "queryNode.textLogV2GrowingTrieExpansionFactor",
+		Version:      "3.0.0",
+		DefaultValue: "32.0",
+		Formatter: func(v string) string {
+			factor := getAsFloat(v)
+			if factor < 1.0 || math.IsNaN(factor) || math.IsInf(factor, 0) {
+				return "1.0"
+			} else if factor > 1024.0 {
+				return "1024.0"
+			}
+			return v
+		},
+		Doc:    "the expansion factor [1, 1024] from persisted Text Log V2 FST bytes to the in-memory Trie rebuilt for a growing segment",
+		Export: true,
+	}
+	p.TextLogV2GrowingTrieExpansionFactor.Init(base.mgr)
 
 	p.DiskSizeFetchInterval = ParamItem{
 		Key:          "querynode.diskSizeFetchInterval",

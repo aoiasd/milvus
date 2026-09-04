@@ -28,6 +28,7 @@ struct TextFstSearchResult {
 // Returns the next strictly byte-sorted term, or nullopt at end of stream.
 // The returned view only needs to remain valid until the next reader call.
 using TextFstTermReader = std::function<std::optional<std::string_view>()>;
+using TextFstTermVisitor = std::function<void(std::string_view)>;
 
 class TextFst {
  public:
@@ -49,10 +50,19 @@ class TextFst {
                 std::uint32_t max_edit_distance,
                 std::size_t max_expansions) const;
 
+    void
+    LoadFile(const std::string& path, bool memory_mapped);
+    void
+    LoadBytes(std::span<const std::uint8_t> bytes);
+    void
+    VisitTerms(const TextFstTermVisitor& visitor) const;
+
     [[nodiscard]] std::size_t
     TermCount() const;
     [[nodiscard]] std::size_t
     DataSize() const;
+    [[nodiscard]] bool
+    IsMemoryMapped() const;
     [[nodiscard]] std::span<const std::uint8_t>
     SerializedBytes() const;
     [[nodiscard]] bool
