@@ -447,6 +447,7 @@ func (node *QueryNode) Start() error {
 		mmapVectorField := paramtable.Get().QueryNodeCfg.MmapVectorField.GetAsBool()
 		mmapScalarIndex := paramtable.Get().QueryNodeCfg.MmapScalarIndex.GetAsBool()
 		mmapScalarField := paramtable.Get().QueryNodeCfg.MmapScalarField.GetAsBool()
+		mmapTextLogV2 := paramtable.Get().QueryNodeCfg.MmapTextLogV2.GetAsBool()
 
 		node.UpdateStateCode(commonpb.StateCode_Healthy)
 
@@ -465,6 +466,7 @@ func (node *QueryNode) Start() error {
 			mlog.Bool("mmapVectorField", mmapVectorField),
 			mlog.Bool("mmapScalarIndex", mmapScalarIndex),
 			mlog.Bool("mmapScalarField", mmapScalarField),
+			mlog.Bool("mmapTextLogV2", mmapTextLogV2),
 		)
 	})
 

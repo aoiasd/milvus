@@ -3951,6 +3951,7 @@ type queryNodeConfig struct {
 	MmapScalarIndex                     ParamItem `refreshable:"false"`
 	MmapPopulate                        ParamItem `refreshable:"false"`
 	MmapJSONStats                       ParamItem `refreshable:"false"`
+	MmapTextLogV2                       ParamItem `refreshable:"false"`
 	GrowingMmapEnabled                  ParamItem `refreshable:"false"`
 	FixedFileSizeForMmapManager         ParamItem `refreshable:"false"`
 	MaxMmapDiskPercentageForMmapManager ParamItem `refreshable:"false"`
@@ -4848,6 +4849,15 @@ This defaults to true, indicating that Milvus creates temporary index for growin
 		Export:       true,
 	}
 	p.MmapJSONStats.Init(base.mgr)
+
+	p.MmapTextLogV2 = ParamItem{
+		Key:          "queryNode.mmap.textLogV2",
+		Version:      "3.0.0",
+		DefaultValue: "true",
+		Doc:          "Enable mmap for loading Text Log V2 artifacts",
+		Export:       true,
+	}
+	p.MmapTextLogV2.Init(base.mgr)
 
 	p.GrowingMmapEnabled = ParamItem{
 		Key:          "queryNode.mmap.growingMmapEnabled",

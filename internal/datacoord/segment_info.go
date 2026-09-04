@@ -360,6 +360,17 @@ func (s *SegmentInfo) IsStatsLogExists(logID int64) bool {
 	return false
 }
 
+func (s *SegmentInfo) IsTextLogV2Exists(logID int64) bool {
+	for _, fieldLogs := range s.GetTextLogV2() {
+		for _, log := range fieldLogs.GetBinlogs() {
+			if log.GetLogID() == logID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Clone deep clone the segment info and return a new instance. Stats lives
 // on the proto and is copied by proto.Clone, so the cloned segment's
 // aggregate reads stay consistent with its (cloned) binlog arrays. Opts

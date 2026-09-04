@@ -169,6 +169,23 @@ func (s *MultiAnalyzerBM25FunctionSuite) TestBatchRun() {
 	})
 }
 
+func (s *MultiAnalyzerBM25FunctionSuite) TestBatchRunWithTextTerms() {
+	runner, err := NewBM25FunctionRunner(s.collection, s.function)
+	s.Require().NoError(err)
+	defer runner.Close()
+
+	materializer, ok := runner.(TextTermMaterializer)
+	s.Require().True(ok)
+	_, batches, err := materializer.BatchRunWithTextTerms(
+		[]string{"test of analyzer", "test of analyzer"},
+		[]string{"english", "default"},
+	)
+	s.Require().NoError(err)
+	s.Require().Len(batches, 1)
+	s.EqualValues(101, batches[0].InputFieldID)
+	s.Equal([][]byte{[]byte("analyz"), []byte("analyzer"), []byte("of"), []byte("test")}, batches[0].Terms)
+}
+
 func (s *MultiAnalyzerBM25FunctionSuite) TestBatchAnalyze() {
 	s.Run("normal", func() {
 		runner, err := NewBM25FunctionRunner(s.collection, s.function)
@@ -209,7 +226,7 @@ func (s *MultiAnalyzerBM25FunctionSuite) TestRunReleasesTokenStreamsPerInput() {
 	}
 	dst := make([]map[uint32]float32, 3)
 
-	err := runner.run([]string{"a", "b", "c"}, []string{"default", "default", "default"}, dst)
+	err := runner.run([]string{"a", "b", "c"}, []string{"default", "default", "default"}, dst, nil)
 
 	s.NoError(err)
 	s.Equal(int32(0), active.Load())

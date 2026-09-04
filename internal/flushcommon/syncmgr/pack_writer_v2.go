@@ -110,6 +110,7 @@ func (bw *BulkPackWriterV2) Write(ctx context.Context, pack *SyncPack) (
 	deltas *datapb.FieldBinlog,
 	stats map[int64]*datapb.FieldBinlog,
 	bm25Stats map[int64]*datapb.FieldBinlog,
+	textTerms map[int64]*datapb.FieldBinlog,
 	manifest string,
 	size int64,
 	segmentStats *datapb.Statistics,
@@ -129,6 +130,10 @@ func (bw *BulkPackWriterV2) Write(ctx context.Context, pack *SyncPack) (
 	}
 	if bm25Stats, err = bw.writeBM25Stasts(ctx, pack); err != nil {
 		mlog.Error(ctx, "failed to process bm25 stats blob", mlog.Err(err))
+		return
+	}
+	if textTerms, err = bw.writeTextTerms(ctx, pack); err != nil {
+		mlog.Error(ctx, "failed to write text term FST", mlog.Err(err))
 		return
 	}
 

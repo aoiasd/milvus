@@ -129,6 +129,10 @@ type growingSourcePendingCommittedFlush struct {
 	bm25Stats     map[int64]*storage.BM25Stats
 	insertBinlogs map[int64]*datapb.FieldBinlog
 	pkStats       *storage.PrimaryKeyStats
+	// textTerms is non-nil only when the data manifest was committed but the
+	// FST manifest update failed. It is retried without flushing source data a
+	// second time.
+	textTerms *syncmgr.TextTermData
 }
 
 // growingFlushSourceDecision is the in-memory result of decideGrowingFlushSource.
@@ -267,6 +271,9 @@ type writeBufferBase struct {
 
 	mut     sync.RWMutex
 	buffers map[int64]*segmentBuffer // segmentID => segmentBuffer
+	// textTermBuffers is independent of insert payload ownership so both the
+	// ordinary write-buffer path and growing-source flush preserve WAL terms.
+	textTermBuffers map[int64]*segmentTextTermBuffer
 
 	syncPolicies   []SyncPolicy
 	syncCheckpoint *checkpointCandidates
@@ -336,6 +343,7 @@ func newWriteBufferBase(channel string, metacache metacache.MetaCache, syncMgr s
 		metaWriter:                 option.metaWriter,
 		allocator:                  option.idAllocator,
 		buffers:                    make(map[int64]*segmentBuffer),
+		textTermBuffers:            make(map[int64]*segmentTextTermBuffer),
 		metaCache:                  metacache,
 		syncCheckpoint:             newCheckpointCandiates(),
 		syncPolicies:               option.syncPolicies,
@@ -534,6 +542,9 @@ func (wb *writeBufferBase) MemorySize() int64 {
 	var size int64
 	for _, segBuf := range wb.buffers {
 		size += segBuf.MemorySize()
+	}
+	for _, textTermBuffer := range wb.textTermBuffers {
+		size += textTermBuffer.MemorySize()
 	}
 	return size
 }
@@ -979,6 +990,7 @@ func (wb *writeBufferBase) submitSyncTasks(ctx context.Context, syncTasks []sync
 								bm25Stats:     cloneBM25StatsMap(growingSourceTask.CommittedBM25Stats()),
 								insertBinlogs: growingSourceTask.CommittedInsertBinlogs(),
 								pkStats:       growingSourceTask.CommittedPKStats(),
+								textTerms:     growingSourceTask.UncommittedTextTerms(),
 							}
 						}
 						progress.failSync(err)
@@ -1217,6 +1229,29 @@ func (wb *writeBufferBase) notifyFlushSourceMode(segmentID int64) {
 	}
 }
 
+func (wb *writeBufferBase) bufferTextTerms(segmentID int64, batches []*msgpb.TextTermBatch, coverageTimestamp uint64) {
+	if len(batches) == 0 {
+		return
+	}
+	buffer := wb.textTermBuffers[segmentID]
+	if buffer == nil {
+		buffer = newSegmentTextTermBuffer()
+		wb.textTermBuffers[segmentID] = buffer
+	}
+	buffer.Buffer(batches, coverageTimestamp)
+}
+
+// yieldTextTerms freezes the current generation. The caller holds wb.mut, so
+// later inserts create a new buffer while the yielded generation is syncing.
+func (wb *writeBufferBase) yieldTextTerms(segmentID int64) *syncmgr.TextTermData {
+	buffer := wb.textTermBuffers[segmentID]
+	if buffer == nil {
+		return nil
+	}
+	delete(wb.textTermBuffers, segmentID)
+	return buffer.Yield()
+}
+
 func (wb *writeBufferBase) yieldBuffer(segmentID int64) ([]*storage.InsertData, map[int64]*storage.BM25Stats, *storage.DeleteData, *schemapb.CollectionSchema, *TimeRange, *msgpb.MsgPosition) {
 	buffer, ok := wb.buffers[segmentID]
 	if !ok {
@@ -1237,6 +1272,7 @@ type InsertData struct {
 	partitionID int64
 	data        []*storage.InsertData
 	bm25Stats   map[int64]*storage.BM25Stats
+	textTerms   []*msgpb.TextTermBatch
 
 	pkField []storage.FieldData
 	pkType  schemapb.DataType
@@ -1469,6 +1505,9 @@ func (wb *writeBufferBase) getSyncTask(ctx context.Context, segmentID int64) (sy
 		WithCheckpoint(wb.checkpoint).
 		WithBatchRows(batchSize).
 		WithErrorHandler(wb.errHandler)
+	if textTerms := wb.yieldTextTerms(segmentID); textTerms != nil {
+		pack.WithTextTerms(textTerms)
+	}
 
 	if len(bm25) != 0 {
 		pack.WithBM25Stats(bm25)
@@ -1576,6 +1615,11 @@ func (wb *writeBufferBase) getGrowingSourceSyncTask(ctx context.Context, segment
 		if pendingCommitted != nil {
 			task.WithCommittedFlush(pendingCommitted.manifestPath, cloneBM25StatsMap(pendingCommitted.bm25Stats), pendingCommitted.insertBinlogs)
 			task.WithCommittedPKStats(pendingCommitted.pkStats)
+			if pendingCommitted.textTerms != nil {
+				task.WithTextTerms(pendingCommitted.textTerms)
+			}
+		} else if textTerms := wb.yieldTextTerms(progress.segmentID); textTerms != nil {
+			task.WithTextTerms(textTerms)
 		}
 		if segmentInfo.State() == commonpb.SegmentState_Flushing {
 			task.WithFlush()
@@ -1740,6 +1784,7 @@ func PrepareInsert(collSchema *schemapb.CollectionSchema, pkField *schemapb.Fiel
 					return nil, err
 				}
 			}
+			inData.textTerms = append(inData.textTerms, msg.GetTextTermBatches()...)
 
 			pkFieldData, err := storage.GetPkFromInsertData(collSchema, data)
 			if err != nil {
