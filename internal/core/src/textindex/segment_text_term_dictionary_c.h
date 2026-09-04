@@ -51,6 +51,22 @@ AddSegmentTextTermFstsToTrie(CSegmentInterface c_segment,
                              const CTextFstHandle* fst_handles,
                              int64_t fst_count);
 
+// Runs one source term against every supplied immutable FST and the segment's
+// mutable Trie, then returns the deduplicated union. max_expansions is applied
+// independently by each FST/Trie. Growing segments supply no FST handles after
+// recovery because their complete vocabulary has been imported into one Trie.
+CTextFstFuzzyResult
+FuzzySearchSegmentTextTerms(CSegmentInterface c_segment,
+                            int64_t field_id,
+                            const CTextFstHandle* fst_handles,
+                            int64_t fst_count,
+                            const uint8_t* query,
+                            int64_t query_size,
+                            uint32_t max_edit_distance,
+                            uint32_t max_expansions,
+                            // Counted in Unicode code points, not UTF-8 bytes.
+                            uint32_t prefix_length);
+
 #ifdef __cplusplus
 }
 #endif

@@ -407,6 +407,11 @@ func checkSegmentSnapshotPaths(
 			return err
 		}
 	}
+	for _, fieldBinlog := range segment.GetTextLogV2() {
+		if err := checkFieldBinlogs(fieldBinlog, checkPath); err != nil {
+			return err
+		}
+	}
 	for _, indexFile := range segment.GetIndexFiles() {
 		for _, filePath := range indexFile.GetIndexFilePaths() {
 			if err := checkPath(filePath); err != nil {

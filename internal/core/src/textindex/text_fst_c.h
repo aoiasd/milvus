@@ -45,6 +45,18 @@ typedef struct CTextFstLoadResult {
     bool is_data_integrity_error;
 } CTextFstLoadResult;
 
+typedef struct CTextFstMatch {
+    uint8_t* term;
+    int64_t term_size;
+    uint32_t edit_distance;
+} CTextFstMatch;
+
+typedef struct CTextFstFuzzyResult {
+    CStatus status;
+    CTextFstMatch* matches;
+    int64_t match_count;
+} CTextFstFuzzyResult;
+
 // BuildTextFst builds a BurntSushi-compatible Map<bytes, uint64> artifact.
 // encoded_terms is little-endian: u64 count followed by count repetitions of
 // u64 byte_length and the raw term bytes. Every output value is fixed to 1.
@@ -56,6 +68,18 @@ LoadTextFstBytes(const uint8_t* data, int64_t data_size);
 
 CTextFstLoadResult
 LoadTextFstFile(const char* path, bool memory_mapped);
+
+CTextFstFuzzyResult
+FuzzySearchTextFst(CTextFstHandle handle,
+                   const uint8_t* query,
+                   int64_t query_size,
+                   uint32_t max_edit_distance,
+                   uint32_t max_expansions,
+                   // Counted in Unicode code points, not UTF-8 bytes.
+                   uint32_t prefix_length);
+
+void
+FreeTextFstFuzzyResult(CTextFstFuzzyResult* result);
 
 void
 DeleteTextFst(CTextFstHandle handle);

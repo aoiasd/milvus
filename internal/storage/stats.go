@@ -360,6 +360,13 @@ func (m *BM25Stats) NumToken() int64 {
 	return m.numToken
 }
 
+func (m *BM25Stats) DF(term uint32) int32 {
+	if m == nil {
+		return 0
+	}
+	return m.rowsWithToken[term]
+}
+
 func (m *BM25Stats) Merge(meta *BM25Stats) {
 	for key, value := range meta.rowsWithToken {
 		m.rowsWithToken[key] += value

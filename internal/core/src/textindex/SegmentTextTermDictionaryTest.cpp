@@ -54,22 +54,44 @@ TEST(SegmentTextTermDictionaryTest, MutableTrieSupportsDamerauAndUtf8) {
     SegmentTextTermDictionary dictionary;
     dictionary.AddTerms(101, {"book", "你好"});
 
-    auto transposition = dictionary.FuzzySearch(101, {}, "boko", 1, 50);
+    auto transposition = dictionary.FuzzySearch(101, {}, "boko", 1, 50, 0);
     ASSERT_EQ(transposition.size(), 1);
     EXPECT_EQ(transposition[0].term, "book");
     EXPECT_EQ(transposition[0].edit_distance, 1);
 
-    auto utf8 = dictionary.FuzzySearch(101, {}, "你号", 1, 50);
+    auto utf8 = dictionary.FuzzySearch(101, {}, "你号", 1, 50, 0);
     ASSERT_EQ(utf8.size(), 1);
     EXPECT_EQ(utf8[0].term, "你好");
     EXPECT_EQ(utf8[0].edit_distance, 1);
+}
+
+TEST(SegmentTextTermDictionaryTest, PrefixLengthUsesUnicodeCharacters) {
+    SegmentTextTermDictionary growing;
+    growing.AddTerms(101, {"book", "你好"});
+
+    ASSERT_EQ(growing.FuzzySearch(101, {}, "cook", 1, 50, 0).size(), 1);
+    EXPECT_TRUE(growing.FuzzySearch(101, {}, "cook", 1, 50, 1).empty());
+
+    const auto unicode = growing.FuzzySearch(101, {}, "你号", 1, 50, 1);
+    ASSERT_EQ(unicode.size(), 1);
+    EXPECT_EQ(unicode[0].term, "你好");
+    EXPECT_EQ(unicode[0].edit_distance, 1);
+    EXPECT_TRUE(growing.FuzzySearch(101, {}, "他好", 1, 50, 1).empty());
+
+    BurntSushiFstCppTermDictionary sealed;
+    sealed.Build({{"book", 1}, {"你好", 1}});
+    const std::vector<const TermDictionary*> fsts{&sealed};
+    ASSERT_EQ(growing.FuzzySearch(102, fsts, "cook", 1, 50, 0).size(), 1);
+    EXPECT_TRUE(growing.FuzzySearch(102, fsts, "cook", 1, 50, 1).empty());
+    ASSERT_EQ(growing.FuzzySearch(102, fsts, "你号", 1, 50, 1).size(), 1);
+    EXPECT_TRUE(growing.FuzzySearch(102, fsts, "他好", 1, 50, 1).empty());
 }
 
 TEST(SegmentTextTermDictionaryTest, MutableTrieKeepsBoundedBestMatches) {
     SegmentTextTermDictionary dictionary;
     dictionary.AddTerms(101, {"boo", "coo", "doo", "zoo"});
 
-    const auto matches = dictionary.FuzzySearch(101, {}, "zoo", 1, 2);
+    const auto matches = dictionary.FuzzySearch(101, {}, "zoo", 1, 2, 0);
     ASSERT_EQ(matches.size(), 2);
     EXPECT_EQ(matches[0].term, "zoo");
     EXPECT_EQ(matches[0].edit_distance, 0);
@@ -86,7 +108,7 @@ TEST(SegmentTextTermDictionaryTest, CombinesFstsAndMutableTrie) {
 
     SegmentTextTermDictionary dictionary;
     dictionary.AddTerms(101, {"zoo", "boo"});
-    const auto matches = dictionary.FuzzySearch(101, fsts, "zoo", 1, 1);
+    const auto matches = dictionary.FuzzySearch(101, fsts, "zoo", 1, 1, 0);
 
     // The current contract applies max_expansions to each FST/Trie before
     // merging, so the union may be larger than the configured value.

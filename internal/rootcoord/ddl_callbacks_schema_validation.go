@@ -20,6 +20,7 @@ import (
 	"github.com/milvus-io/milvus-proto/go-api/v3/schemapb"
 	"github.com/milvus-io/milvus/internal/metastore/model"
 	"github.com/milvus-io/milvus/internal/util/schemautil"
+	"github.com/milvus-io/milvus/pkg/v3/util/typeutil"
 )
 
 func validateSchemaEvolution(oldColl *model.Collection, newSchema *schemapb.CollectionSchema) error {
@@ -27,5 +28,8 @@ func validateSchemaEvolution(oldColl *model.Collection, newSchema *schemapb.Coll
 	if oldColl != nil {
 		oldSchema = oldColl.ToCollectionSchemaPB()
 	}
-	return schemautil.ValidateSchemaEvolution(oldSchema, newSchema)
+	if err := schemautil.ValidateSchemaEvolution(oldSchema, newSchema); err != nil {
+		return err
+	}
+	return typeutil.ValidateFuzzyBM25Functions(newSchema)
 }

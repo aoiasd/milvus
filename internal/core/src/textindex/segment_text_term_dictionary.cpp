@@ -33,6 +33,7 @@ namespace milvus::textindex {
 namespace {
 
 using fst_test::burntsushi_fst_cpp_impl::BuildLevenshteinDfa;
+using fst_test::burntsushi_fst_cpp_impl::Utf8PrefixByteLength;
 using fst_test::burntsushi_fst_cpp_impl::ValidateUtf8;
 
 struct TextTermMatchBetter {
@@ -140,19 +141,38 @@ class MutableTermTrie {
     [[nodiscard]] std::vector<TextTermMatch>
     FuzzySearch(std::string_view query,
                 std::uint32_t max_edit_distance,
-                std::size_t max_expansions) const {
+                std::size_t max_expansions,
+                std::uint32_t prefix_length) const {
         if (max_edit_distance > 2) {
             throw std::invalid_argument(
                 "mutable text term trie edit distance must be in [0, 2]");
         }
-        ValidateUtf8(query);
         if (max_expansions == 0 || term_count_ == 0) {
             return {};
         }
 
-        const auto dfa = BuildLevenshteinDfa(query, max_edit_distance, true);
+        const auto prefix_bytes = Utf8PrefixByteLength(query, prefix_length);
+        const auto exact_prefix = query.substr(0, prefix_bytes);
+        const auto query_suffix = query.substr(prefix_bytes);
+        const Node* start = &root_;
+        for (const unsigned char byte : exact_prefix) {
+            const auto position =
+                std::lower_bound(start->edges.begin(),
+                                 start->edges.end(),
+                                 byte,
+                                 [](const Edge& edge, std::uint8_t label) {
+                                     return edge.label < label;
+                                 });
+            if (position == start->edges.end() || position->label != byte) {
+                return {};
+            }
+            start = position->target.get();
+        }
+
+        const auto dfa =
+            BuildLevenshteinDfa(query_suffix, max_edit_distance, true);
         BoundedTextTermMatches matches(max_expansions);
-        std::string term;
+        std::string term(exact_prefix);
         struct Frame {
             const Node* node = nullptr;
             std::uint32_t dfa_state = 0;
@@ -161,7 +181,7 @@ class MutableTermTrie {
         };
         std::vector<Frame> stack;
         stack.push_back(Frame{
-            .node = &root_,
+            .node = start,
             .dfa_state = dfa.InitialState(),
         });
         while (!stack.empty()) {
@@ -281,7 +301,8 @@ SegmentTextTermDictionary::FuzzySearch(
     std::span<const fst_test::TermDictionary* const> immutable_fsts,
     std::string_view query,
     std::uint32_t max_edit_distance,
-    std::size_t max_expansions) const {
+    std::size_t max_expansions,
+    std::uint32_t prefix_length) const {
     if (max_edit_distance > 2) {
         throw std::invalid_argument(
             "text term edit distance must be in [0, 2]");
@@ -309,7 +330,8 @@ SegmentTextTermDictionary::FuzzySearch(
             throw std::invalid_argument("text term FST handle is null");
         }
         auto result =
-            fst->FuzzySearch(query, max_edit_distance, max_expansions);
+            fst->FuzzySearch(
+                query, max_edit_distance, max_expansions, prefix_length);
         for (auto& match : result.matches) {
             merge(std::move(match.term), match.edit_distance);
         }
@@ -320,7 +342,7 @@ SegmentTextTermDictionary::FuzzySearch(
         if (const auto position = impl_->tries.find(field_id);
             position != impl_->tries.end()) {
             auto trie_matches = position->second->FuzzySearch(
-                query, max_edit_distance, max_expansions);
+                query, max_edit_distance, max_expansions, prefix_length);
             for (auto& match : trie_matches) {
                 merge(std::move(match.term), match.edit_distance);
             }

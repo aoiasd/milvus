@@ -42,6 +42,7 @@ const (
 	SnapshotFileTypeStatsBinlog             SnapshotFileType = "stats_binlog"
 	SnapshotFileTypeDeltaBinlog             SnapshotFileType = "delta_binlog"
 	SnapshotFileTypeBM25StatsBinlog         SnapshotFileType = "bm25_stats_binlog"
+	SnapshotFileTypeTextLogV2               SnapshotFileType = "text_log_v2"
 	SnapshotFileTypeIndexFile               SnapshotFileType = "index_file"
 	SnapshotFileTypeTextIndexFile           SnapshotFileType = "text_index_file"
 	SnapshotFileTypeJSONKeyIndexFile        SnapshotFileType = "json_key_index_file"
@@ -159,6 +160,7 @@ func (c *snapshotFileRefCollector) addSegment(ctx context.Context, segment *data
 	c.addFieldBinlogRefs(segment.GetStatslogs(), segment, SnapshotFileTypeStatsBinlog)
 	c.addFieldBinlogRefs(segment.GetDeltalogs(), segment, SnapshotFileTypeDeltaBinlog)
 	c.addFieldBinlogRefs(segment.GetBm25Statslogs(), segment, SnapshotFileTypeBM25StatsBinlog)
+	c.addFieldBinlogRefs(segment.GetTextLogV2(), segment, SnapshotFileTypeTextLogV2)
 	c.addIndexRefs(segment.GetIndexFiles(), segment)
 	return nil
 }
@@ -467,6 +469,9 @@ func rewriteSegmentFilePaths(
 		return err
 	}
 	if err := rewriteFieldBinlogPaths(segment.GetBm25Statslogs(), "bm25 stats binlog", segment.GetSegmentId(), rewrite); err != nil {
+		return err
+	}
+	if err := rewriteFieldBinlogPaths(segment.GetTextLogV2(), "text log v2", segment.GetSegmentId(), rewrite); err != nil {
 		return err
 	}
 	if err := rewriteIndexFilePaths(segment.GetIndexFiles(), segment.GetSegmentId(), rewrite); err != nil {

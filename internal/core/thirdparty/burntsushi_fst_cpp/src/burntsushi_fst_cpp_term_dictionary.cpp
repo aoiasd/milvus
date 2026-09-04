@@ -10,6 +10,7 @@
 #include <fstream>
 #include <limits>
 #include <optional>
+#include <queue>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -887,6 +888,32 @@ struct NodeView {
     }
 };
 
+struct ExactPrefixState {
+    NodeView node;
+    Output output = 0;
+};
+
+std::optional<ExactPrefixState>
+FollowExactPrefix(std::span<const std::uint8_t> data,
+                  Address root_address,
+                  std::string_view prefix) {
+    auto node = NodeView::Read(data, root_address);
+    Output output = 0;
+    for (const unsigned char byte : prefix) {
+        const auto index = node.FindInput(byte);
+        if (!index.has_value()) {
+            return std::nullopt;
+        }
+        const auto transition = node.FullTransition(*index);
+        output += transition.output;
+        node = NodeView::Read(data, transition.address);
+    }
+    return ExactPrefixState{
+        .node = node,
+        .output = output,
+    };
+}
+
 std::uint32_t
 CheckedOutput(Output output) {
     if (output > std::numeric_limits<std::uint32_t>::max()) {
@@ -895,12 +922,62 @@ CheckedOutput(Output output) {
     return static_cast<std::uint32_t>(output);
 }
 
+struct FuzzyMatchBetter {
+    bool
+    operator()(const FuzzyMatch& left, const FuzzyMatch& right) const {
+        if (left.edit_distance != right.edit_distance) {
+            return left.edit_distance < right.edit_distance;
+        }
+        return left.term < right.term;
+    }
+};
+
+class BoundedFuzzyMatches {
+ public:
+    explicit BoundedFuzzyMatches(std::size_t limit) : limit_(limit) {
+    }
+
+    void
+    Add(FuzzyMatch match) {
+        if (matches_.size() < limit_) {
+            matches_.push(std::move(match));
+            return;
+        }
+        if (FuzzyMatchBetter{}(match, matches_.top())) {
+            matches_.pop();
+            matches_.push(std::move(match));
+        }
+    }
+
+    std::vector<FuzzyMatch>
+    Take() {
+        std::vector<FuzzyMatch> result;
+        result.reserve(matches_.size());
+        while (!matches_.empty()) {
+            result.push_back(matches_.top());
+            matches_.pop();
+        }
+        std::sort(result.begin(), result.end(), FuzzyMatchBetter{});
+        return result;
+    }
+
+ private:
+    std::size_t limit_;
+    std::priority_queue<FuzzyMatch,
+                        std::vector<FuzzyMatch>,
+                        FuzzyMatchBetter>
+        matches_;
+};
+
 FuzzySearchResult
 IntersectLevenshteinDfa(std::span<const std::uint8_t> data,
-                        Address root_address,
-                        const LevenshteinDfa& dfa) {
+                        const ExactPrefixState& start,
+                        std::string_view exact_prefix,
+                        const LevenshteinDfa& dfa,
+                        std::size_t max_expansions) {
     FuzzySearchResult result;
-    std::string term;
+    BoundedFuzzyMatches matches(max_expansions);
+    std::string term(exact_prefix);
     struct Frame {
         NodeView node;
         Output output = 0;
@@ -910,7 +987,8 @@ IntersectLevenshteinDfa(std::span<const std::uint8_t> data,
     };
     std::vector<Frame> stack;
     stack.push_back(Frame{
-        .node = NodeView::Read(data, root_address),
+        .node = start.node,
+        .output = start.output,
         .dfa_state = dfa.InitialState(),
     });
     while (!stack.empty()) {
@@ -922,7 +1000,7 @@ IntersectLevenshteinDfa(std::span<const std::uint8_t> data,
                 ++result.visited_terms;
             }
             if (frame.node.is_final && dfa.IsMatch(frame.dfa_state)) {
-                result.matches.push_back(FuzzyMatch{
+                matches.Add(FuzzyMatch{
                     term,
                     CheckedOutput(frame.output + frame.node.final_output),
                     dfa.Distance(frame.dfa_state),
@@ -957,6 +1035,7 @@ IntersectLevenshteinDfa(std::span<const std::uint8_t> data,
             });
         }
     }
+    result.matches = matches.Take();
     return result;
 }
 
@@ -1000,8 +1079,14 @@ class RustGenericAlignedStream {
  public:
     RustGenericAlignedStream(std::span<const std::uint8_t> data,
                              Address root_address,
+                             Output root_output,
+                             std::string_view exact_prefix,
                              LevenshteinDfa dfa)
-        : data_(data), root_address_(root_address), dfa_(std::move(dfa)) {
+        : data_(data),
+          root_address_(root_address),
+          root_output_(root_output),
+          dfa_(std::move(dfa)),
+          input_(exact_prefix) {
         input_.reserve(16);
         SeekMin();
     }
@@ -1010,7 +1095,7 @@ class RustGenericAlignedStream {
         if (empty_output_.has_value()) {
             const auto output = *empty_output_;
             empty_output_.reset();
-            if (end_at_.ExceededBy({})) {
+            if (end_at_.ExceededBy(input_)) {
                 stack_.clear();
                 return std::nullopt;
             }
@@ -1090,16 +1175,18 @@ class RustGenericAlignedStream {
         }
         const auto root = NodeView::Read(data_, root_address_);
         if (min_at_.IsInclusive() && root.is_final) {
-            empty_output_ = root.final_output;
+            empty_output_ = root_output_ + root.final_output;
         }
         stack_.push_back(StreamState{
             .node = root,
+            .output = root_output_,
             .dfa_state = dfa_.InitialState(),
         });
     }
 
     std::span<const std::uint8_t> data_;
     Address root_address_ = kEmptyAddress;
+    Output root_output_ = 0;
     LevenshteinDfa dfa_;
     std::string input_;
     std::optional<Output> empty_output_;
@@ -1110,28 +1197,37 @@ class RustGenericAlignedStream {
 
 FuzzySearchResult
 IntersectRustGenericAligned(std::span<const std::uint8_t> data,
-                            Address root_address,
+                            const ExactPrefixState& start,
+                            std::string_view exact_prefix,
                             LevenshteinDfa dfa,
-                            std::string_view query,
+                            std::string_view query_suffix,
                             std::uint32_t max_edit_distance,
-                            EditDistanceMode edit_distance_mode) {
+                            EditDistanceMode edit_distance_mode,
+                            std::size_t max_expansions) {
     FuzzySearchResult result;
-    RustGenericAlignedStream stream(data, root_address, std::move(dfa));
+    BoundedFuzzyMatches matches(max_expansions);
+    RustGenericAlignedStream stream(data,
+                                    start.node.address,
+                                    start.output,
+                                    exact_prefix,
+                                    std::move(dfa));
     while (const auto match = stream.Next()) {
+        const auto term_suffix = match->term.substr(exact_prefix.size());
         const auto distance =
             edit_distance_mode == EditDistanceMode::kDamerauLevenshteinOsa
-                ? DamerauLevenshteinOsa(query, match->term)
-                : LevenshteinDistance(query, match->term);
+                ? DamerauLevenshteinOsa(query_suffix, term_suffix)
+                : LevenshteinDistance(query_suffix, term_suffix);
         if (distance > max_edit_distance) {
             throw std::logic_error(
                 "Rust-aligned stream returned an out-of-range fuzzy term");
         }
-        result.matches.push_back(FuzzyMatch{
+        matches.Add(FuzzyMatch{
             std::string(match->term),
             CheckedOutput(match->output),
             distance,
         });
     }
+    result.matches = matches.Take();
     return result;
 }
 
@@ -1301,7 +1397,8 @@ FuzzySearchResult
 BurntSushiFstCppTermDictionary::FuzzySearch(
     std::string_view query,
     std::uint32_t max_edit_distance,
-    std::size_t max_expansions) const {
+    std::size_t max_expansions,
+    std::uint32_t prefix_length) const {
     if (max_edit_distance > 2) {
         throw std::invalid_argument("BurntSushi C++ fuzzy distance must be in [0, 2]");
     }
@@ -1318,31 +1415,32 @@ BurntSushiFstCppTermDictionary::FuzzySearch(
         return result;
     }
 
+    const auto prefix_bytes = Utf8PrefixByteLength(query, prefix_length);
+    const auto exact_prefix = query.substr(0, prefix_bytes);
+    const auto query_suffix = query.substr(prefix_bytes);
+    const auto start = FollowExactPrefix(
+        impl_->data, impl_->metadata.root_address, exact_prefix);
+    if (!start.has_value()) {
+        return result;
+    }
+
     const bool transposition_cost_one =
         impl_->edit_distance_mode ==
         EditDistanceMode::kDamerauLevenshteinOsa;
     auto dfa = BuildLevenshteinDfa(
-        query, max_edit_distance, transposition_cost_one);
+        query_suffix, max_edit_distance, transposition_cost_one);
     if (impl_->mode == FuzzyTraversalMode::kRustGenericAligned) {
         result = IntersectRustGenericAligned(impl_->data,
-                                             impl_->metadata.root_address,
+                                             *start,
+                                             exact_prefix,
                                              std::move(dfa),
-                                             query,
+                                             query_suffix,
                                              max_edit_distance,
-                                             impl_->edit_distance_mode);
+                                             impl_->edit_distance_mode,
+                                             max_expansions);
     } else {
         result = IntersectLevenshteinDfa(
-            impl_->data, impl_->metadata.root_address, dfa);
-    }
-    std::sort(result.matches.begin(), result.matches.end(),
-              [](const FuzzyMatch& left, const FuzzyMatch& right) {
-                  if (left.edit_distance != right.edit_distance) {
-                      return left.edit_distance < right.edit_distance;
-                  }
-                  return left.term < right.term;
-              });
-    if (result.matches.size() > max_expansions) {
-        result.matches.resize(max_expansions);
+            impl_->data, *start, exact_prefix, dfa, max_expansions);
     }
     return result;
 }

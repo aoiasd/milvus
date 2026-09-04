@@ -28,6 +28,11 @@ import (
 	"github.com/milvus-io/milvus/pkg/v3/util/merr"
 )
 
+type TextTermMatch struct {
+	Term         []byte
+	EditDistance uint32
+}
+
 type loadedTextTermDictionary struct {
 	readers   map[int64][]*textindex.FstReader
 	cacheDir  string
@@ -160,6 +165,52 @@ func (d *segmentTextTermDictionary) memoryBytes() int64 {
 		result += d.loaded.heapBytes
 	}
 	return result
+}
+
+func (d *segmentTextTermDictionary) expand(
+	fieldID int64,
+	sourceTerms [][]byte,
+	maxEditDistance, maxExpansions, prefixLength uint32,
+) ([][]TextTermMatch, error) {
+	if d == nil {
+		return make([][]TextTermMatch, len(sourceTerms)), nil
+	}
+	if maxEditDistance > 2 {
+		return nil, merr.WrapErrServiceInternalMsg("fuzzy max edit distance must be in [0, 2]")
+	}
+	if maxExpansions == 0 {
+		return nil, merr.WrapErrServiceInternalMsg("fuzzy max expansions must be positive")
+	}
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	var readers []*textindex.FstReader
+	if d.loaded != nil {
+		readers = d.loaded.readers[fieldID]
+	}
+	result := make([][]TextTermMatch, len(sourceTerms))
+	for sourceIndex, source := range sourceTerms {
+		matches, err := textindex.FuzzySearchSegmentTextTermsWithPrefix(
+			d.nativeSegment,
+			fieldID,
+			readers,
+			source,
+			maxEditDistance,
+			maxExpansions,
+			prefixLength,
+		)
+		if err != nil {
+			return nil, err
+		}
+		result[sourceIndex] = make([]TextTermMatch, 0, len(matches))
+		for _, match := range matches {
+			result[sourceIndex] = append(result[sourceIndex], TextTermMatch{
+				Term:         match.Term,
+				EditDistance: match.EditDistance,
+			})
+		}
+	}
+	return result, nil
 }
 
 func (d *segmentTextTermDictionary) close() {

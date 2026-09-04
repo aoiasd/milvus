@@ -50,7 +50,8 @@ class BurntSushiFstCppTermDictionary final : public TermDictionary {
     [[nodiscard]] FuzzySearchResult FuzzySearch(
         std::string_view query,
         std::uint32_t max_edit_distance,
-        std::size_t max_expansions) const override;
+        std::size_t max_expansions,
+        std::uint32_t prefix_length) const override;
     void Save(const std::string& path_prefix) const override;
     void Load(const std::string& path_prefix) override;
     void LoadFile(const std::string& path, bool memory_mapped);

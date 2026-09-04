@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <string_view>
 #include <vector>
@@ -32,6 +33,11 @@ class LevenshteinDfa {
     bool transposition_cost_one = true);
 
 void ValidateUtf8(std::string_view text);
+
+// Returns the UTF-8 byte offset after the first char_count Unicode code
+// points, clamped to the end of text. The complete input is validated first.
+[[nodiscard]] std::size_t Utf8PrefixByteLength(std::string_view text,
+                                               std::size_t char_count);
 
 [[nodiscard]] std::uint32_t DamerauLevenshteinOsa(
     std::string_view left,

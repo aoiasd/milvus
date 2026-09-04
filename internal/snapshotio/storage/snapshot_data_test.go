@@ -1342,6 +1342,13 @@ func TestListSnapshotDataFiles_CollectsReferencedFiles(t *testing.T) {
 			LogPath: "files/bm25_stats_log/100/11/1001/4",
 		}},
 	}}
+	segment.TextLogV2 = []*datapb.FieldBinlog{{
+		FieldID: 11,
+		Format:  "burntsushi_fst_v3_field_terms_v1",
+		Binlogs: []*datapb.Binlog{{
+			LogPath: "files/text_log_v2/100/1/1001/11/5.fst",
+		}},
+	}}
 	segment.IndexFiles = []*indexpb.IndexFilePathInfo{{
 		BuildID: 7001,
 		IndexFilePaths: []string{
@@ -1380,10 +1387,11 @@ func TestListSnapshotDataFiles_CollectsReferencedFiles(t *testing.T) {
 	assert.Equal(t, snapshotstorage.SnapshotFileTypeStatsBinlog, byPath["files/stats_log/100/10/1001/2"].Type)
 	assert.Equal(t, snapshotstorage.SnapshotFileTypeDeltaBinlog, byPath["files/delta_log/100/10/1001/3"].Type)
 	assert.Equal(t, snapshotstorage.SnapshotFileTypeBM25StatsBinlog, byPath["files/bm25_stats_log/100/11/1001/4"].Type)
+	assert.Equal(t, snapshotstorage.SnapshotFileTypeTextLogV2, byPath["files/text_log_v2/100/1/1001/11/5.fst"].Type)
 	assert.Equal(t, snapshotstorage.SnapshotFileTypeIndexFile, byPath["files/index_files/100/10/1001/7001/index"].Type)
 	assert.Equal(t, snapshotstorage.SnapshotFileTypeTextIndexFile, byPath["files/text_index/100/12/1001/7002/posting"].Type)
 	assert.Equal(t, snapshotstorage.SnapshotFileTypeJSONKeyIndexFile, byPath["files/json_index/100/13/1001/7003/key"].Type)
-	assert.Len(t, byPath, 7)
+	assert.Len(t, byPath, 8)
 }
 
 func TestListSnapshotDataFiles_StorageV2IncludesManifestObject(t *testing.T) {
@@ -1820,6 +1828,13 @@ func TestRewriteSnapshotWithMapping_RewritesAllReferencesStrictly(t *testing.T) 
 			LogPath: "files/bm25_stats_log/100/11/1001/4",
 		}},
 	}}
+	segment.TextLogV2 = []*datapb.FieldBinlog{{
+		FieldID: 11,
+		Format:  "burntsushi_fst_v3_field_terms_v1",
+		Binlogs: []*datapb.Binlog{{
+			LogPath: "files/text_log_v2/100/1/1001/11/5.fst",
+		}},
+	}}
 	segment.IndexFiles = []*indexpb.IndexFilePathInfo{{
 		BuildID: 7001,
 		IndexFilePaths: []string{
@@ -1851,6 +1866,7 @@ func TestRewriteSnapshotWithMapping_RewritesAllReferencesStrictly(t *testing.T) 
 		"files/stats_log/100/10/1001/2":             "exports/files/stats_log/100/10/1001/2",
 		"files/delta_log/100/10/1001/3":             "exports/files/delta_log/100/10/1001/3",
 		"files/bm25_stats_log/100/11/1001/4":        "exports/files/bm25_stats_log/100/11/1001/4",
+		"files/text_log_v2/100/1/1001/11/5.fst":     "exports/files/text_log_v2/100/1/1001/11/5.fst",
 		"files/index_files/100/10/1001/7001/index":  "exports/files/index_files/100/10/1001/7001/index",
 		"files/text_index/100/12/1001/7002/posting": "exports/files/text_index/100/12/1001/7002/posting",
 		"files/json_index/100/13/1001/7003/key":     "exports/files/json_index/100/13/1001/7003/key",
@@ -1866,6 +1882,7 @@ func TestRewriteSnapshotWithMapping_RewritesAllReferencesStrictly(t *testing.T) 
 	assert.Equal(t, "exports/files/stats_log/100/10/1001/2", rewritten.Segments[0].GetStatslogs()[0].GetBinlogs()[0].GetLogPath())
 	assert.Equal(t, "exports/files/delta_log/100/10/1001/3", rewritten.Segments[0].GetDeltalogs()[0].GetBinlogs()[0].GetLogPath())
 	assert.Equal(t, "exports/files/bm25_stats_log/100/11/1001/4", rewritten.Segments[0].GetBm25Statslogs()[0].GetBinlogs()[0].GetLogPath())
+	assert.Equal(t, "exports/files/text_log_v2/100/1/1001/11/5.fst", rewritten.Segments[0].GetTextLogV2()[0].GetBinlogs()[0].GetLogPath())
 	assert.Equal(t, "exports/files/index_files/100/10/1001/7001/index", rewritten.Segments[0].GetIndexFiles()[0].GetIndexFilePaths()[0])
 	assert.Equal(t, "exports/files/text_index/100/12/1001/7002/posting", rewritten.Segments[0].GetTextIndexFiles()[12].GetFiles()[0])
 	assert.Equal(t, "exports/files/json_index/100/13/1001/7003/key", rewritten.Segments[0].GetJsonKeyIndexFiles()[13].GetFiles()[0])
@@ -2276,6 +2293,19 @@ func TestValidateSelfContainedSnapshotMetadata_RejectsDataOutsideFilesSubtree(t 
 			}},
 		},
 		{
+			name: "text log v2",
+			metadata: &datapb.SnapshotMetadata{
+				ManifestList: []string{"bundle/snapshots/100/manifests/1/1001.avro"},
+			},
+			segments: []*datapb.SegmentDescription{{
+				SegmentId: 1001,
+				TextLogV2: []*datapb.FieldBinlog{{
+					FieldID: 11,
+					Binlogs: []*datapb.Binlog{{LogPath: "bundle/other/text_log_v2/100/1/1001/11/5.fst"}},
+				}},
+			}},
+		},
+		{
 			name: "storage manifest",
 			metadata: &datapb.SnapshotMetadata{
 				ManifestList: []string{"bundle/snapshots/100/manifests/1/1001.avro"},
@@ -2504,6 +2534,14 @@ func TestRebaseSelfContainedSnapshotData_RewritesSegmentReferences(t *testing.T)
 						LogPath: "export-root/files/bm25_stats_log/100/1/1001/4",
 					}},
 				}},
+				TextLogV2: []*datapb.FieldBinlog{{
+					FieldID: 3,
+					Format:  "burntsushi_fst_v3_field_terms_v1",
+					Binlogs: []*datapb.Binlog{{
+						LogID:   5,
+						LogPath: "export-root/files/text_log_v2/100/1/1001/3/5.fst",
+					}},
+				}},
 				IndexFiles: []*indexpb.IndexFilePathInfo{{
 					SegmentID:             1001,
 					FieldID:               2,
@@ -2538,6 +2576,7 @@ func TestRebaseSelfContainedSnapshotData_RewritesSegmentReferences(t *testing.T)
 	assert.Equal(t, "restored/x/files/stats_log/100/1/1001/2", segment.GetStatslogs()[0].GetBinlogs()[0].GetLogPath())
 	assert.Equal(t, "restored/x/files/delta_log/100/1/1001/3", segment.GetDeltalogs()[0].GetBinlogs()[0].GetLogPath())
 	assert.Equal(t, "restored/x/files/bm25_stats_log/100/1/1001/4", segment.GetBm25Statslogs()[0].GetBinlogs()[0].GetLogPath())
+	assert.Equal(t, "restored/x/files/text_log_v2/100/1/1001/3/5.fst", segment.GetTextLogV2()[0].GetBinlogs()[0].GetLogPath())
 	assert.Equal(t, "restored/x/files/index_files/100/1/1001/3001/index", segment.GetIndexFiles()[0].GetIndexFilePaths()[0])
 	assert.Equal(t, "restored/x/files/text_index/100/1/1001/5000/text", segment.GetTextIndexFiles()[100].GetFiles()[0])
 	assert.Equal(t, "restored/x/files/json_key_index/100/1/1001/6000/json", segment.GetJsonKeyIndexFiles()[200].GetFiles()[0])

@@ -641,6 +641,25 @@ ValidateUtf8(std::string_view text) {
     static_cast<void>(DecodeUtf8(text));
 }
 
+std::size_t
+Utf8PrefixByteLength(std::string_view text, std::size_t char_count) {
+    const auto codepoints = DecodeUtf8(text);
+    if (char_count >= codepoints.size()) {
+        return text.size();
+    }
+
+    std::size_t byte_offset = 0;
+    for (std::size_t index = 0; index < char_count; ++index) {
+        ++byte_offset;
+        while (byte_offset < text.size() &&
+               (static_cast<std::uint8_t>(text[byte_offset]) & 0xC0U) ==
+                   0x80U) {
+            ++byte_offset;
+        }
+    }
+    return byte_offset;
+}
+
 std::uint32_t
 EditDistance(std::string_view left,
              std::string_view right,

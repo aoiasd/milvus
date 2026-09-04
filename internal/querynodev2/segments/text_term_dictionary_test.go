@@ -114,6 +114,8 @@ func TestSegmentTextTermDictionaryImportsCommittedBaseAndGrowingDelta(t *testing
 	assert.EqualValues(t, 2, dictionary.termCount)
 	dictionary.mu.RUnlock()
 	assert.Positive(t, dictionary.memoryBytes())
+	_, err = reader.FuzzySearch([]byte("committed"), 1, 50)
+	require.Error(t, err)
 }
 
 func TestSegmentTextTermDictionaryImportRemovesMappedCache(t *testing.T) {
@@ -153,4 +155,126 @@ func TestSegmentTextTermDictionaryImportFailureReleasesReadersAndCache(t *testin
 	_, statErr := os.Stat(cacheDir)
 	assert.ErrorIs(t, statErr, os.ErrNotExist)
 	assert.Zero(t, dictionary.memoryBytes())
+}
+
+func TestSegmentTextTermDictionaryExpandsCommittedAndGrowingTerms(t *testing.T) {
+	artifact, err := textindex.BuildTextFst([][]byte{[]byte("book"), []byte("other")})
+	require.NoError(t, err)
+	reader, err := textindex.LoadTextFstBytes(artifact.Data)
+	require.NoError(t, err)
+
+	dictionary := newGrowingTextTermDictionary(t)
+	require.NoError(t, dictionary.importLoaded(&loadedTextTermDictionary{
+		readers: map[int64][]*textindex.FstReader{101: {reader}},
+	}))
+	require.NoError(t, dictionary.add([]*msgpb.TextTermBatch{{
+		InputFieldId: 101,
+		Terms:        [][]byte{[]byte("books"), []byte("back")},
+	}}))
+
+	matches, err := dictionary.expand(101, [][]byte{[]byte("bok"), []byte("boks")}, 1, 50, 0)
+	require.NoError(t, err)
+	require.Len(t, matches, 2)
+	require.Len(t, matches[0], 1)
+	assert.Equal(t, []byte("book"), matches[0][0].Term)
+	assert.EqualValues(t, 1, matches[0][0].EditDistance)
+	require.Len(t, matches[1], 1)
+	assert.Equal(t, []byte("books"), matches[1][0].Term)
+	assert.EqualValues(t, 1, matches[1][0].EditDistance)
+}
+
+func TestSegmentTextTermDictionaryAppliesExpansionLimitOnceAfterRecovery(t *testing.T) {
+	first, err := textindex.BuildTextFst([][]byte{[]byte("boo")})
+	require.NoError(t, err)
+	second, err := textindex.BuildTextFst([][]byte{[]byte("zoo")})
+	require.NoError(t, err)
+	firstReader, err := textindex.LoadTextFstBytes(first.Data)
+	require.NoError(t, err)
+	secondReader, err := textindex.LoadTextFstBytes(second.Data)
+	require.NoError(t, err)
+
+	dictionary := newGrowingTextTermDictionary(t)
+	require.NoError(t, dictionary.importLoaded(&loadedTextTermDictionary{
+		readers: map[int64][]*textindex.FstReader{101: {firstReader, secondReader}},
+	}))
+
+	results, err := dictionary.expand(101, [][]byte{[]byte("zoo")}, 1, 1, 0)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, []TextTermMatch{{Term: []byte("zoo"), EditDistance: 0}}, results[0])
+}
+
+func TestSegmentTextTermDictionaryGrowingTrieSupportsTransposition(t *testing.T) {
+	dictionary := newGrowingTextTermDictionary(t)
+	require.NoError(t, dictionary.add([]*msgpb.TextTermBatch{{
+		InputFieldId: 101,
+		Terms:        [][]byte{[]byte("book")},
+	}}))
+	results, err := dictionary.expand(101, [][]byte{[]byte("boko")}, 1, 50, 0)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	matches := results[0]
+	require.Len(t, matches, 1)
+	assert.Equal(t, []byte("book"), matches[0].Term)
+	assert.EqualValues(t, 1, matches[0].EditDistance)
+}
+
+func TestSegmentTextTermDictionaryPrefixUsesUnicodeCharacters(t *testing.T) {
+	artifact, err := textindex.BuildTextFst([][]byte{[]byte("book")})
+	require.NoError(t, err)
+	reader, err := textindex.LoadTextFstBytes(artifact.Data)
+	require.NoError(t, err)
+
+	dictionary := newGrowingTextTermDictionary(t)
+	require.NoError(t, dictionary.importLoaded(&loadedTextTermDictionary{
+		readers: map[int64][]*textindex.FstReader{101: {reader}},
+	}))
+	require.NoError(t, dictionary.add([]*msgpb.TextTermBatch{{
+		InputFieldId: 101,
+		Terms:        [][]byte{[]byte("你好")},
+	}}))
+
+	results, err := dictionary.expand(
+		101, [][]byte{[]byte("cook"), []byte("你号")}, 1, 50, 0)
+	require.NoError(t, err)
+	require.Len(t, results[0], 1)
+	assert.Equal(t, []byte("book"), results[0][0].Term)
+	require.Len(t, results[1], 1)
+	assert.Equal(t, []byte("你好"), results[1][0].Term)
+
+	results, err = dictionary.expand(
+		101, [][]byte{[]byte("cook"), []byte("你号"), []byte("他好")}, 1, 50, 1)
+	require.NoError(t, err)
+	assert.Empty(t, results[0])
+	require.Len(t, results[1], 1)
+	assert.Equal(t, []byte("你好"), results[1][0].Term)
+	assert.Empty(t, results[2])
+}
+
+func TestSegmentTextTermDictionaryKeepsBoundedBestGrowingMatches(t *testing.T) {
+	dictionary := newGrowingTextTermDictionary(t)
+	require.NoError(t, dictionary.add([]*msgpb.TextTermBatch{{
+		InputFieldId: 101,
+		Terms: [][]byte{
+			[]byte("boo"),
+			[]byte("coo"),
+			[]byte("doo"),
+			[]byte("zoo"),
+		},
+	}}))
+
+	results, err := dictionary.expand(101, [][]byte{[]byte("zoo")}, 1, 2, 0)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	matches := results[0]
+	require.Len(t, matches, 2)
+	assert.Equal(t, TextTermMatch{Term: []byte("zoo"), EditDistance: 0}, matches[0])
+	assert.Equal(t, TextTermMatch{Term: []byte("boo"), EditDistance: 1}, matches[1])
+
+	results, err = dictionary.expand(101, [][]byte{[]byte("zoo")}, 1, 1, 0)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	matches = results[0]
+	require.Len(t, matches, 1)
+	assert.Equal(t, TextTermMatch{Term: []byte("zoo"), EditDistance: 0}, matches[0])
 }

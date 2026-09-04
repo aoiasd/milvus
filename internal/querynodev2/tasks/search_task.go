@@ -424,6 +424,9 @@ func (t *SearchTask) Merge(other *SearchTask) bool {
 		(diffTopk && ratio > paramtable.Get().QueryNodeCfg.TopKMergeRatio.GetAsFloat()) ||
 		!funcutil.SliceSetEqual(t.req.GetReq().GetPartitionIDs(), other.req.GetReq().GetPartitionIDs()) ||
 		!funcutil.SliceSetEqual(t.req.GetSegmentIDs(), other.req.GetSegmentIDs()) ||
+		!proto.Equal(t.req.GetReq().GetFuzzyBm25Options(), other.req.GetReq().GetFuzzyBm25Options()) ||
+		!proto.Equal(&querypb.SearchRequest{TextTermGenerations: t.req.GetTextTermGenerations()},
+			&querypb.SearchRequest{TextTermGenerations: other.req.GetTextTermGenerations()}) ||
 		!bytes.Equal(t.req.GetReq().GetSerializedExprPlan(), other.req.GetReq().GetSerializedExprPlan()) {
 		return false
 	}

@@ -71,7 +71,8 @@ class SegmentTextTermDictionary {
                 std::span<const fst_test::TermDictionary* const> immutable_fsts,
                 std::string_view query,
                 std::uint32_t max_edit_distance,
-                std::size_t max_expansions) const;
+                std::size_t max_expansions,
+                std::uint32_t prefix_length) const;
 
     [[nodiscard]] TextTermTrieStats
     TrieStats() const;

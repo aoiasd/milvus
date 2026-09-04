@@ -16,6 +16,8 @@
 
 #include "textindex/text_fst_c.h"
 
+#include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <new>
@@ -250,4 +252,91 @@ DeleteTextFst(CTextFstHandle handle) {
     delete static_cast<
         fst_test::burntsushi_fst_cpp_impl::BurntSushiFstCppTermDictionary*>(
         handle);
+}
+
+void
+FreeTextFstFuzzyResult(CTextFstFuzzyResult* result) {
+    if (result == nullptr) {
+        return;
+    }
+    for (int64_t i = 0; i < result->match_count; ++i) {
+        std::free(result->matches[i].term);
+    }
+    std::free(result->matches);
+    result->matches = nullptr;
+    result->match_count = 0;
+}
+
+CTextFstFuzzyResult
+FuzzySearchTextFst(CTextFstHandle handle,
+                   const uint8_t* query,
+                   int64_t query_size,
+                   uint32_t max_edit_distance,
+                   uint32_t max_expansions,
+                   uint32_t prefix_length) {
+    CTextFstFuzzyResult result{};
+    try {
+        if (handle == nullptr || query_size < 0 ||
+            static_cast<uint64_t>(query_size) >
+                static_cast<uint64_t>(std::numeric_limits<size_t>::max()) ||
+            (query_size > 0 && query == nullptr) || max_edit_distance > 2 ||
+            max_expansions == 0) {
+            result.status = milvus::FailureCStatus(
+                milvus::UnexpectedError, "invalid text FST fuzzy request");
+            return result;
+        }
+        const auto* fst = static_cast<const fst_test::burntsushi_fst_cpp_impl::
+                                          BurntSushiFstCppTermDictionary*>(
+            handle);
+        const std::string_view query_view(
+            query_size == 0 ? "" : reinterpret_cast<const char*>(query),
+            static_cast<size_t>(query_size));
+        const auto fuzzy = fst->FuzzySearch(
+            query_view, max_edit_distance, max_expansions, prefix_length);
+        if (fuzzy.matches.size() >
+            static_cast<size_t>(std::numeric_limits<int64_t>::max())) {
+            throw std::runtime_error("too many text FST fuzzy matches");
+        }
+        if (!fuzzy.matches.empty()) {
+            result.matches = static_cast<CTextFstMatch*>(
+                std::calloc(fuzzy.matches.size(), sizeof(CTextFstMatch)));
+            if (result.matches == nullptr) {
+                throw std::bad_alloc();
+            }
+        }
+        result.match_count = static_cast<int64_t>(fuzzy.matches.size());
+        for (size_t i = 0; i < fuzzy.matches.size(); ++i) {
+            const auto& match = fuzzy.matches[i];
+            if (match.term.size() >
+                static_cast<size_t>(std::numeric_limits<int64_t>::max())) {
+                throw std::runtime_error("text FST fuzzy term is too large");
+            }
+            result.matches[i].term_size =
+                static_cast<int64_t>(match.term.size());
+            result.matches[i].edit_distance = match.edit_distance;
+            if (!match.term.empty()) {
+                result.matches[i].term =
+                    static_cast<uint8_t*>(std::malloc(match.term.size()));
+                if (result.matches[i].term == nullptr) {
+                    throw std::bad_alloc();
+                }
+                std::memcpy(result.matches[i].term,
+                            match.term.data(),
+                            match.term.size());
+            }
+        }
+        result.status = milvus::SuccessCStatus();
+    } catch (const std::bad_alloc& e) {
+        FreeTextFstFuzzyResult(&result);
+        result.status =
+            milvus::FailureCStatus(milvus::MemAllocateFailed, e.what());
+    } catch (const std::exception& e) {
+        FreeTextFstFuzzyResult(&result);
+        result.status = milvus::FailureCStatus(milvus::UnexpectedError, e.what());
+    } catch (...) {
+        FreeTextFstFuzzyResult(&result);
+        result.status = milvus::FailureCStatus(
+            milvus::UnexpectedError, "unknown text FST fuzzy search failure");
+    }
+    return result;
 }

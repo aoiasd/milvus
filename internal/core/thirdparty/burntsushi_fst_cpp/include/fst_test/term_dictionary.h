@@ -88,7 +88,8 @@ class TermDictionary {
     [[nodiscard]] virtual FuzzySearchResult FuzzySearch(
         std::string_view query,
         std::uint32_t max_edit_distance,
-        std::size_t max_expansions) const = 0;
+        std::size_t max_expansions,
+        std::uint32_t prefix_length) const = 0;
 
     virtual void Save(const std::string& path_prefix) const = 0;
     virtual void Load(const std::string& path_prefix) = 0;

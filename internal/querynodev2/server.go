@@ -424,7 +424,7 @@ func (node *QueryNode) Init() error {
 		node.RegisterSegcoreConfigWatcher()
 
 		cleanupOrphanedSpilloverFiles(node.GetNodeID())
-		cleanupOrphanedTextTermFiles(node.GetNodeID())
+		cleanupOrphanedTextTermFiles(node.ctx, node.GetNodeID())
 
 		mlog.Info(node.ctx, "query node init successfully",
 			mlog.Int64("queryNodeID", node.GetNodeID()),
@@ -716,17 +716,17 @@ func cleanupOrphanedSpilloverFiles(nodeID int64) {
 		mlog.String("path", spilloverDir))
 }
 
-func cleanupOrphanedTextTermFiles(nodeID int64) {
+func cleanupOrphanedTextTermFiles(ctx context.Context, nodeID int64) {
 	cacheDir := pathutil.GetPath(pathutil.TextLogV2Path, nodeID)
 	if _, err := os.Stat(cacheDir); os.IsNotExist(err) {
 		return
 	}
 	if err := os.RemoveAll(cacheDir); err != nil {
-		mlog.Warn(context.TODO(), "failed to clean up orphaned text-log-v2 files",
+		mlog.Warn(ctx, "failed to clean up orphaned text-log-v2 files",
 			mlog.String("path", cacheDir),
 			mlog.Err(err))
 		return
 	}
-	mlog.Info(context.TODO(), "orphaned text-log-v2 files cleaned up",
+	mlog.Info(ctx, "orphaned text-log-v2 files cleaned up",
 		mlog.String("path", cacheDir))
 }

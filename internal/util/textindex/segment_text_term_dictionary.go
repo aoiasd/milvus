@@ -25,6 +25,7 @@ package textindex
 import "C"
 
 import (
+	"bytes"
 	"runtime"
 	"unicode/utf8"
 	"unsafe"
@@ -142,4 +143,86 @@ func AddTextFstsToSegmentTextTermTrie(segment unsafe.Pointer, fieldID int64, rea
 		return SegmentTextTermTrieStats{}, merr.WrapErrServiceInternalMsg("segment text term Trie returned invalid stats")
 	}
 	return stats, nil
+}
+
+// FuzzySearchSegmentTextTerms runs one source term against every immutable FST
+// and the mutable Trie owned by segment in one native call.
+func FuzzySearchSegmentTextTerms(
+	segment unsafe.Pointer,
+	fieldID int64,
+	readers []*FstReader,
+	term []byte,
+	maxEditDistance, maxExpansions uint32,
+) ([]FuzzyMatch, error) {
+	return FuzzySearchSegmentTextTermsWithPrefix(
+		segment, fieldID, readers, term, maxEditDistance, maxExpansions, 0)
+}
+
+// FuzzySearchSegmentTextTermsWithPrefix runs one source term against every
+// immutable FST and the mutable Trie while keeping prefixLength Unicode
+// characters exact.
+func FuzzySearchSegmentTextTermsWithPrefix(
+	segment unsafe.Pointer,
+	fieldID int64,
+	readers []*FstReader,
+	term []byte,
+	maxEditDistance, maxExpansions, prefixLength uint32,
+) ([]FuzzyMatch, error) {
+	if segment == nil {
+		return nil, merr.WrapErrServiceInternalMsg("search text terms on nil segment")
+	}
+	if maxEditDistance > 2 {
+		return nil, merr.WrapErrServiceInternalMsg("fuzzy max edit distance must be in [0, 2]")
+	}
+	if maxExpansions == 0 {
+		return nil, merr.WrapErrServiceInternalMsg("fuzzy max expansions must be positive")
+	}
+	handles, err := textFstHandles(readers)
+	if err != nil {
+		return nil, err
+	}
+	if handles != nil {
+		defer C.free(unsafe.Pointer(handles))
+	}
+
+	var query *C.uint8_t
+	if len(term) > 0 {
+		query = (*C.uint8_t)(unsafe.Pointer(&term[0]))
+	}
+	result := C.FuzzySearchSegmentTextTerms(
+		C.CSegmentInterface(segment),
+		C.int64_t(fieldID),
+		handles,
+		C.int64_t(len(readers)),
+		query,
+		C.int64_t(len(term)),
+		C.uint32_t(maxEditDistance),
+		C.uint32_t(maxExpansions),
+		C.uint32_t(prefixLength),
+	)
+	runtime.KeepAlive(readers)
+	defer C.FreeTextFstFuzzyResult(&result)
+	if result.status.error_code != 0 {
+		errorCode := int32(result.status.error_code)
+		errorMessage := C.GoString(result.status.error_msg)
+		C.free(unsafe.Pointer(result.status.error_msg))
+		return nil, merr.SegcoreError(errorCode, errorMessage)
+	}
+	if result.match_count < 0 || uint64(result.match_count) > uint64(^uint(0)>>1) ||
+		(result.match_count > 0 && result.matches == nil) {
+		return nil, merr.WrapErrServiceInternalMsg("segment text term fuzzy search returned invalid matches")
+	}
+	matches := unsafe.Slice(result.matches, int(result.match_count))
+	output := make([]FuzzyMatch, 0, len(matches))
+	for _, match := range matches {
+		if match.term_size < 0 || uint64(match.term_size) > uint64(^uint(0)>>1) ||
+			(match.term_size > 0 && match.term == nil) {
+			return nil, merr.WrapErrServiceInternalMsg("segment text term fuzzy search returned invalid term")
+		}
+		output = append(output, FuzzyMatch{
+			Term:         bytes.Clone(unsafe.Slice((*byte)(unsafe.Pointer(match.term)), int(match.term_size))),
+			EditDistance: uint32(match.edit_distance),
+		})
+	}
+	return output, nil
 }
