@@ -44,6 +44,22 @@ type FstArtifact struct {
 	TermCount int64
 }
 
+func encodeTextTerms(terms [][]byte) ([]byte, error) {
+	var encoded bytes.Buffer
+	if err := binary.Write(&encoded, binary.LittleEndian, uint64(len(terms))); err != nil {
+		return nil, merr.Wrap(err, "encode text term count")
+	}
+	for _, term := range terms {
+		if err := binary.Write(&encoded, binary.LittleEndian, uint64(len(term))); err != nil {
+			return nil, merr.Wrap(err, "encode text term length")
+		}
+		if _, err := encoded.Write(term); err != nil {
+			return nil, merr.Wrap(err, "encode text term")
+		}
+	}
+	return encoded.Bytes(), nil
+}
+
 // BuildTextFst builds one field-level FST from the union of all terms emitted
 // for that field. Multi-analyzer row dispatch does not partition the keys.
 func BuildTextFst(terms [][]byte) (*FstArtifact, error) {
@@ -53,19 +69,10 @@ func BuildTextFst(terms [][]byte) (*FstArtifact, error) {
 	})
 	keys = slices.CompactFunc(keys, bytes.Equal)
 
-	var encoded bytes.Buffer
-	if err := binary.Write(&encoded, binary.LittleEndian, uint64(len(keys))); err != nil {
-		return nil, merr.Wrap(err, "encode text FST term count")
+	input, err := encodeTextTerms(keys)
+	if err != nil {
+		return nil, err
 	}
-	for _, key := range keys {
-		if err := binary.Write(&encoded, binary.LittleEndian, uint64(len(key))); err != nil {
-			return nil, merr.Wrap(err, "encode text FST term length")
-		}
-		if _, err := encoded.Write(key); err != nil {
-			return nil, merr.Wrap(err, "encode text FST term")
-		}
-	}
-	input := encoded.Bytes()
 	result := C.BuildTextFst(
 		(*C.uint8_t)(unsafe.Pointer(&input[0])),
 		C.int64_t(len(input)),

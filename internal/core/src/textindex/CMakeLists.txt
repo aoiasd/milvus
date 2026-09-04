@@ -15,6 +15,8 @@
 # limitations under the License.
 
 add_library(milvus_textindex OBJECT
+    segment_text_term_dictionary.cpp
+    segment_text_term_dictionary_c.cpp
     text_fst_c.cpp
     ../../thirdparty/burntsushi_fst_cpp/src/burntsushi_fst_cpp_term_dictionary.cpp
     ../../thirdparty/burntsushi_fst_cpp/src/levenshtein_dfa.cpp)

@@ -33,6 +33,12 @@ file(GLOB_RECURSE SOURCE_TEST_FILES
     "${CMAKE_HOME_DIRECTORY}/src/**/*_test.cpp"
 )
 
+set_source_files_properties(
+    ${CMAKE_HOME_DIRECTORY}/src/textindex/SegmentTextTermDictionaryTest.cpp
+    PROPERTIES INCLUDE_DIRECTORIES
+    "${CMAKE_HOME_DIRECTORY}/thirdparty/burntsushi_fst_cpp/include"
+)
+
 # TODO: better to use ls/find pattern
 set(MILVUS_TEST_FILES
         ${SOURCE_TEST_FILES}

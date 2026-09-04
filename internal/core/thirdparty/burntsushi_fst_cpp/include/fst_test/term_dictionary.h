@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -11,6 +12,10 @@
 namespace fst_test {
 
 using TermEntry = std::pair<std::string, std::uint32_t>;
+// The term view is valid only for the duration of the callback.
+using TermVisitor =
+    std::function<void(std::string_view term,
+                       std::uint32_t document_frequency)>;
 
 struct FuzzyMatch {
     std::string term;
@@ -91,6 +96,8 @@ class TermDictionary {
     [[nodiscard]] virtual DictionaryStats Stats() const = 0;
 
     [[nodiscard]] virtual DictionaryTraversalResult TraverseTerms() const = 0;
+
+    virtual void VisitTerms(const TermVisitor& visitor) const = 0;
 
     // True only when the active query representation is backed directly by
     // read-only file mappings rather than a heap-owned serialized copy.

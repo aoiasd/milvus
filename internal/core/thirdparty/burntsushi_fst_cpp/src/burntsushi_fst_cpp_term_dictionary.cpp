@@ -1135,10 +1135,11 @@ IntersectRustGenericAligned(std::span<const std::uint8_t> data,
     return result;
 }
 
-DictionaryTraversalResult
-TraverseTermsIterative(std::span<const std::uint8_t> data,
-                       Address root_address) {
-    DictionaryTraversalResult result;
+template <typename Visitor>
+void
+VisitTermsIterative(std::span<const std::uint8_t> data,
+                    Address root_address,
+                    const Visitor& visitor) {
     std::string term;
     struct Frame {
         NodeView node;
@@ -1153,9 +1154,8 @@ TraverseTermsIterative(std::span<const std::uint8_t> data,
         if (!frame.entered) {
             frame.entered = true;
             if (frame.node.is_final) {
-                AddTraversalEntry(
-                    result, term,
-                    CheckedOutput(frame.output + frame.node.final_output));
+                visitor(term,
+                        CheckedOutput(frame.output + frame.node.final_output));
             }
         }
         if (frame.next_transition >= frame.node.transition_count) {
@@ -1173,6 +1173,17 @@ TraverseTermsIterative(std::span<const std::uint8_t> data,
             .output = frame.output + transition.output,
         });
     }
+}
+
+DictionaryTraversalResult
+TraverseTermsIterative(std::span<const std::uint8_t> data,
+                       Address root_address) {
+    DictionaryTraversalResult result;
+    VisitTermsIterative(
+        data, root_address,
+        [&](std::string_view term, std::uint32_t document_frequency) {
+            AddTraversalEntry(result, term, document_frequency);
+        });
     return result;
 }
 
@@ -1352,13 +1363,63 @@ BurntSushiFstCppTermDictionary::Save(const std::string& path_prefix) const {
 
 void
 BurntSushiFstCppTermDictionary::Load(const std::string& path_prefix) {
-    const auto path = path_prefix + std::string(kArtifactSuffix);
+    LoadFile(path_prefix + std::string(kArtifactSuffix), true);
+}
+
+void
+BurntSushiFstCppTermDictionary::LoadFile(const std::string& path,
+                                        bool memory_mapped) {
     impl_->owned_data.clear();
     impl_->owned_data.shrink_to_fit();
-    impl_->mapped_data.Map(path);
-    impl_->data = impl_->mapped_data.Bytes();
+    impl_->mapped_data.Reset();
+    if (memory_mapped) {
+        impl_->mapped_data.Map(path);
+        impl_->data = impl_->mapped_data.Bytes();
+    } else {
+        std::ifstream stream(path, std::ios::binary | std::ios::ate);
+        if (!stream) {
+            throw std::ios_base::failure(
+                "failed to open BurntSushi C++ FST: " + path);
+        }
+        const auto end = stream.tellg();
+        if (end < 0 ||
+            static_cast<std::uint64_t>(end) >
+                static_cast<std::uint64_t>(
+                    std::numeric_limits<std::streamsize>::max())) {
+            throw std::runtime_error("invalid BurntSushi C++ FST size: " +
+                                     path);
+        }
+        impl_->owned_data.resize(static_cast<std::size_t>(end));
+        stream.seekg(0, std::ios::beg);
+        if (!impl_->owned_data.empty()) {
+            stream.read(reinterpret_cast<char*>(impl_->owned_data.data()),
+                        static_cast<std::streamsize>(impl_->owned_data.size()));
+        }
+        if (!stream) {
+            throw std::ios_base::failure(
+                "failed to read BurntSushi C++ FST: " + path);
+        }
+        impl_->data = impl_->owned_data;
+    }
     impl_->metadata = ReadMetadata(impl_->data);
     static_cast<void>(NodeView::Read(impl_->data, impl_->metadata.root_address));
+    if (!VerifyChecksum()) {
+        throw std::runtime_error("BurntSushi C++ FST checksum mismatch: " +
+                                 path);
+    }
+}
+
+void
+BurntSushiFstCppTermDictionary::LoadBytes(
+    std::span<const std::uint8_t> bytes) {
+    impl_->mapped_data.Reset();
+    impl_->owned_data.assign(bytes.begin(), bytes.end());
+    impl_->data = impl_->owned_data;
+    impl_->metadata = ReadMetadata(impl_->data);
+    static_cast<void>(NodeView::Read(impl_->data, impl_->metadata.root_address));
+    if (!VerifyChecksum()) {
+        throw std::runtime_error("BurntSushi C++ FST checksum mismatch");
+    }
 }
 
 DictionaryStats
@@ -1376,6 +1437,14 @@ BurntSushiFstCppTermDictionary::TraverseTerms() const {
         return {};
     }
     return TraverseTermsIterative(impl_->data, impl_->metadata.root_address);
+}
+
+void
+BurntSushiFstCppTermDictionary::VisitTerms(const TermVisitor& visitor) const {
+    if (impl_->data.empty()) {
+        return;
+    }
+    VisitTermsIterative(impl_->data, impl_->metadata.root_address, visitor);
 }
 
 std::span<const std::uint8_t>

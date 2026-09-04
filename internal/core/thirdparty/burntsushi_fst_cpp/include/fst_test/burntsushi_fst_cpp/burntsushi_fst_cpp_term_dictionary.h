@@ -53,8 +53,11 @@ class BurntSushiFstCppTermDictionary final : public TermDictionary {
         std::size_t max_expansions) const override;
     void Save(const std::string& path_prefix) const override;
     void Load(const std::string& path_prefix) override;
+    void LoadFile(const std::string& path, bool memory_mapped);
+    void LoadBytes(std::span<const std::uint8_t> bytes);
     [[nodiscard]] DictionaryStats Stats() const override;
     [[nodiscard]] DictionaryTraversalResult TraverseTerms() const override;
+    void VisitTerms(const TermVisitor& visitor) const override;
     [[nodiscard]] bool IsMemoryMapped() const override;
 
     [[nodiscard]] std::span<const std::uint8_t> SerializedBytes() const;
