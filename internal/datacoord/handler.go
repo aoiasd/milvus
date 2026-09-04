@@ -849,6 +849,7 @@ func (h *ServerHandler) GenSnapshot(ctx context.Context, collectionID UniqueID) 
 			Deltalogs:         segInfo.GetDeltalogs(),
 			Statslogs:         segInfo.GetStatslogs(),
 			Bm25Statslogs:     segInfo.GetBm25Statslogs(),
+			TextLogV2:         segInfo.GetTextLogV2(),
 			IndexFiles:        indexesFiles,
 			JsonKeyIndexFiles: uncompressedJSONStats,
 			TextIndexFiles:    segInfo.GetTextStatsLogs(),

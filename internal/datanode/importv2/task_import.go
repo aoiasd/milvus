@@ -31,6 +31,7 @@ import (
 	"github.com/milvus-io/milvus/internal/flushcommon/metacache"
 	"github.com/milvus-io/milvus/internal/flushcommon/syncmgr"
 	"github.com/milvus-io/milvus/internal/storage"
+	"github.com/milvus-io/milvus/internal/util/function"
 	"github.com/milvus-io/milvus/internal/util/importutilv2"
 	"github.com/milvus-io/milvus/pkg/v3/mlog"
 	"github.com/milvus-io/milvus/pkg/v3/proto/datapb"
@@ -303,9 +304,26 @@ func (t *ImportTask) sync(hashedData HashedData) ([]*conc.Future[struct{}], []sy
 					bm25Stats[outputSparseFieldId].AppendFieldData(data.Data[outputSparseFieldId].(*storage.SparseFloatVectorFieldData))
 				}
 			}
+			termCollector, err := function.NewTextTermCollector(t.req.GetSchema())
+			if err != nil {
+				return nil, nil, err
+			}
+			if err := termCollector.CollectInsertData(data); err != nil {
+				termCollector.Close()
+				return nil, nil, err
+			}
+			textTerms := termCollector.Drain()
+			termCollector.Close()
+			var textTermData *syncmgr.TextTermData
+			if textTerms != nil {
+				textTermData = &syncmgr.TextTermData{
+					Fields:            textTerms,
+					CoverageTimestamp: t.req.GetTs(),
+				}
+			}
 			syncTask, err := NewSyncTask(t.ctx, t.allocator, t.metaCaches, t.req.GetTs(),
 				segmentID, partitionID, t.GetCollectionID(), channel, data, nil,
-				bm25Stats, t.req.GetStorageVersion(), t.req.GetUseLoonFfi(), t.req.GetStorageConfig())
+				bm25Stats, t.req.GetStorageVersion(), t.req.GetUseLoonFfi(), t.req.GetStorageConfig(), textTermData)
 			if err != nil {
 				return nil, nil, err
 			}

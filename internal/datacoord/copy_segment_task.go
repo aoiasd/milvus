@@ -728,6 +728,7 @@ func AssembleCopySegmentRequest(task CopySegmentTask, job CopySegmentJob) (*data
 			DeltaBinlogs:         sourceSegDesc.GetDeltalogs(),
 			IndexFiles:           sourceSegDesc.GetIndexFiles(),        // vector/scalar index file info
 			Bm25Binlogs:          sourceSegDesc.GetBm25Statslogs(),     // BM25 stats logs
+			TextLogV2:            sourceSegDesc.GetTextLogV2(),         // fuzzy BM25 FST logs
 			TextIndexFiles:       sourceSegDesc.GetTextIndexFiles(),    // Text index files
 			JsonKeyIndexFiles:    sourceSegDesc.GetJsonKeyIndexFiles(), // JSON key index files
 			ManifestPath:         sourceSegDesc.GetManifestPath(),      // manifest path for StorageV3+
@@ -888,7 +889,7 @@ func SyncCopySegmentTask(task CopySegmentTask, resp *datapb.QueryCopySegmentResp
 			// For StorageV3+ segments, also update manifest_path
 			var err error
 			op1 := UpdateBinlogsOperator(result.GetSegmentId(), result.GetBinlogs(),
-				result.GetStatslogs(), result.GetDeltalogs(), result.GetBm25Logs())
+				result.GetStatslogs(), result.GetDeltalogs(), result.GetBm25Logs(), result.GetTextLogV2())
 			op2 := UpdateStatusOperator(result.GetSegmentId(), commonpb.SegmentState_Flushed)
 			op3 := UpdateIsImporting(result.GetSegmentId(), false)
 			operators := []UpdateOperator{op1, op2, op3}

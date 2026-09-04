@@ -465,7 +465,8 @@ func (st *statsTask) prepareJobRequest(ctx context.Context, segment *SegmentInfo
 		paramtable.Get().DataCoordCfg.CompactionPreAllocateIDExpansionFactor.GetAsInt64()
 
 	// Allocate IDs
-	start, end, err := st.allocator.AllocN(binlogNum + int64(len(collInfo.Schema.GetFunctions())) + 1)
+	start, end, err := st.allocator.AllocN(binlogNum + int64(len(collInfo.Schema.GetFunctions())) + 1 +
+		countFuzzyBM25TermFields(collInfo.Schema))
 	if err != nil {
 		return nil, merr.Wrap(err, "failed to allocate log IDs")
 	}
@@ -525,15 +526,9 @@ func (st *statsTask) SetJobInfo(ctx context.Context, result *workerpb.StatsResul
 		// For V3 segments (manifest set), stats are already in manifest.
 		segment := st.meta.GetHealthySegment(ctx, st.GetTargetSegmentID())
 		if segment != nil && segment.GetManifestPath() == "" {
-			var operators []SegmentOperator
-			if len(result.GetStatsLogs()) > 0 {
-				operators = append(operators, SetStatslogs(result.GetStatsLogs()))
-			}
-			if len(result.GetBm25Logs()) > 0 {
-				operators = append(operators, SetBm25Statslogs(result.GetBm25Logs()))
-			}
-			if len(operators) > 0 {
-				err = st.meta.UpdateSegment(st.GetTargetSegmentID(), operators...)
+			if len(result.GetStatsLogs()) > 0 || len(result.GetBm25Logs()) > 0 || len(result.GetTextLogV2()) > 0 {
+				err = st.meta.UpdateSegmentsInfo(ctx, UpdateAuxiliaryStatslogsOperator(st.GetTargetSegmentID(),
+					result.GetStatsLogs(), result.GetBm25Logs(), result.GetTextLogV2()))
 				if err != nil {
 					mlog.Warn(ctx, "save sort stats result failed", mlog.FieldTaskID(st.GetTaskID()),
 						mlog.FieldSegmentID(st.GetTargetSegmentID()), mlog.Err(err))
