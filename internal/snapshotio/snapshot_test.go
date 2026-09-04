@@ -45,6 +45,7 @@ func TestManifestSchemaByVersion(t *testing.T) {
 	assert.Contains(t, AvroSchemaV3(), "commit_timestamp")
 	assert.NotContains(t, AvroSchemaV3(), "child_fields")
 	assert.Contains(t, AvroSchemaV4(), "child_fields")
+	assert.Contains(t, AvroSchemaV5(), "text_log_v2")
 
 	currentSchema, err := ManifestSchemaByVersion(SnapshotFormatVersion)
 	require.NoError(t, err)
@@ -66,7 +67,7 @@ func TestParseSnapshotMetadataWithVersionCheck(t *testing.T) {
 	assert.Equal(t, int32(3), metadata.GetFormatVersion())
 	assert.Equal(t, int64(10), metadata.GetSnapshotInfo().GetId())
 
-	metadata, err = ParseSnapshotMetadataWithVersionCheck([]byte(`{"format_version":4}`))
+	metadata, err = ParseSnapshotMetadataWithVersionCheck([]byte(`{"format_version":5}`))
 	require.NoError(t, err)
 	assert.Equal(t, int32(SnapshotFormatVersion), metadata.GetFormatVersion())
 
@@ -101,6 +102,9 @@ func TestSegmentManifestRoundTrip(t *testing.T) {
 		},
 		Bm25Statslogs: []*datapb.FieldBinlog{
 			fieldBinlog(104, 4, "bm25-log"),
+		},
+		TextLogV2: []*datapb.FieldBinlog{
+			fieldBinlog(105, 5, "text-log-v2"),
 		},
 		IndexFiles: []*indexpb.IndexFilePathInfo{
 			{
@@ -169,6 +173,9 @@ func TestSegmentManifestRoundTrip(t *testing.T) {
 	assert.Equal(t, segment.GetBinlogs()[0].GetBinlogs()[0].GetLogPath(), parsed.GetBinlogs()[0].GetBinlogs()[0].GetLogPath())
 	require.Len(t, parsed.GetDeltalogs(), 1)
 	assert.Equal(t, segment.GetDeltalogs()[0].GetBinlogs()[0].GetLogID(), parsed.GetDeltalogs()[0].GetBinlogs()[0].GetLogID())
+	require.Len(t, parsed.GetTextLogV2(), 1)
+	assert.Equal(t, segment.GetTextLogV2()[0].GetFormat(), parsed.GetTextLogV2()[0].GetFormat())
+	assert.Equal(t, segment.GetTextLogV2()[0].GetBinlogs()[0].GetLogPath(), parsed.GetTextLogV2()[0].GetBinlogs()[0].GetLogPath())
 	require.Len(t, parsed.GetIndexFiles(), 1)
 	assert.Equal(t, segment.GetIndexFiles()[0].GetIndexStorePathVersion(), parsed.GetIndexFiles()[0].GetIndexStorePathVersion())
 	assert.Equal(t, segment.GetStartPosition().GetTimestamp(), parsed.GetStartPosition().GetTimestamp())
@@ -199,6 +206,24 @@ func TestParseSegmentManifestV2DefaultsCommitTimestamp(t *testing.T) {
 	parsed, err := ParseSegmentManifest(data, 2)
 	require.NoError(t, err)
 	assert.Equal(t, uint64(0), parsed.GetCommitTimestamp())
+}
+
+func TestParseSegmentManifestV4DefaultsTextLogV2(t *testing.T) {
+	segment := &datapb.SegmentDescription{
+		SegmentId:      1001,
+		PartitionId:    2001,
+		SegmentLevel:   datapb.SegmentLevel_L1,
+		StorageVersion: 2,
+		IsSorted:       true,
+	}
+	schema, err := ManifestSchemaV4()
+	require.NoError(t, err)
+	data, err := avro.Marshal(schema, SegmentToManifestEntry(segment))
+	require.NoError(t, err)
+
+	parsed, err := ParseSegmentManifest(data, 4)
+	require.NoError(t, err)
+	assert.Empty(t, parsed.GetTextLogV2())
 }
 
 func TestMarshalSegmentManifestErrors(t *testing.T) {

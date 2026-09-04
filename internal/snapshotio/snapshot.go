@@ -34,7 +34,7 @@ import (
 
 const (
 	// SnapshotFormatVersion is the current snapshot metadata and manifest format.
-	SnapshotFormatVersion = 4
+	SnapshotFormatVersion = 5
 )
 
 var (
@@ -53,11 +53,15 @@ var (
 	manifestSchemaV4Once sync.Once
 	manifestSchemaV4     avro.Schema
 	manifestSchemaV4Err  error
+
+	manifestSchemaV5Once sync.Once
+	manifestSchemaV5     avro.Schema
+	manifestSchemaV5Err  error
 )
 
 // ManifestSchema returns the current Avro schema for snapshot segment manifests.
 func ManifestSchema() (avro.Schema, error) {
-	return ManifestSchemaV4()
+	return ManifestSchemaV5()
 }
 
 // ManifestSchemaV1 returns the Avro schema used by legacy snapshot manifests.
@@ -92,6 +96,14 @@ func ManifestSchemaV4() (avro.Schema, error) {
 	return manifestSchemaV4, manifestSchemaV4Err
 }
 
+// ManifestSchemaV5 returns the current schema with fuzzy BM25 Text Log V2 artifacts.
+func ManifestSchemaV5() (avro.Schema, error) {
+	manifestSchemaV5Once.Do(func() {
+		manifestSchemaV5, manifestSchemaV5Err = avro.Parse(AvroSchemaV5())
+	})
+	return manifestSchemaV5, manifestSchemaV5Err
+}
+
 // ManifestSchemaByVersion returns the Avro schema for a snapshot format version.
 func ManifestSchemaByVersion(version int) (avro.Schema, error) {
 	switch version {
@@ -103,6 +115,8 @@ func ManifestSchemaByVersion(version int) (avro.Schema, error) {
 		return ManifestSchemaV3()
 	case 4:
 		return ManifestSchemaV4()
+	case 5:
+		return ManifestSchemaV5()
 	default:
 		return nil, merr.WrapErrServiceInternalMsg("unsupported manifest schema version: %d", version)
 	}
@@ -156,6 +170,7 @@ type ManifestEntry struct {
 	NumOfRows         int64                   `avro:"num_of_rows"`
 	StatslogFiles     []AvroFieldBinlog       `avro:"statslog_files"`
 	Bm25StatslogFiles []AvroFieldBinlog       `avro:"bm25_statslog_files"`
+	TextLogV2         []AvroFieldBinlog       `avro:"text_log_v2"`
 	TextIndexFiles    []AvroTextIndexEntry    `avro:"text_index_files"`
 	JSONKeyIndexFiles []AvroJSONKeyIndexEntry `avro:"json_key_index_files"`
 	StartPosition     *AvroMsgPosition        `avro:"start_position"`
@@ -298,6 +313,11 @@ func SegmentToManifestEntry(segment *datapb.SegmentDescription) ManifestEntry {
 		avroBm25StatslogFiles = append(avroBm25StatslogFiles, FieldBinlogToAvro(bm25Statslog))
 	}
 
+	var avroTextLogV2 []AvroFieldBinlog
+	for _, textLogV2 := range segment.GetTextLogV2() {
+		avroTextLogV2 = append(avroTextLogV2, FieldBinlogToAvro(textLogV2))
+	}
+
 	var avroIndexFiles []AvroIndexFilePathInfo
 	for _, indexFile := range segment.GetIndexFiles() {
 		avroIndexFiles = append(avroIndexFiles, IndexFilePathInfoToAvro(indexFile))
@@ -314,6 +334,7 @@ func SegmentToManifestEntry(segment *datapb.SegmentDescription) ManifestEntry {
 		NumOfRows:         segment.GetNumOfRows(),
 		StatslogFiles:     avroStatslogFiles,
 		Bm25StatslogFiles: avroBm25StatslogFiles,
+		TextLogV2:         avroTextLogV2,
 		TextIndexFiles:    TextIndexMapToAvro(segment.GetTextIndexFiles()),
 		JSONKeyIndexFiles: JSONKeyIndexMapToAvro(segment.GetJsonKeyIndexFiles()),
 		StartPosition:     MsgPositionToAvro(segment.GetStartPosition()),
@@ -350,6 +371,9 @@ func ManifestEntryToSegment(record ManifestEntry) *datapb.SegmentDescription {
 	}
 	for _, bm25StatslogFile := range record.Bm25StatslogFiles {
 		segment.Bm25Statslogs = append(segment.Bm25Statslogs, AvroToFieldBinlog(bm25StatslogFile))
+	}
+	for _, textLogV2 := range record.TextLogV2 {
+		segment.TextLogV2 = append(segment.TextLogV2, AvroToFieldBinlog(textLogV2))
 	}
 	for _, indexFile := range record.IndexFiles {
 		segment.IndexFiles = append(segment.IndexFiles, AvroToIndexFilePathInfo(indexFile))
@@ -814,5 +838,24 @@ func AvroSchemaV4() string {
 								{"name": "format", "type": "string", "default": ""},
 								{
 									"name": "binlogs",`,
+		1)
+}
+
+// AvroSchemaV5 adds field-level fuzzy BM25 FST files. The default keeps older
+// manifests readable as an empty text-log-v2 set.
+func AvroSchemaV5() string {
+	return strings.Replace(AvroSchemaV4(),
+		`{
+					"name": "index_files",`,
+		`{
+					"name": "text_log_v2",
+					"type": {
+						"type": "array",
+						"items": "AvroFieldBinlog"
+					},
+					"default": []
+				},
+				{
+					"name": "index_files",`,
 		1)
 }

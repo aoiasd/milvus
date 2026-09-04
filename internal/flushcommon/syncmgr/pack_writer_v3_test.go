@@ -41,6 +41,7 @@ import (
 	"github.com/milvus-io/milvus/internal/storagecommon"
 	"github.com/milvus-io/milvus/internal/storagev2/packed"
 	"github.com/milvus-io/milvus/internal/util/initcore"
+	"github.com/milvus-io/milvus/internal/util/textindex"
 	"github.com/milvus-io/milvus/pkg/v3/common"
 	"github.com/milvus-io/milvus/pkg/v3/objectstorage"
 	"github.com/milvus-io/milvus/pkg/v3/proto/datapb"
@@ -246,6 +247,28 @@ func (s *PackWriterV3Suite) TestWriteTextTermFstAccumulatesManifestCoverage() {
 	s.NotEmpty(emptyData)
 	s.Equal(strconv.Itoa(len(firstData)+len(emptyData)), textStat2.Metadata["log_size"])
 	s.Equal(strconv.Itoa(len(firstData)+len(emptyData)), textStat2.Metadata["memory_size"])
+
+	replacementEntries, _, err := textindex.BuildReplacementManifestEntries(
+		manifest2,
+		s.storageConfig,
+		s.logIDAlloc,
+		map[int64][][]byte{101: {[]byte("replacement")}},
+		300,
+	)
+	s.Require().NoError(err)
+	basePath, version, err := packed.UnmarshalManifestPath(manifest2)
+	s.Require().NoError(err)
+	manifest3, err := packed.CommitManifestUpdates(basePath, version, s.storageConfig,
+		&packed.ManifestUpdates{Stats: replacementEntries})
+	s.Require().NoError(err)
+
+	manifestStats3, err := packed.GetManifestStats(manifest3, s.storageConfig)
+	s.Require().NoError(err)
+	textStat3 := manifestStats3["text_log_v2.101"]
+	s.Require().Len(textStat3.Paths, 1)
+	s.NotEqual(textStat1.Paths[0], textStat3.Paths[0])
+	s.Equal("300", textStat3.Metadata["coverage_timestamp"])
+	s.Equal("1", textStat3.Metadata["fragment_term_count"])
 }
 
 func (s *PackWriterV3Suite) TestPackWriterV3_UsesManifestFormatAfterConfigSwitch() {

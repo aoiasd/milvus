@@ -24,6 +24,7 @@ import (
 	"github.com/bytedance/mockey"
 	"github.com/cockroachdb/errors"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/milvus-io/milvus-proto/go-api/v3/commonpb"
@@ -64,6 +65,22 @@ type mockeyStatsCluster struct {
 
 type mockeyChunkManager struct {
 	storage.ChunkManager
+}
+
+func TestCountFuzzyBM25TermFields(t *testing.T) {
+	schema := &schemapb.CollectionSchema{
+		Fields: []*schemapb.FieldSchema{
+			{FieldID: 101, DataType: schemapb.DataType_VarChar},
+			{FieldID: 102, DataType: schemapb.DataType_VarChar},
+		},
+		Functions: []*schemapb.FunctionSchema{
+			{Type: schemapb.FunctionType_BM25, InputFieldIds: []int64{101}, Params: []*commonpb.KeyValuePair{{Key: common.EnableFuzzyKey, Value: "true"}}},
+			{Type: schemapb.FunctionType_BM25, InputFieldIds: []int64{101}, Params: []*commonpb.KeyValuePair{{Key: common.EnableFuzzyKey, Value: "true"}}},
+			{Type: schemapb.FunctionType_BM25, InputFieldIds: []int64{102}},
+		},
+	}
+
+	require.Equal(t, int64(1), countFuzzyBM25TermFields(schema))
 }
 
 func Test_statsTaskSuite(t *testing.T) {

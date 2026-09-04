@@ -4331,6 +4331,39 @@ func TestAddL0DeltalogsAndUpdateManifestOperatorCacheDoesNotRegressManifest(t *t
 }
 
 func TestUpdateSegmentsInfo(t *testing.T) {
+	t.Run("auxiliary stats logs persist through catalog", func(t *testing.T) {
+		meta, err := newMemoryMeta(t)
+		require.NoError(t, err)
+
+		segment := NewSegmentInfo(&datapb.SegmentInfo{
+			ID:             1,
+			CollectionID:   10,
+			PartitionID:    20,
+			State:          commonpb.SegmentState_Flushed,
+			StorageVersion: storage.StorageV2,
+		})
+		require.NoError(t, meta.AddSegment(context.TODO(), segment))
+
+		textLogV2 := []*datapb.FieldBinlog{{
+			FieldID: 101,
+			Format:  "burntsushi_fst_v3_field_terms_v1",
+			Binlogs: []*datapb.Binlog{{LogID: 336, EntriesNum: 3, TimestampTo: 200}},
+		}}
+		require.NoError(t, meta.UpdateSegmentsInfo(context.TODO(),
+			UpdateAuxiliaryStatslogsOperator(1, nil, nil, textLogV2)))
+
+		updated := meta.GetHealthySegment(context.TODO(), 1)
+		require.Len(t, updated.GetTextLogV2(), 1)
+		assert.EqualValues(t, 336, updated.GetTextLogV2()[0].GetBinlogs()[0].GetLogID())
+
+		persisted, err := meta.catalog.ListSegments(context.TODO(), 10)
+		require.NoError(t, err)
+		require.Len(t, persisted, 1)
+		require.Len(t, persisted[0].GetTextLogV2(), 1)
+		assert.EqualValues(t, 336, persisted[0].GetTextLogV2()[0].GetBinlogs()[0].GetLogID())
+		assert.Equal(t, "burntsushi_fst_v3_field_terms_v1", persisted[0].GetTextLogV2()[0].GetFormat())
+	})
+
 	t.Run("operator error stops update", func(t *testing.T) {
 		meta, err := newMemoryMeta(t)
 		require.NoError(t, err)
