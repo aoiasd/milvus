@@ -17,11 +17,14 @@
 package querynodev2
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cockroachdb/errors"
 	"github.com/samber/lo"
@@ -46,6 +49,7 @@ import (
 	"github.com/milvus-io/milvus/internal/util/searchutil/scheduler"
 	streamingstatus "github.com/milvus-io/milvus/internal/util/streamingutil/status"
 	"github.com/milvus-io/milvus/internal/util/streamrpc"
+	"github.com/milvus-io/milvus/internal/util/textindex"
 	"github.com/milvus-io/milvus/internal/util/textmatch"
 	"github.com/milvus-io/milvus/pkg/v3/common"
 	"github.com/milvus-io/milvus/pkg/v3/metrics"
@@ -262,6 +266,9 @@ func (node *QueryNode) WatchDmChannels(ctx context.Context, req *querypb.WatchDm
 		queryView,
 		node.binlogSaver,
 		delegator.WithLeaderViewUpdatedCallback(node.markLeaderViewUpdated),
+		delegator.WithFuzzyExpansionSemaphores(
+			node.fuzzyExpansionRPCSemaphore,
+			node.fuzzyExpansionNativeSemaphore),
 	)
 	if err != nil {
 		log.Warn(ctx, "failed to create shard delegator", mlog.Err(err))
@@ -913,6 +920,178 @@ func (node *QueryNode) SearchSegments(ctx context.Context, req *querypb.SearchRe
 	return resp, nil
 }
 
+func (node *QueryNode) ExpandTextTerms(ctx context.Context, req *querypb.ExpandTextTermsRequest) (*querypb.ExpandTextTermsResponse, error) {
+	response := &querypb.ExpandTextTermsResponse{Status: merr.Success()}
+	if err := node.lifetime.Add(merr.IsHealthy); err != nil {
+		response.Status = merr.Status(err)
+		return response, nil
+	}
+	defer node.lifetime.Done()
+
+	fail := func(err error) (*querypb.ExpandTextTermsResponse, error) {
+		response.Status = merr.Status(err)
+		if errors.Is(err, textindex.ErrFuzzySearchWorkLimitExceeded) {
+			response.WorkLimitExceeded = true
+			// Generic gRPC retries cannot make progress with the same traversal
+			// budget. The shard leader restores the resource-error semantics.
+			response.Status.Retriable = false
+		}
+		return response, nil
+	}
+	if req.GetCollectionID() == 0 || req.GetFieldID() == 0 {
+		return fail(merr.WrapErrServiceInternalMsg("invalid text term expansion scope"))
+	}
+	if req.GetMaxEditDistance() > 2 {
+		return fail(merr.WrapErrServiceInternalMsg("fuzzy max edit distance must be in [0, 2]"))
+	}
+	if req.GetMaxExpansions() == 0 || req.GetMaxExpansions() > 1024 {
+		return fail(merr.WrapErrServiceInternalMsg("fuzzy max expansions must be in [1, 1024]"))
+	}
+	if req.GetWorkBudget() == 0 {
+		return fail(merr.WrapErrServiceInternalMsg("text term expansion requires a work budget"))
+	}
+	if len(req.GetSegmentIDs()) == 0 {
+		return fail(merr.WrapErrServiceInternalMsg("text term expansion requires target segments"))
+	}
+	if req.GetScope() != querypb.DataScope_Historical {
+		return fail(merr.WrapErrServiceInternalMsg(
+			"text term Worker expansion supports sealed segments only, got scope %s", req.GetScope().String()))
+	}
+	collection := node.manager.Collection.Get(req.GetCollectionID())
+	if collection == nil {
+		return fail(merr.WrapErrCollectionNotLoaded(req.GetCollectionID()))
+	}
+	field := typeutil.GetFieldByID(collection.Schema(), req.GetFieldID())
+	if field == nil || !typeutil.IsFuzzyEnabledBM25InputField(collection.Schema(), field) {
+		return fail(merr.WrapErrServiceInternalMsg(
+			"field %d is not enabled for fuzzy BM25 term expansion", req.GetFieldID()))
+	}
+	for _, term := range req.GetSourceTerms() {
+		if !utf8.Valid(term) {
+			return fail(merr.WrapErrServiceInternalMsg("fuzzy BM25 query term is not valid UTF-8"))
+		}
+	}
+	localSegments := make([]*segments.LocalSegment, len(req.GetSegmentIDs()))
+	for index, segmentID := range req.GetSegmentIDs() {
+		segment := node.manager.Segment.GetSealed(segmentID)
+		if segment == nil || segment.Collection() != req.GetCollectionID() {
+			return fail(merr.WrapErrSegmentNotLoaded(segmentID, "text term expansion target is unavailable"))
+		}
+		local, ok := segment.(*segments.LocalSegment)
+		if !ok {
+			return fail(merr.WrapErrServiceInternalMsg("segment %d does not support text term expansion", segmentID))
+		}
+		localSegments[index] = local
+	}
+
+	type candidateKey struct {
+		sourceIndex uint32
+		term        string
+	}
+	candidates := make(map[candidateKey]*querypb.ExpandedTextTerm)
+	var candidateWireSize int64
+	remainingWork := min(req.GetWorkBudget(), paramtable.Get().QueryNodeCfg.FuzzyExpansionMaxWork.GetAsUint64())
+	if node.fuzzyExpansionNativeSemaphore == nil {
+		return fail(merr.WrapErrServiceInternalMsg("fuzzy BM25 native expansion admission is not initialized"))
+	}
+	if !node.fuzzyExpansionNativeSemaphore.TryAcquire() {
+		return fail(merr.WrapErrTooManyRequests(
+			int32(node.fuzzyExpansionNativeSemaphore.Cap()), "fuzzy BM25 native expansion concurrency is saturated"))
+	}
+	prepared, preparationWork, err := textindex.PrepareFuzzySearchTerms(
+		req.GetSourceTerms(), req.GetMaxEditDistance(), req.GetPrefixLength(), remainingWork)
+	node.fuzzyExpansionNativeSemaphore.Release()
+	response.WorkUsed += preparationWork
+	if preparationWork > remainingWork {
+		return fail(merr.WrapErrServiceInternalMsg("sealed fuzzy query preparation exceeded its work budget"))
+	}
+	remainingWork -= preparationWork
+	if err != nil {
+		return fail(err)
+	}
+	defer func() {
+		for _, query := range prepared {
+			query.Close()
+		}
+	}()
+
+	for index, segmentID := range req.GetSegmentIDs() {
+		local := localSegments[index]
+		if !node.fuzzyExpansionNativeSemaphore.TryAcquire() {
+			return fail(merr.WrapErrTooManyRequests(
+				int32(node.fuzzyExpansionNativeSemaphore.Cap()), "fuzzy BM25 native expansion concurrency is saturated"))
+		}
+		matches, generation, dataVersion, work, err := local.ExpandTextTerms(
+			req.GetFieldID(),
+			prepared,
+			req.GetMaxExpansions(),
+			remainingWork)
+		node.fuzzyExpansionNativeSemaphore.Release()
+		response.WorkUsed += work
+		if err != nil {
+			return fail(err)
+		}
+		if work > remainingWork {
+			return fail(merr.WrapErrServiceInternalMsg("sealed text term expansion exceeded its work budget"))
+		}
+		remainingWork -= work
+		response.Generations = append(response.Generations, &querypb.SegmentTextTermGeneration{
+			SegmentID:   segmentID,
+			Generation:  generation,
+			DataVersion: dataVersion,
+		})
+		for sourceIndex, sourceMatches := range matches {
+			for _, match := range sourceMatches {
+				key := candidateKey{sourceIndex: uint32(sourceIndex), term: string(match.Term)}
+				current := candidates[key]
+				if current != nil && match.EditDistance >= current.GetEditDistance() {
+					continue
+				}
+				candidate := &querypb.ExpandedTextTerm{
+					SourceIndex:  uint32(sourceIndex),
+					Term:         match.Term,
+					EditDistance: match.EditDistance,
+				}
+				nextSize := candidateWireSize + delegator.FuzzyBM25ExpandedTermWireSize(candidate)
+				if current != nil {
+					nextSize -= delegator.FuzzyBM25ExpandedTermWireSize(current)
+				}
+				if err := delegator.ValidateFuzzyBM25ExpansionSize(nextSize); err != nil {
+					return fail(err)
+				}
+				candidates[key] = candidate
+				candidateWireSize = nextSize
+			}
+		}
+	}
+	for _, term := range candidates {
+		response.Terms = append(response.Terms, term)
+	}
+	sort.Slice(response.Terms, func(i, j int) bool {
+		if response.Terms[i].GetSourceIndex() != response.Terms[j].GetSourceIndex() {
+			return response.Terms[i].GetSourceIndex() < response.Terms[j].GetSourceIndex()
+		}
+		if response.Terms[i].GetEditDistance() != response.Terms[j].GetEditDistance() {
+			return response.Terms[i].GetEditDistance() < response.Terms[j].GetEditDistance()
+		}
+		return bytes.Compare(response.Terms[i].GetTerm(), response.Terms[j].GetTerm()) < 0
+	})
+	sort.Slice(response.Generations, func(i, j int) bool {
+		return response.Generations[i].GetSegmentID() < response.Generations[j].GetSegmentID()
+	})
+	return enforceExpandTextTermsOutputLimit(response), nil
+}
+
+func enforceExpandTextTermsOutputLimit(response *querypb.ExpandTextTermsResponse) *querypb.ExpandTextTermsResponse {
+	if err := delegator.ValidateFuzzyBM25ExpansionOutputSize(response); err != nil {
+		return &querypb.ExpandTextTermsResponse{
+			Status:   merr.Status(err),
+			WorkUsed: response.GetWorkUsed(),
+		}
+	}
+	return response
+}
+
 // Search performs replica search tasks.
 func (node *QueryNode) Search(ctx context.Context, req *querypb.SearchRequest) (*internalpb.SearchResults, error) {
 	log := mlog.With(
@@ -964,6 +1143,13 @@ func (node *QueryNode) Search(ctx context.Context, req *querypb.SearchRequest) (
 	ret, err := node.searchChannel(ctx, channelReq, ch)
 	if err != nil {
 		resp.Status = merr.Status(err)
+		if errors.Is(err, textindex.ErrFuzzySearchWorkLimitExceeded) {
+			resp.Status.Retriable = false
+			if resp.Status.ExtraInfo == nil {
+				resp.Status.ExtraInfo = make(map[string]string)
+			}
+			resp.Status.ExtraInfo[textindex.FuzzySearchWorkLimitExceededFlagKey] = "true"
+		}
 		return resp, nil
 	}
 

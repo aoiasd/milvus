@@ -25,7 +25,10 @@ package textindex
 import "C"
 
 import (
+	"bytes"
+	"errors"
 	"runtime"
+	"sync"
 	"unicode/utf8"
 	"unsafe"
 
@@ -33,9 +36,144 @@ import (
 	"github.com/milvus-io/milvus/pkg/v3/util/merr"
 )
 
+// ErrFuzzySearchWorkLimitExceeded identifies deterministic traversal-budget
+// exhaustion before it is projected onto an RPC response.
+var ErrFuzzySearchWorkLimitExceeded = errors.New("fuzzy text term search work limit exceeded")
+
+// FuzzySearchWorkLimitExceededFlagKey preserves the deterministic work-limit
+// marker across an internal RPC Status boundary.
+const FuzzySearchWorkLimitExceededFlagKey = "fuzzy_search_work_limit_exceeded"
+
+type fuzzySearchWorkLimitError struct {
+	cause error
+}
+
+func (err fuzzySearchWorkLimitError) Error() string {
+	return err.cause.Error()
+}
+
+func (err fuzzySearchWorkLimitError) Unwrap() error {
+	return err.cause
+}
+
+func (err fuzzySearchWorkLimitError) Is(target error) bool {
+	return target == ErrFuzzySearchWorkLimitExceeded
+}
+
+// MarkFuzzySearchWorkLimitExceeded preserves the underlying Milvus resource
+// error while adding a local, errors.Is-compatible deterministic marker.
+func MarkFuzzySearchWorkLimitExceeded(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fuzzySearchWorkLimitError{cause: err}
+}
+
 type SegmentTextTermTrieStats struct {
 	TermCount  int64
 	MemorySize int64
+}
+
+// PreparedFuzzySearch owns one immutable native query DFA. It may be reused
+// sequentially across every segment and FST/Trie component in one request.
+type PreparedFuzzySearch struct {
+	handle    C.CTextTermFuzzyQueryHandle
+	closeOnce sync.Once
+}
+
+func PrepareFuzzySearch(
+	term []byte,
+	maxEditDistance, prefixLength uint32,
+	workBudget uint64,
+) (*PreparedFuzzySearch, uint64, error) {
+	if maxEditDistance > 2 {
+		return nil, 0, merr.WrapErrServiceInternalMsg("fuzzy max edit distance must be in [0, 2]")
+	}
+	if !utf8.Valid(term) {
+		return nil, 0, merr.WrapErrServiceInternalMsg("fuzzy BM25 query term is not valid UTF-8")
+	}
+	var query *C.uint8_t
+	if len(term) > 0 {
+		query = (*C.uint8_t)(unsafe.Pointer(&term[0]))
+	}
+	result := C.PrepareSegmentTextTermFuzzyQuery(
+		query,
+		C.int64_t(len(term)),
+		C.uint32_t(maxEditDistance),
+		C.uint32_t(prefixLength),
+		C.uint64_t(workBudget),
+	)
+	runtime.KeepAlive(term)
+	workUsed := uint64(result.work_used)
+	if result.status.error_code != 0 {
+		errorCode := int32(result.status.error_code)
+		errorMessage := C.GoString(result.status.error_msg)
+		C.free(unsafe.Pointer(result.status.error_msg))
+		return nil, workUsed, merr.SegcoreError(errorCode, errorMessage)
+	}
+	if bool(result.work_limit_exceeded) {
+		if result.handle != nil {
+			C.DeleteSegmentTextTermFuzzyQuery(result.handle)
+		}
+		return nil, workUsed, MarkFuzzySearchWorkLimitExceeded(merr.Wrap(
+			merr.ErrServiceResourceInsufficient,
+			"fuzzy BM25 query DFA preparation exhausted its work budget",
+		))
+	}
+	if result.handle == nil {
+		return nil, workUsed, merr.WrapErrServiceInternalMsg("prepared fuzzy query returned a nil handle")
+	}
+	prepared := &PreparedFuzzySearch{handle: result.handle}
+	runtime.SetFinalizer(prepared, (*PreparedFuzzySearch).Close)
+	return prepared, workUsed, nil
+}
+
+// Close releases the native DFA. It must not run concurrently with searches.
+func (q *PreparedFuzzySearch) Close() {
+	if q == nil {
+		return
+	}
+	q.closeOnce.Do(func() {
+		runtime.SetFinalizer(q, nil)
+		if q.handle != nil {
+			C.DeleteSegmentTextTermFuzzyQuery(q.handle)
+			q.handle = nil
+		}
+	})
+}
+
+// PrepareFuzzySearchTerms builds exactly one DFA for each source term.
+func PrepareFuzzySearchTerms(
+	terms [][]byte,
+	maxEditDistance, prefixLength uint32,
+	workBudget uint64,
+) ([]*PreparedFuzzySearch, uint64, error) {
+	prepared := make([]*PreparedFuzzySearch, 0, len(terms))
+	closePrepared := func() {
+		for _, query := range prepared {
+			query.Close()
+		}
+	}
+	var workUsed uint64
+	for _, term := range terms {
+		query, work, err := PrepareFuzzySearch(
+			term, maxEditDistance, prefixLength, workBudget-workUsed)
+		if work > workBudget-workUsed {
+			if query != nil {
+				query.Close()
+			}
+			closePrepared()
+			return nil, workUsed, merr.WrapErrServiceInternalMsg(
+				"fuzzy query preparation exceeded its work budget")
+		}
+		workUsed += work
+		if err != nil {
+			closePrepared()
+			return nil, workUsed, err
+		}
+		prepared = append(prepared, query)
+	}
+	return prepared, workUsed, nil
 }
 
 func textFstHandles(readers []*FstReader) (*C.CTextFstHandle, error) {
@@ -142,4 +280,146 @@ func AddTextFstsToSegmentTextTermTrie(segment unsafe.Pointer, fieldID int64, rea
 		return SegmentTextTermTrieStats{}, merr.WrapErrServiceInternalMsg("segment text term Trie returned invalid stats")
 	}
 	return stats, nil
+}
+
+// FuzzySearchSegmentTextTerms runs one source term against every immutable FST
+// and the mutable Trie owned by segment in one native call.
+func FuzzySearchSegmentTextTerms(
+	segment unsafe.Pointer,
+	fieldID int64,
+	readers []*FstReader,
+	term []byte,
+	maxEditDistance, maxExpansions uint32,
+) ([]FuzzyMatch, error) {
+	return FuzzySearchSegmentTextTermsWithPrefix(
+		segment, fieldID, readers, term, maxEditDistance, maxExpansions, 0)
+}
+
+// FuzzySearchSegmentTextTermsWithPrefix runs one source term against every
+// immutable FST and the mutable Trie while keeping prefixLength Unicode
+// characters exact.
+func FuzzySearchSegmentTextTermsWithPrefix(
+	segment unsafe.Pointer,
+	fieldID int64,
+	readers []*FstReader,
+	term []byte,
+	maxEditDistance, maxExpansions, prefixLength uint32,
+) ([]FuzzyMatch, error) {
+	matches, _, err := FuzzySearchSegmentTextTermsWithinBudget(
+		segment,
+		fieldID,
+		readers,
+		term,
+		maxEditDistance,
+		maxExpansions,
+		prefixLength,
+		^uint64(0),
+	)
+	return matches, err
+}
+
+// FuzzySearchSegmentTextTermsWithinBudget bounds one native expansion's DFA
+// preprocessing, FST/Trie traversal, and candidate materialization work.
+func FuzzySearchSegmentTextTermsWithinBudget(
+	segment unsafe.Pointer,
+	fieldID int64,
+	readers []*FstReader,
+	term []byte,
+	maxEditDistance, maxExpansions, prefixLength uint32,
+	workBudget uint64,
+) ([]FuzzyMatch, uint64, error) {
+	if segment == nil {
+		return nil, 0, merr.WrapErrServiceInternalMsg("search text terms on nil segment")
+	}
+	if maxEditDistance > 2 {
+		return nil, 0, merr.WrapErrServiceInternalMsg("fuzzy max edit distance must be in [0, 2]")
+	}
+	if maxExpansions == 0 {
+		return nil, 0, merr.WrapErrServiceInternalMsg("fuzzy max expansions must be positive")
+	}
+	prepared, preparationWork, err := PrepareFuzzySearch(
+		term, maxEditDistance, prefixLength, workBudget)
+	if err != nil {
+		return nil, preparationWork, err
+	}
+	defer prepared.Close()
+	if preparationWork > workBudget {
+		return nil, preparationWork, merr.WrapErrServiceInternalMsg(
+			"fuzzy query preparation exceeded its work budget")
+	}
+	matches, searchWork, err := FuzzySearchSegmentTextTermsPreparedWithinBudget(
+		segment, fieldID, readers, prepared, maxExpansions,
+		workBudget-preparationWork)
+	return matches, preparationWork + searchWork, err
+}
+
+// FuzzySearchSegmentTextTermsPreparedWithinBudget reuses a request-scoped DFA
+// and charges only FST/Trie traversal and candidate materialization.
+func FuzzySearchSegmentTextTermsPreparedWithinBudget(
+	segment unsafe.Pointer,
+	fieldID int64,
+	readers []*FstReader,
+	prepared *PreparedFuzzySearch,
+	maxExpansions uint32,
+	workBudget uint64,
+) ([]FuzzyMatch, uint64, error) {
+	if segment == nil {
+		return nil, 0, merr.WrapErrServiceInternalMsg("search text terms on nil segment")
+	}
+	if prepared == nil || prepared.handle == nil {
+		return nil, 0, merr.WrapErrServiceInternalMsg("search text terms with a closed prepared fuzzy query")
+	}
+	if maxExpansions == 0 {
+		return nil, 0, merr.WrapErrServiceInternalMsg("fuzzy max expansions must be positive")
+	}
+	handles, err := textFstHandles(readers)
+	if err != nil {
+		return nil, 0, err
+	}
+	if handles != nil {
+		defer C.free(unsafe.Pointer(handles))
+	}
+
+	result := C.FuzzySearchSegmentTextTermsPrepared(
+		C.CSegmentInterface(segment),
+		C.int64_t(fieldID),
+		handles,
+		C.int64_t(len(readers)),
+		prepared.handle,
+		C.uint32_t(maxExpansions),
+		C.uint64_t(workBudget),
+	)
+	runtime.KeepAlive(readers)
+	runtime.KeepAlive(prepared)
+	defer C.FreeTextFstFuzzyResult(&result)
+	workUsed := uint64(result.work_used)
+	if result.status.error_code != 0 {
+		errorCode := int32(result.status.error_code)
+		errorMessage := C.GoString(result.status.error_msg)
+		C.free(unsafe.Pointer(result.status.error_msg))
+		return nil, workUsed, merr.SegcoreError(errorCode, errorMessage)
+	}
+	if bool(result.work_limit_exceeded) {
+		return nil, workUsed, MarkFuzzySearchWorkLimitExceeded(merr.Wrap(
+			merr.ErrServiceResourceInsufficient,
+			"fuzzy BM25 native expansion exhausted its work budget",
+		))
+	}
+	if result.match_count < 0 || uint64(result.match_count) > uint64(^uint(0)>>1) ||
+		(result.match_count > 0 && result.matches == nil) {
+		return nil, workUsed, merr.WrapErrServiceInternalMsg("segment text term fuzzy search returned invalid matches")
+	}
+	matches := unsafe.Slice(result.matches, int(result.match_count))
+	output := make([]FuzzyMatch, 0, len(matches))
+	for _, match := range matches {
+		if match.term_size < 0 || uint64(match.term_size) > uint64(^uint(0)>>1) ||
+			(match.term_size > 0 && match.term == nil) {
+			return nil, workUsed, merr.WrapErrServiceInternalMsg("segment text term fuzzy search returned invalid term")
+		}
+		output = append(output, FuzzyMatch{
+			Term:         bytes.Clone(unsafe.Slice((*byte)(unsafe.Pointer(match.term)), int(match.term_size))),
+			EditDistance: uint32(match.edit_distance),
+		})
+	}
+	return output, workUsed, nil
 }

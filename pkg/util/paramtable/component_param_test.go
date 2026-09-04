@@ -737,6 +737,10 @@ func TestComponentParam(t *testing.T) {
 		params.Save(Params.TextLogV2GrowingTrieExpansionFactor.Key, "0.5")
 		assert.Equal(t, 1.0, Params.TextLogV2GrowingTrieExpansionFactor.GetAsFloat())
 		params.Reset(Params.TextLogV2GrowingTrieExpansionFactor.Key)
+		assert.EqualValues(t, 1_000_000, Params.FuzzyExpansionMaxWork.GetAsUint64())
+		params.Save(Params.FuzzyExpansionMaxWork.Key, "0")
+		assert.EqualValues(t, 1, Params.FuzzyExpansionMaxWork.GetAsUint64())
+		params.Reset(Params.FuzzyExpansionMaxWork.Key)
 
 		assert.Equal(t, 60*time.Second, Params.DiskSizeFetchInterval.GetAsDuration(time.Second))
 

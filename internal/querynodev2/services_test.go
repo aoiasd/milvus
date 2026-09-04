@@ -30,6 +30,7 @@ import (
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/protobuf/proto"
@@ -51,6 +52,7 @@ import (
 	streamingstatus "github.com/milvus-io/milvus/internal/util/streamingutil/status"
 	"github.com/milvus-io/milvus/internal/util/streamingutil/util"
 	"github.com/milvus-io/milvus/internal/util/streamrpc"
+	"github.com/milvus-io/milvus/internal/util/textindex"
 	"github.com/milvus-io/milvus/pkg/v3/common"
 	"github.com/milvus-io/milvus/pkg/v3/mlog"
 	"github.com/milvus-io/milvus/pkg/v3/proto/datapb"
@@ -212,6 +214,125 @@ func (suite *ServiceSuite) TestGetStatisChannel_Normal() {
 	rsp, err := suite.node.GetStatisticsChannel(ctx, nil)
 	suite.NoError(err)
 	suite.Equal(commonpb.ErrorCode_Success, rsp.GetStatus().GetErrorCode())
+}
+
+func (suite *ServiceSuite) TestExpandTextTermsUsesFieldScope() {
+	collectionID := suite.collectionID + 10000
+	fieldID := int64(101)
+	schema := &schemapb.CollectionSchema{Fields: []*schemapb.FieldSchema{
+		{FieldID: 100, Name: "pk", DataType: schemapb.DataType_Int64, IsPrimaryKey: true},
+		{
+			FieldID:  fieldID,
+			Name:     "text",
+			DataType: schemapb.DataType_VarChar,
+			TypeParams: []*commonpb.KeyValuePair{
+				{Key: common.MaxLengthKey, Value: "1024"},
+				{Key: common.EnableAnalyzerKey, Value: "true"},
+				{Key: "analyzer_params", Value: `{"tokenizer":"standard"}`},
+			},
+		},
+	}, Functions: []*schemapb.FunctionSchema{{
+		Name:            "bm25",
+		Type:            schemapb.FunctionType_BM25,
+		InputFieldIds:   []int64{fieldID},
+		InputFieldNames: []string{"text"},
+		Params:          []*commonpb.KeyValuePair{{Key: common.EnableFuzzyKey, Value: "true"}},
+	}}}
+	err := suite.node.manager.Collection.PutOrRef(collectionID, schema, nil, &querypb.LoadMetaInfo{
+		LoadType:     querypb.LoadType_LoadCollection,
+		CollectionID: collectionID,
+	})
+	suite.Require().NoError(err)
+	defer suite.node.manager.Collection.Unref(collectionID, 1)
+
+	request := &querypb.ExpandTextTermsRequest{
+		CollectionID:    collectionID,
+		FieldID:         fieldID,
+		SourceTerms:     [][]byte{[]byte("book")},
+		MaxEditDistance: 1,
+		MaxExpansions:   50,
+		WorkBudget:      100,
+		SegmentIDs:      []int64{1},
+		Scope:           querypb.DataScope_Historical,
+	}
+	response, err := suite.node.ExpandTextTerms(context.Background(), request)
+	suite.Require().NoError(err)
+	suite.ErrorIs(merr.Error(response.GetStatus()), merr.ErrSegmentNotLoaded)
+}
+
+func TestSearchMarksFuzzyWorkLimitUnrecoverable(t *testing.T) {
+	paramtable.Init()
+	node := NewQueryNode(context.Background(), nil)
+	defer node.cancel()
+	node.UpdateStateCode(commonpb.StateCode_Healthy)
+	node.manager = segments.NewManager()
+	require.NoError(t, node.manager.Collection.PutOrRef(1, &schemapb.CollectionSchema{
+		Fields: []*schemapb.FieldSchema{{
+			FieldID:      100,
+			Name:         "pk",
+			DataType:     schemapb.DataType_Int64,
+			IsPrimaryKey: true,
+		}},
+	}, nil, nil))
+	node.delegators = typeutil.NewConcurrentMap[string, delegator.ShardDelegator]()
+	shard := delegator.NewMockShardDelegator(t)
+	shard.EXPECT().Search(mock.Anything, mock.Anything).Return(nil,
+		textindex.MarkFuzzySearchWorkLimitExceeded(merr.ErrServiceResourceInsufficient)).Once()
+	node.delegators.Insert("channel", shard)
+
+	response, err := node.Search(context.Background(), &querypb.SearchRequest{
+		Req:         &internalpb.SearchRequest{CollectionID: 1},
+		DmlChannels: []string{"channel"},
+	})
+	require.NoError(t, err)
+	require.False(t, response.GetStatus().GetRetriable())
+	require.Equal(t, "true", response.GetStatus().GetExtraInfo()[textindex.FuzzySearchWorkLimitExceededFlagKey])
+}
+
+func TestExpandTextTermsRejectsGrowingWorkerScope(t *testing.T) {
+	node := NewQueryNode(context.Background(), nil)
+	defer node.cancel()
+	node.UpdateStateCode(commonpb.StateCode_Healthy)
+
+	response, err := node.ExpandTextTerms(context.Background(), &querypb.ExpandTextTermsRequest{
+		CollectionID:    1000,
+		FieldID:         101,
+		SourceTerms:     [][]byte{[]byte("book")},
+		MaxEditDistance: 1,
+		MaxExpansions:   50,
+		WorkBudget:      100,
+		SegmentIDs:      []int64{1},
+		Scope:           querypb.DataScope_Streaming,
+	})
+	assert.NoError(t, err)
+	assert.Error(t, merr.Error(response.GetStatus()))
+	assert.Contains(t, response.GetStatus().GetReason(), "sealed segments only")
+}
+
+func TestEnforceExpandTextTermsOutputLimit(t *testing.T) {
+	response := &querypb.ExpandTextTermsResponse{
+		Status:   merr.Success(),
+		WorkUsed: 7,
+		Terms: []*querypb.ExpandedTextTerm{{
+			SourceIndex: 0,
+			Term:        []byte("book"),
+		}},
+		Generations: []*querypb.SegmentTextTermGeneration{{SegmentID: 1, Generation: 1}},
+	}
+	params := paramtable.Get()
+	outputSize := proto.Size(response)
+	oldMaxOutputSize := params.QuotaConfig.MaxOutputSize.SwapTempValue(strconv.Itoa(outputSize))
+	t.Cleanup(func() {
+		params.QuotaConfig.MaxOutputSize.SwapTempValue(oldMaxOutputSize)
+	})
+
+	assert.Same(t, response, enforceExpandTextTermsOutputLimit(response))
+	params.QuotaConfig.MaxOutputSize.SwapTempValue(strconv.Itoa(outputSize - 1))
+	rejected := enforceExpandTextTermsOutputLimit(response)
+	require.ErrorIs(t, merr.Error(rejected.GetStatus()), merr.ErrParameterTooLarge)
+	assert.Empty(t, rejected.GetTerms())
+	assert.Empty(t, rejected.GetGenerations())
+	assert.EqualValues(t, 7, rejected.GetWorkUsed())
 }
 
 func (suite *ServiceSuite) TestGetStatistics_Normal() {

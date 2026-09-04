@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -13,16 +14,16 @@ namespace fst_test {
 
 using TermEntry = std::pair<std::string, std::uint32_t>;
 // The term view is valid only for the duration of the callback.
-using TermVisitor =
-    std::function<void(std::string_view term,
-                       std::uint32_t document_frequency)>;
+using TermVisitor = std::function<void(std::string_view term,
+                                       std::uint32_t document_frequency)>;
 
 struct FuzzyMatch {
     std::string term;
     std::uint32_t document_frequency;
     std::uint32_t edit_distance;
 
-    bool operator==(const FuzzyMatch&) const = default;
+    bool
+    operator==(const FuzzyMatch&) const = default;
 };
 
 struct FuzzySearchResult {
@@ -34,6 +35,7 @@ struct FuzzySearchResult {
     std::size_t visited_terms = 0;
     std::size_t visited_states = 0;
     std::size_t visited_arcs = 0;
+    bool work_limit_exceeded = false;
 };
 
 struct DictionaryStats {
@@ -57,8 +59,7 @@ AddTraversalEntry(DictionaryTraversalResult& result,
                   std::string_view term,
                   std::uint32_t document_frequency) {
     const auto mix_byte = [&](std::uint8_t byte) {
-        result.checksum =
-            (result.checksum ^ byte) * kTraversalChecksumPrime;
+        result.checksum = (result.checksum ^ byte) * kTraversalChecksumPrime;
     };
     const auto length = static_cast<std::uint64_t>(term.size());
     for (std::size_t shift = 0; shift < sizeof(length); ++shift) {
@@ -78,30 +79,43 @@ class TermDictionary {
  public:
     virtual ~TermDictionary() = default;
 
-    [[nodiscard]] virtual std::string_view Name() const = 0;
+    [[nodiscard]] virtual std::string_view
+    Name() const = 0;
 
-    virtual void Build(const std::vector<TermEntry>& entries) = 0;
+    virtual void
+    Build(const std::vector<TermEntry>& entries) = 0;
 
-    [[nodiscard]] virtual std::optional<std::uint32_t> Lookup(
-        std::string_view term) const = 0;
+    [[nodiscard]] virtual std::optional<std::uint32_t>
+    Lookup(std::string_view term) const = 0;
 
-    [[nodiscard]] virtual FuzzySearchResult FuzzySearch(
-        std::string_view query,
-        std::uint32_t max_edit_distance,
-        std::size_t max_expansions) const = 0;
+    [[nodiscard]] virtual FuzzySearchResult
+    FuzzySearch(std::string_view query,
+                std::uint32_t max_edit_distance,
+                std::size_t max_expansions,
+                std::uint32_t prefix_length,
+                std::size_t work_budget =
+                    std::numeric_limits<std::size_t>::max()) const = 0;
 
-    virtual void Save(const std::string& path_prefix) const = 0;
-    virtual void Load(const std::string& path_prefix) = 0;
+    virtual void
+    Save(const std::string& path_prefix) const = 0;
+    virtual void
+    Load(const std::string& path_prefix) = 0;
 
-    [[nodiscard]] virtual DictionaryStats Stats() const = 0;
+    [[nodiscard]] virtual DictionaryStats
+    Stats() const = 0;
 
-    [[nodiscard]] virtual DictionaryTraversalResult TraverseTerms() const = 0;
+    [[nodiscard]] virtual DictionaryTraversalResult
+    TraverseTerms() const = 0;
 
-    virtual void VisitTerms(const TermVisitor& visitor) const = 0;
+    virtual void
+    VisitTerms(const TermVisitor& visitor) const = 0;
 
     // True only when the active query representation is backed directly by
     // read-only file mappings rather than a heap-owned serialized copy.
-    [[nodiscard]] virtual bool IsMemoryMapped() const { return false; }
+    [[nodiscard]] virtual bool
+    IsMemoryMapped() const {
+        return false;
+    }
 };
 
 }  // namespace fst_test

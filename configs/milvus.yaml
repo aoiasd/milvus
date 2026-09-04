@@ -693,6 +693,8 @@ queryNode:
   standaloneMigrateDataTimeout: 10s # Duration string (e.g. 10s, 3m). In standalone mode, after this duration, the node stops waiting for data migration if no other active query node is available.
   search:
     enableResultZeroCopy: false # When true, delegator passes reduced SearchResultData directly instead of re-marshaling to SlicedBlob. Toggle at runtime for instant fallback.
+  fuzzyExpansion:
+    maxWork: 1000000 # Maximum DFA preprocessing, FST/Trie traversal, and candidate materialization work admitted for one fuzzy BM25 expansion attempt.
   levelZeroForwardPolicy: FilterByBF # delegator level zero deletion forward policy, possible option["FilterByBF", "RemoteLoad"]
   streamingDeltaForwardPolicy: FilterByBF # delegator streaming deletion forward policy, possible option["FilterByBF", "Direct"]
   forwardBatchSize: 4194304 # the batch size delegator uses for forwarding stream delete in loading procedure

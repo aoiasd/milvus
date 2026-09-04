@@ -47,6 +47,26 @@ func TestTextFstReaderHeapAndMmap(t *testing.T) {
 	assert.Equal(t, artifact.TermCount, mapped.TermCount())
 }
 
+func TestPrepareFuzzySearchTermsBuildsOneQueryPerSource(t *testing.T) {
+	prepared, work, err := PrepareFuzzySearchTerms(
+		[][]byte{[]byte("bok"), []byte("milvuz")}, 1, 0, 1_000_000)
+	require.NoError(t, err)
+	require.Len(t, prepared, 2)
+	assert.Positive(t, work)
+	assert.NotEqual(t, prepared[0].handle, prepared[1].handle)
+	for _, query := range prepared {
+		require.NotNil(t, query.handle)
+		query.Close()
+		assert.Nil(t, query.handle)
+	}
+
+	prepared, work, err = PrepareFuzzySearchTerms(
+		[][]byte{[]byte("bok")}, 1, 0, 1)
+	require.ErrorIs(t, err, ErrFuzzySearchWorkLimitExceeded)
+	assert.Nil(t, prepared)
+	assert.EqualValues(t, 1, work)
+}
+
 func TestTextFstReaderRejectsCorruptChecksum(t *testing.T) {
 	artifact, err := BuildTextFst([][]byte{[]byte("fuzzy")})
 	require.NoError(t, err)
@@ -63,4 +83,59 @@ func TestTextFstReaderPreservesMmapFailureClassification(t *testing.T) {
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, merr.ErrDataIntegrity)
 	assert.True(t, merr.IsRetryableErr(err))
+}
+
+func TestTextFstReaderFuzzySearchUsesFieldVocabulary(t *testing.T) {
+	artifact, err := BuildTextFst([][]byte{[]byte("book"), []byte("books"), []byte("boon")})
+	require.NoError(t, err)
+	reader, err := LoadTextFstBytes(artifact.Data)
+	require.NoError(t, err)
+	defer reader.Close()
+
+	matches, err := reader.FuzzySearch([]byte("bok"), 1, 1)
+	require.NoError(t, err)
+	require.Len(t, matches, 1)
+	assert.Equal(t, []byte("book"), matches[0].Term)
+	assert.EqualValues(t, 1, matches[0].EditDistance)
+
+	matches, err = reader.FuzzySearch([]byte("book"), 1, 1)
+	require.NoError(t, err)
+	require.Len(t, matches, 1)
+	assert.Equal(t, []byte("book"), matches[0].Term)
+	assert.EqualValues(t, 0, matches[0].EditDistance)
+
+	matches, err = reader.FuzzySearch([]byte("boo"), 1, 2)
+	require.NoError(t, err)
+	require.Len(t, matches, 2)
+	assert.Equal(t, []byte("book"), matches[0].Term)
+	assert.Equal(t, []byte("boon"), matches[1].Term)
+
+	_, err = reader.FuzzySearch([]byte("book"), 3, 50)
+	require.ErrorIs(t, err, merr.ErrServiceInternal)
+}
+
+func TestTextFstReaderFuzzySearchPrefixUsesUnicodeCharacters(t *testing.T) {
+	artifact, err := BuildTextFst([][]byte{[]byte("book"), []byte("你好")})
+	require.NoError(t, err)
+	reader, err := LoadTextFstBytes(artifact.Data)
+	require.NoError(t, err)
+	defer reader.Close()
+
+	matches, err := reader.FuzzySearchWithPrefix([]byte("cook"), 1, 50, 0)
+	require.NoError(t, err)
+	require.Len(t, matches, 1)
+	assert.Equal(t, []byte("book"), matches[0].Term)
+
+	matches, err = reader.FuzzySearchWithPrefix([]byte("cook"), 1, 50, 1)
+	require.NoError(t, err)
+	assert.Empty(t, matches)
+
+	matches, err = reader.FuzzySearchWithPrefix([]byte("你号"), 1, 50, 1)
+	require.NoError(t, err)
+	require.Len(t, matches, 1)
+	assert.Equal(t, []byte("你好"), matches[0].Term)
+
+	matches, err = reader.FuzzySearchWithPrefix([]byte("他好"), 1, 50, 1)
+	require.NoError(t, err)
+	assert.Empty(t, matches)
 }

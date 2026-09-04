@@ -69,3 +69,19 @@ func TestWriteBufferTextTermGenerationFreeze(t *testing.T) {
 	require.Equal(t, [][]byte{[]byte("second")}, second.Fields[101])
 	require.Equal(t, [][]byte{[]byte("first")}, first.Fields[101])
 }
+
+func TestWriteBufferTextTermGenerationRestore(t *testing.T) {
+	wb := &writeBufferBase{textTermBuffers: make(map[int64]*segmentTextTermBuffer)}
+	wb.bufferTextTerms(10, []*msgpb.TextTermBatch{
+		{InputFieldId: 101, Terms: [][]byte{[]byte("first"), []byte("shared")}},
+	}, 100)
+	frozen := wb.yieldTextTerms(10)
+	wb.bufferTextTerms(10, []*msgpb.TextTermBatch{
+		{InputFieldId: 101, Terms: [][]byte{[]byte("second"), []byte("shared")}},
+	}, 200)
+
+	wb.restoreTextTerms(10, frozen)
+	restored := wb.yieldTextTerms(10)
+	require.EqualValues(t, 200, restored.CoverageTimestamp)
+	require.Equal(t, [][]byte{[]byte("first"), []byte("second"), []byte("shared")}, restored.Fields[101])
+}

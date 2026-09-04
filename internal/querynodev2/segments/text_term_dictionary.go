@@ -28,6 +28,11 @@ import (
 	"github.com/milvus-io/milvus/pkg/v3/util/merr"
 )
 
+type TextTermMatch struct {
+	Term         []byte
+	EditDistance uint32
+}
+
 type loadedTextTermDictionary struct {
 	readers   map[int64][]*textindex.FstReader
 	cacheDir  string
@@ -50,6 +55,7 @@ func (d *loadedTextTermDictionary) close() {
 
 type segmentTextTermDictionary struct {
 	mu            sync.RWMutex
+	statsMu       sync.Mutex
 	nativeSegment unsafe.Pointer
 	loaded        *loadedTextTermDictionary
 	termCount     int64
@@ -66,8 +72,8 @@ func (d *segmentTextTermDictionary) add(batches []*msgpb.TextTermBatch) error {
 	if d == nil || len(batches) == 0 {
 		return nil
 	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	d.mu.RLock()
+	defer d.mu.RUnlock()
 	for _, batch := range batches {
 		if batch == nil {
 			continue
@@ -77,18 +83,18 @@ func (d *segmentTextTermDictionary) add(batches []*msgpb.TextTermBatch) error {
 			batch.GetInputFieldId(),
 			batch.GetTerms(),
 		)
+		d.statsMu.Lock()
+		if stats.TermCount >= d.termCount && stats.MemorySize >= d.memorySize {
+			d.termCount = stats.TermCount
+			d.memorySize = stats.MemorySize
+		}
+		d.statsMu.Unlock()
 		if err != nil {
 			// Native insertion can make partial monotonic progress before an
 			// allocation failure. Preserve any usable post-failure accounting;
 			// validation failures return zero values and leave the prior totals.
-			if stats.TermCount >= d.termCount && stats.MemorySize >= d.memorySize {
-				d.termCount = stats.TermCount
-				d.memorySize = stats.MemorySize
-			}
 			return err
 		}
-		d.termCount = stats.TermCount
-		d.memorySize = stats.MemorySize
 	}
 	return nil
 }
@@ -155,11 +161,100 @@ func (d *segmentTextTermDictionary) memoryBytes() int64 {
 	}
 	d.mu.RLock()
 	defer d.mu.RUnlock()
+	d.statsMu.Lock()
+	defer d.statsMu.Unlock()
 	result := d.memorySize
 	if d.loaded != nil {
 		result += d.loaded.heapBytes
 	}
 	return result
+}
+
+func (d *segmentTextTermDictionary) expand(
+	fieldID int64,
+	sourceTerms [][]byte,
+	maxEditDistance, maxExpansions, prefixLength uint32,
+) ([][]TextTermMatch, error) {
+	result, _, err := d.expandWithinBudget(
+		fieldID, sourceTerms, maxEditDistance, maxExpansions, prefixLength, ^uint64(0))
+	return result, err
+}
+
+func (d *segmentTextTermDictionary) expandWithinBudget(
+	fieldID int64,
+	sourceTerms [][]byte,
+	maxEditDistance, maxExpansions, prefixLength uint32,
+	workBudget uint64,
+) ([][]TextTermMatch, uint64, error) {
+	if d == nil {
+		return make([][]TextTermMatch, len(sourceTerms)), 0, nil
+	}
+	prepared, preparationWork, err := textindex.PrepareFuzzySearchTerms(
+		sourceTerms, maxEditDistance, prefixLength, workBudget)
+	if err != nil {
+		return nil, preparationWork, err
+	}
+	defer func() {
+		for _, query := range prepared {
+			query.Close()
+		}
+	}()
+	if preparationWork > workBudget {
+		return nil, preparationWork, merr.WrapErrServiceInternalMsg(
+			"fuzzy query preparation exceeded its work budget")
+	}
+	result, searchWork, err := d.expandPreparedWithinBudget(
+		fieldID, prepared, maxExpansions, workBudget-preparationWork)
+	return result, preparationWork + searchWork, err
+}
+
+func (d *segmentTextTermDictionary) expandPreparedWithinBudget(
+	fieldID int64,
+	prepared []*textindex.PreparedFuzzySearch,
+	maxExpansions uint32,
+	workBudget uint64,
+) ([][]TextTermMatch, uint64, error) {
+	if d == nil {
+		return make([][]TextTermMatch, len(prepared)), 0, nil
+	}
+	if maxExpansions == 0 {
+		return nil, 0, merr.WrapErrServiceInternalMsg("fuzzy max expansions must be positive")
+	}
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	var readers []*textindex.FstReader
+	if d.loaded != nil {
+		readers = d.loaded.readers[fieldID]
+	}
+	remainingWork := workBudget
+	result := make([][]TextTermMatch, len(prepared))
+	for sourceIndex, query := range prepared {
+		matches, work, err := textindex.FuzzySearchSegmentTextTermsPreparedWithinBudget(
+			d.nativeSegment,
+			fieldID,
+			readers,
+			query,
+			maxExpansions,
+			remainingWork,
+		)
+		if work > remainingWork {
+			return nil, workBudget - remainingWork, merr.WrapErrServiceInternalMsg(
+				"native fuzzy expansion exceeded its work budget")
+		}
+		remainingWork -= work
+		if err != nil {
+			return nil, workBudget - remainingWork, err
+		}
+		result[sourceIndex] = make([]TextTermMatch, 0, len(matches))
+		for _, match := range matches {
+			result[sourceIndex] = append(result[sourceIndex], TextTermMatch{
+				Term:         match.Term,
+				EditDistance: match.EditDistance,
+			})
+		}
+	}
+	return result, workBudget - remainingWork, nil
 }
 
 func (d *segmentTextTermDictionary) close() {

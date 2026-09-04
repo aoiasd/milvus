@@ -10,6 +10,7 @@
 #include <fstream>
 #include <limits>
 #include <optional>
+#include <queue>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -29,12 +30,25 @@ constexpr std::size_t kTransitionIndexThreshold = 32;
 constexpr std::size_t kTrailerBytes = 20;
 constexpr std::size_t kRootAddressOffset = kTrailerBytes + 1;
 constexpr std::string_view kArtifactSuffix = ".burntsushi_fst_cpp";
+
+bool
+ConsumeWork(std::size_t amount,
+            std::size_t work_budget,
+            std::size_t& work_used) {
+    if (work_used > work_budget || amount > work_budget - work_used) {
+        work_used = work_budget;
+        return false;
+    }
+    work_used += amount;
+    return true;
+}
+
 constexpr std::array<std::uint8_t, 63> kCommonInputs = {
-    't', 'e', '/', 'o', 'a', 's', 'r', 'i', 'p', 'c', 'n', 'w', '.', 'h',
-    'l', 'm', '-', 'd', 'u', '0', '1', '2', 'g', '=', ':', 'b', 'f', '3',
-    'y', '5', '&', '_', '4', 'v', '9', '6', '7', '8', 'k', '%', '?', 'x',
-    'C', 'D', 'A', 'S', 'F', 'I', 'B', 'E', 'j', 'P', 'T', 'z', 'R', 'N',
-    'M', '+', 'L', 'O', 'q', 'H', 'G',
+    't', 'e', '/', 'o', 'a', 's', 'r', 'i', 'p', 'c', 'n', 'w', '.',
+    'h', 'l', 'm', '-', 'd', 'u', '0', '1', '2', 'g', '=', ':', 'b',
+    'f', '3', 'y', '5', '&', '_', '4', 'v', '9', '6', '7', '8', 'k',
+    '%', '?', 'x', 'C', 'D', 'A', 'S', 'F', 'I', 'B', 'E', 'j', 'P',
+    'T', 'z', 'R', 'N', 'M', '+', 'L', 'O', 'q', 'H', 'G',
 };
 
 constexpr auto kCommonInputIndexes = [] {
@@ -91,7 +105,8 @@ ReadU32(std::span<const std::uint8_t> data, std::size_t offset) {
     }
     std::uint32_t value = 0;
     for (std::size_t shift = 0; shift < 4; ++shift) {
-        value |= static_cast<std::uint32_t>(data[offset + shift]) << (shift * 8);
+        value |= static_cast<std::uint32_t>(data[offset + shift])
+                 << (shift * 8);
     }
     return value;
 }
@@ -103,7 +118,8 @@ ReadU64(std::span<const std::uint8_t> data, std::size_t offset) {
     }
     std::uint64_t value = 0;
     for (std::size_t shift = 0; shift < 8; ++shift) {
-        value |= static_cast<std::uint64_t>(data[offset + shift]) << (shift * 8);
+        value |= static_cast<std::uint64_t>(data[offset + shift])
+                 << (shift * 8);
     }
     return value;
 }
@@ -147,7 +163,8 @@ UnpackUInt(std::span<const std::uint8_t> data,
     }
     std::uint64_t value = 0;
     for (std::size_t index = 0; index < bytes; ++index) {
-        value |= static_cast<std::uint64_t>(data[offset + index]) << (index * 8);
+        value |= static_cast<std::uint64_t>(data[offset + index])
+                 << (index * 8);
     }
     return value;
 }
@@ -160,18 +177,12 @@ Crc32c(const std::uint8_t* bytes, std::size_t length) {
                (static_cast<std::uint32_t>(bytes[1]) << 8) |
                (static_cast<std::uint32_t>(bytes[2]) << 16) |
                (static_cast<std::uint32_t>(bytes[3]) << 24);
-        crc = kCrc32cTable16[0][bytes[15]] ^
-              kCrc32cTable16[1][bytes[14]] ^
-              kCrc32cTable16[2][bytes[13]] ^
-              kCrc32cTable16[3][bytes[12]] ^
-              kCrc32cTable16[4][bytes[11]] ^
-              kCrc32cTable16[5][bytes[10]] ^
-              kCrc32cTable16[6][bytes[9]] ^
-              kCrc32cTable16[7][bytes[8]] ^
-              kCrc32cTable16[8][bytes[7]] ^
-              kCrc32cTable16[9][bytes[6]] ^
-              kCrc32cTable16[10][bytes[5]] ^
-              kCrc32cTable16[11][bytes[4]] ^
+        crc = kCrc32cTable16[0][bytes[15]] ^ kCrc32cTable16[1][bytes[14]] ^
+              kCrc32cTable16[2][bytes[13]] ^ kCrc32cTable16[3][bytes[12]] ^
+              kCrc32cTable16[4][bytes[11]] ^ kCrc32cTable16[5][bytes[10]] ^
+              kCrc32cTable16[6][bytes[9]] ^ kCrc32cTable16[7][bytes[8]] ^
+              kCrc32cTable16[8][bytes[7]] ^ kCrc32cTable16[9][bytes[6]] ^
+              kCrc32cTable16[10][bytes[5]] ^ kCrc32cTable16[11][bytes[4]] ^
               kCrc32cTable16[12][(crc >> 24) & 0xFFU] ^
               kCrc32cTable16[13][(crc >> 16) & 0xFFU] ^
               kCrc32cTable16[14][(crc >> 8) & 0xFFU] ^
@@ -212,7 +223,8 @@ struct Transition {
     Output output = 0;
     Address address = kNoneAddress;
 
-    bool operator==(const Transition&) const = default;
+    bool
+    operator==(const Transition&) const = default;
 };
 
 struct BuilderNode {
@@ -220,7 +232,8 @@ struct BuilderNode {
     Output final_output = 0;
     std::vector<Transition> transitions;
 
-    bool operator==(const BuilderNode&) const = default;
+    bool
+    operator==(const BuilderNode&) const = default;
 };
 
 struct LastTransition {
@@ -232,7 +245,8 @@ struct UnfinishedNode {
     BuilderNode node;
     std::optional<LastTransition> last;
 
-    void LastCompiled(Address address) {
+    void
+    LastCompiled(Address address) {
         if (last.has_value()) {
             node.transitions.push_back(
                 Transition{last->input, last->output, address});
@@ -240,7 +254,8 @@ struct UnfinishedNode {
         }
     }
 
-    void AddOutputPrefix(Output prefix) {
+    void
+    AddOutputPrefix(Output prefix) {
         if (node.is_final) {
             node.final_output += prefix;
         }
@@ -259,9 +274,13 @@ class UnfinishedNodes {
         stack_.push_back(UnfinishedNode{});
     }
 
-    std::size_t Size() const { return stack_.size(); }
+    std::size_t
+    Size() const {
+        return stack_.size();
+    }
 
-    BuilderNode PopRoot() {
+    BuilderNode
+    PopRoot() {
         if (stack_.size() != 1 || stack_.front().last.has_value()) {
             throw std::logic_error("invalid unfinished BurntSushi FST root");
         }
@@ -270,14 +289,16 @@ class UnfinishedNodes {
         return root;
     }
 
-    BuilderNode PopFreeze(Address address) {
+    BuilderNode
+    PopFreeze(Address address) {
         auto unfinished = std::move(stack_.back());
         stack_.pop_back();
         unfinished.LastCompiled(address);
         return std::move(unfinished.node);
     }
 
-    BuilderNode PopEmpty() {
+    BuilderNode
+    PopEmpty() {
         auto unfinished = std::move(stack_.back());
         stack_.pop_back();
         if (unfinished.last.has_value()) {
@@ -286,26 +307,28 @@ class UnfinishedNodes {
         return std::move(unfinished.node);
     }
 
-    void TopLastFreeze(Address address) {
+    void
+    TopLastFreeze(Address address) {
         if (stack_.empty()) {
             throw std::logic_error("missing unfinished FST node");
         }
         stack_.back().LastCompiled(address);
     }
 
-    void SetRootOutput(Output output) {
+    void
+    SetRootOutput(Output output) {
         stack_.front().node.is_final = true;
         stack_.front().node.final_output = output;
     }
 
-    std::pair<std::size_t, Output> FindCommonPrefixAndSetOutput(
-        std::string_view term,
-        Output output) {
+    std::pair<std::size_t, Output>
+    FindCommonPrefixAndSetOutput(std::string_view term, Output output) {
         std::size_t index = 0;
         while (index < term.size()) {
             auto& unfinished = stack_.at(index);
             if (!unfinished.last.has_value() ||
-                unfinished.last->input != static_cast<std::uint8_t>(term[index])) {
+                unfinished.last->input !=
+                    static_cast<std::uint8_t>(term[index])) {
                 break;
             }
             ++index;
@@ -321,19 +344,21 @@ class UnfinishedNodes {
         return {index, output};
     }
 
-    void AddSuffix(std::string_view suffix, Output output) {
+    void
+    AddSuffix(std::string_view suffix, Output output) {
         if (suffix.empty()) {
             return;
         }
         if (stack_.back().last.has_value()) {
-            throw std::logic_error("unfinished FST node already has a last transition");
+            throw std::logic_error(
+                "unfinished FST node already has a last transition");
         }
-        stack_.back().last = LastTransition{
-            static_cast<std::uint8_t>(suffix.front()), output};
+        stack_.back().last =
+            LastTransition{static_cast<std::uint8_t>(suffix.front()), output};
         for (std::size_t index = 1; index < suffix.size(); ++index) {
             UnfinishedNode node;
-            node.last = LastTransition{
-                static_cast<std::uint8_t>(suffix[index]), 0};
+            node.last =
+                LastTransition{static_cast<std::uint8_t>(suffix[index]), 0};
             stack_.push_back(std::move(node));
         }
         UnfinishedNode final;
@@ -357,9 +382,11 @@ struct RegistryResult {
 
 class Registry {
  public:
-    Registry() : cells_(10'000 * 2) {}
+    Registry() : cells_(10'000 * 2) {
+    }
 
-    RegistryResult Entry(const BuilderNode& node) {
+    RegistryResult
+    Entry(const BuilderNode& node) {
         const auto bucket = Hash(node) % 10'000;
         auto& first = cells_[bucket * 2];
         auto& second = cells_[bucket * 2 + 1];
@@ -377,7 +404,8 @@ class Registry {
     }
 
  private:
-    static std::uint64_t Hash(const BuilderNode& node) {
+    static std::uint64_t
+    Hash(const BuilderNode& node) {
         constexpr std::uint64_t kFnvOffset = 14695981039346656037ULL;
         constexpr std::uint64_t kFnvPrime = 1099511628211ULL;
         std::uint64_t hash = kFnvOffset;
@@ -417,8 +445,7 @@ PackDeltaIn(std::vector<std::uint8_t>& data,
 }
 
 void
-CompileOneTransitionNext(std::vector<std::uint8_t>& data,
-                         std::uint8_t input) {
+CompileOneTransitionNext(std::vector<std::uint8_t>& data, std::uint8_t input) {
     const auto common = CommonIndex(input);
     if (common == 0) {
         data.push_back(input);
@@ -430,12 +457,13 @@ void
 CompileOneTransition(std::vector<std::uint8_t>& data,
                      Address node_address,
                      const Transition& transition) {
-    const auto output_size = transition.output == 0
-                                 ? 0
-                                 : PackUInt(data, transition.output);
-    const auto transition_size = PackDeltaSize(node_address, transition.address);
+    const auto output_size =
+        transition.output == 0 ? 0 : PackUInt(data, transition.output);
+    const auto transition_size =
+        PackDeltaSize(node_address, transition.address);
     PackDeltaIn(data, node_address, transition.address, transition_size);
-    data.push_back(static_cast<std::uint8_t>((transition_size << 4) | output_size));
+    data.push_back(
+        static_cast<std::uint8_t>((transition_size << 4) | output_size));
     const auto common = CommonIndex(transition.input);
     if (common == 0) {
         data.push_back(transition.input);
@@ -448,7 +476,8 @@ CompileAnyTransition(std::vector<std::uint8_t>& data,
                      Address node_address,
                      const BuilderNode& node) {
     if (node.transitions.size() > 256) {
-        throw std::logic_error("BurntSushi FST node has more than 256 transitions");
+        throw std::logic_error(
+            "BurntSushi FST node has more than 256 transitions");
     }
     std::uint8_t transition_size = 0;
     std::uint8_t output_size = PackSize(node.final_output);
@@ -467,16 +496,19 @@ CompileAnyTransition(std::vector<std::uint8_t>& data,
             PackUIntIn(data, node.final_output, output_size);
         }
         for (auto transition = node.transitions.rbegin();
-             transition != node.transitions.rend(); ++transition) {
+             transition != node.transitions.rend();
+             ++transition) {
             PackUIntIn(data, transition->output, output_size);
         }
     }
     for (auto transition = node.transitions.rbegin();
-         transition != node.transitions.rend(); ++transition) {
+         transition != node.transitions.rend();
+         ++transition) {
         PackDeltaIn(data, node_address, transition->address, transition_size);
     }
     for (auto transition = node.transitions.rbegin();
-         transition != node.transitions.rend(); ++transition) {
+         transition != node.transitions.rend();
+         ++transition) {
         data.push_back(transition->input);
     }
     if (node.transitions.size() > kTransitionIndexThreshold) {
@@ -487,12 +519,15 @@ CompileAnyTransition(std::vector<std::uint8_t>& data,
         }
         data.insert(data.end(), index.begin(), index.end());
     }
-    data.push_back(static_cast<std::uint8_t>((transition_size << 4) | output_size));
-    const bool external_count = node.transitions.empty() || node.transitions.size() > 63;
+    data.push_back(
+        static_cast<std::uint8_t>((transition_size << 4) | output_size));
+    const bool external_count =
+        node.transitions.empty() || node.transitions.size() > 63;
     if (external_count) {
-        data.push_back(node.transitions.size() == 256
-                           ? 1
-                           : static_cast<std::uint8_t>(node.transitions.size()));
+        data.push_back(
+            node.transitions.size() == 256
+                ? 1
+                : static_cast<std::uint8_t>(node.transitions.size()));
     }
     auto state = static_cast<std::uint8_t>(node.is_final ? 0x40U : 0U);
     if (!external_count) {
@@ -508,7 +543,8 @@ class Builder {
         WriteU64(data_, kFstType);
     }
 
-    void Insert(std::string_view term, Output output) {
+    void
+    Insert(std::string_view term, Output output) {
         if (last_.has_value() && term == *last_) {
             throw std::invalid_argument("duplicate term: " + std::string(term));
         }
@@ -524,14 +560,16 @@ class Builder {
         auto [prefix_length, remaining_output] =
             unfinished_.FindCommonPrefixAndSetOutput(term, output);
         if (prefix_length == term.size()) {
-            throw std::logic_error("duplicate output term passed FST validation");
+            throw std::logic_error(
+                "duplicate output term passed FST validation");
         }
         ++length_;
         CompileFrom(prefix_length);
         unfinished_.AddSuffix(term.substr(prefix_length), remaining_output);
     }
 
-    std::vector<std::uint8_t> Finish() {
+    std::vector<std::uint8_t>
+    Finish() {
         CompileFrom(0);
         auto root = unfinished_.PopRoot();
         const auto root_address = Compile(root);
@@ -543,7 +581,8 @@ class Builder {
     }
 
  private:
-    void CompileFrom(std::size_t state) {
+    void
+    CompileFrom(std::size_t state) {
         Address address = kNoneAddress;
         while (state + 1 < unfinished_.Size()) {
             auto node = address == kNoneAddress
@@ -554,8 +593,10 @@ class Builder {
         unfinished_.TopLastFreeze(address);
     }
 
-    Address Compile(const BuilderNode& node) {
-        if (node.is_final && node.transitions.empty() && node.final_output == 0) {
+    Address
+    Compile(const BuilderNode& node) {
+        if (node.is_final && node.transitions.empty() &&
+            node.final_output == 0) {
             return kEmptyAddress;
         }
         auto registry = registry_.Entry(node);
@@ -603,7 +644,8 @@ ReadMetadata(std::span<const std::uint8_t> data) {
     const auto length = ReadU64(data, checksum_offset - 16);
     if (root > std::numeric_limits<Address>::max() ||
         length > std::numeric_limits<std::size_t>::max()) {
-        throw std::runtime_error("BurntSushi FST metadata overflows this platform");
+        throw std::runtime_error(
+            "BurntSushi FST metadata overflows this platform");
     }
     const auto root_address = static_cast<Address>(root);
     if (root_address != kEmptyAddress &&
@@ -638,12 +680,14 @@ struct NodeView {
     std::size_t count_size = 0;
     Output final_output = 0;
 
-    static NodeView Read(std::span<const std::uint8_t> bytes, Address address) {
+    static NodeView
+    Read(std::span<const std::uint8_t> bytes, Address address) {
         if (address == kEmptyAddress) {
             return NodeView{.data = bytes};
         }
         if (address >= bytes.size() - kTrailerBytes) {
-            throw std::runtime_error("BurntSushi FST node address is out of range");
+            throw std::runtime_error(
+                "BurntSushi FST node address is out of range");
         }
         NodeView node;
         node.data = bytes;
@@ -672,8 +716,8 @@ struct NodeView {
             const auto sizes = bytes[address - node.input_size - 1];
             node.transition_size = sizes >> 4;
             node.output_size = sizes & 0x0FU;
-            const auto body = node.input_size + 1 + node.transition_size +
-                              node.output_size;
+            const auto body =
+                node.input_size + 1 + node.transition_size + node.output_size;
             if (node.transition_size == 0 || node.transition_size > 8 ||
                 node.output_size > 8 || address < body) {
                 throw std::runtime_error("invalid BurntSushi OT packed sizes");
@@ -698,16 +742,18 @@ struct NodeView {
         const auto sizes = bytes[address - node.count_size - 1];
         node.transition_size = sizes >> 4;
         node.output_size = sizes & 0x0FU;
-        const auto index_size = node.transition_count > kTransitionIndexThreshold
-                                    ? 256
-                                    : 0;
-        const auto transition_body = index_size + node.transition_count +
-                                     node.transition_count * node.transition_size;
+        const auto index_size =
+            node.transition_count > kTransitionIndexThreshold ? 256 : 0;
+        const auto transition_body =
+            index_size + node.transition_count +
+            node.transition_count * node.transition_size;
         const auto output_body = node.transition_count * node.output_size +
                                  (node.is_final ? node.output_size : 0);
         const auto body = node.count_size + 1 + transition_body + output_body;
-        if (node.transition_size > 8 || node.output_size > 8 || address < body) {
-            throw std::runtime_error("invalid BurntSushi AnyTrans packed sizes");
+        if (node.transition_size > 8 || node.output_size > 8 ||
+            address < body) {
+            throw std::runtime_error(
+                "invalid BurntSushi AnyTrans packed sizes");
         }
         node.end = address - body;
         if (node.is_final && node.output_size != 0) {
@@ -716,7 +762,8 @@ struct NodeView {
         return node;
     }
 
-    std::uint8_t Input(std::size_t index) const {
+    std::uint8_t
+    Input(std::size_t index) const {
         if (index >= transition_count || kind == NodeKind::kEmptyFinal) {
             throw std::out_of_range("BurntSushi FST transition index");
         }
@@ -726,16 +773,19 @@ struct NodeView {
             const auto common = CommonInput(bytes[address] & 0x3FU);
             return common.has_value() ? *common : bytes[address - 1];
         }
-        const auto index_size = transition_count > kTransitionIndexThreshold ? 256 : 0;
+        const auto index_size =
+            transition_count > kTransitionIndexThreshold ? 256 : 0;
         return bytes[address - count_size - 1 - index_size - index - 1];
     }
 
-    std::optional<std::size_t> FindInput(std::uint8_t input) const {
+    std::optional<std::size_t>
+    FindInput(std::uint8_t input) const {
         if (kind == NodeKind::kEmptyFinal) {
             return std::nullopt;
         }
         if (kind != NodeKind::kAny) {
-            return Input(0) == input ? std::optional<std::size_t>(0) : std::nullopt;
+            return Input(0) == input ? std::optional<std::size_t>(0)
+                                     : std::nullopt;
         }
         const auto bytes = data;
         if (transition_count > kTransitionIndexThreshold) {
@@ -753,7 +803,8 @@ struct NodeView {
         return std::nullopt;
     }
 
-    Address TransitionAddress(std::size_t index) const {
+    Address
+    TransitionAddress(std::size_t index) const {
         if (index >= transition_count || kind == NodeKind::kEmptyFinal) {
             throw std::out_of_range("BurntSushi FST transition index");
         }
@@ -768,7 +819,8 @@ struct NodeView {
         if (kind == NodeKind::kOneTransition) {
             offset = address - input_size - 1 - transition_size;
         } else {
-            const auto index_size = transition_count > kTransitionIndexThreshold ? 256 : 0;
+            const auto index_size =
+                transition_count > kTransitionIndexThreshold ? 256 : 0;
             offset = address - count_size - 1 - index_size - transition_count -
                      index * transition_size - transition_size;
         }
@@ -782,7 +834,8 @@ struct NodeView {
         return end - static_cast<Address>(delta);
     }
 
-    Output TransitionOutput(std::size_t index) const {
+    Output
+    TransitionOutput(std::size_t index) const {
         if (index >= transition_count || output_size == 0 ||
             kind == NodeKind::kOneTransitionNext) {
             return 0;
@@ -792,9 +845,11 @@ struct NodeView {
         if (kind == NodeKind::kOneTransition) {
             offset = address - input_size - 1 - transition_size - output_size;
         } else {
-            const auto index_size = transition_count > kTransitionIndexThreshold ? 256 : 0;
-            const auto total_transition_size = index_size + transition_count +
-                                               transition_count * transition_size;
+            const auto index_size =
+                transition_count > kTransitionIndexThreshold ? 256 : 0;
+            const auto total_transition_size =
+                index_size + transition_count +
+                transition_count * transition_size;
             offset = address - count_size - 1 - total_transition_size -
                      index * output_size - output_size;
         }
@@ -835,11 +890,11 @@ struct NodeView {
                     throw std::runtime_error(
                         "invalid BurntSushi FST transition delta");
                 }
-                const auto output = output_size == 0
-                                        ? 0
-                                        : UnpackUInt(bytes,
-                                                     address_offset - output_size,
-                                                     output_size);
+                const auto output =
+                    output_size == 0
+                        ? 0
+                        : UnpackUInt(
+                              bytes, address_offset - output_size, output_size);
                 return DecodedTransition{
                     .input = input,
                     .output = output,
@@ -887,6 +942,46 @@ struct NodeView {
     }
 };
 
+struct ExactPrefixState {
+    NodeView node;
+    Output output = 0;
+};
+
+struct ExactPrefixSearchResult {
+    std::optional<ExactPrefixState> state;
+    std::size_t visited_arcs = 0;
+    bool work_limit_exceeded = false;
+};
+
+ExactPrefixSearchResult
+FollowExactPrefix(std::span<const std::uint8_t> data,
+                  Address root_address,
+                  std::string_view prefix,
+                  std::size_t work_budget) {
+    ExactPrefixSearchResult result;
+    auto node = NodeView::Read(data, root_address);
+    Output output = 0;
+    for (const unsigned char byte : prefix) {
+        if (result.visited_arcs >= work_budget) {
+            result.work_limit_exceeded = true;
+            return result;
+        }
+        ++result.visited_arcs;
+        const auto index = node.FindInput(byte);
+        if (!index.has_value()) {
+            return result;
+        }
+        const auto transition = node.FullTransition(*index);
+        output += transition.output;
+        node = NodeView::Read(data, transition.address);
+    }
+    result.state = ExactPrefixState{
+        .node = node,
+        .output = output,
+    };
+    return result;
+}
+
 std::uint32_t
 CheckedOutput(Output output) {
     if (output > std::numeric_limits<std::uint32_t>::max()) {
@@ -895,12 +990,66 @@ CheckedOutput(Output output) {
     return static_cast<std::uint32_t>(output);
 }
 
+struct FuzzyMatchBetter {
+    bool
+    operator()(const FuzzyMatch& left, const FuzzyMatch& right) const {
+        if (left.edit_distance != right.edit_distance) {
+            return left.edit_distance < right.edit_distance;
+        }
+        return left.term < right.term;
+    }
+};
+
+class BoundedFuzzyMatches {
+ public:
+    explicit BoundedFuzzyMatches(std::size_t limit) : limit_(limit) {
+    }
+
+    void
+    Add(FuzzyMatch match) {
+        if (matches_.size() < limit_) {
+            matches_.push(std::move(match));
+            return;
+        }
+        if (FuzzyMatchBetter{}(match, matches_.top())) {
+            matches_.pop();
+            matches_.push(std::move(match));
+        }
+    }
+
+    std::vector<FuzzyMatch>
+    Take() {
+        std::vector<FuzzyMatch> result;
+        result.reserve(matches_.size());
+        while (!matches_.empty()) {
+            result.push_back(matches_.top());
+            matches_.pop();
+        }
+        std::sort(result.begin(), result.end(), FuzzyMatchBetter{});
+        return result;
+    }
+
+ private:
+    std::size_t limit_;
+    std::priority_queue<FuzzyMatch, std::vector<FuzzyMatch>, FuzzyMatchBetter>
+        matches_;
+};
+
 FuzzySearchResult
 IntersectLevenshteinDfa(std::span<const std::uint8_t> data,
-                        Address root_address,
-                        const LevenshteinDfa& dfa) {
+                        const ExactPrefixState& start,
+                        std::string_view exact_prefix,
+                        const LevenshteinDfa& dfa,
+                        std::size_t max_expansions,
+                        std::size_t work_budget) {
     FuzzySearchResult result;
-    std::string term;
+    BoundedFuzzyMatches matches(max_expansions);
+    if (!ConsumeWork(
+            exact_prefix.size(), work_budget, result.visited_arcs)) {
+        result.work_limit_exceeded = true;
+        return result;
+    }
+    std::string term(exact_prefix);
     struct Frame {
         NodeView node;
         Output output = 0;
@@ -910,7 +1059,8 @@ IntersectLevenshteinDfa(std::span<const std::uint8_t> data,
     };
     std::vector<Frame> stack;
     stack.push_back(Frame{
-        .node = NodeView::Read(data, root_address),
+        .node = start.node,
+        .output = start.output,
         .dfa_state = dfa.InitialState(),
     });
     while (!stack.empty()) {
@@ -922,7 +1072,12 @@ IntersectLevenshteinDfa(std::span<const std::uint8_t> data,
                 ++result.visited_terms;
             }
             if (frame.node.is_final && dfa.IsMatch(frame.dfa_state)) {
-                result.matches.push_back(FuzzyMatch{
+                if (!ConsumeWork(
+                        term.size(), work_budget, result.visited_arcs)) {
+                    result.work_limit_exceeded = true;
+                    return result;
+                }
+                matches.Add(FuzzyMatch{
                     term,
                     CheckedOutput(frame.output + frame.node.final_output),
                     dfa.Distance(frame.dfa_state),
@@ -938,7 +1093,10 @@ IntersectLevenshteinDfa(std::span<const std::uint8_t> data,
         }
         const auto index = frame.next_transition++;
         {
-            ++result.visited_arcs;
+            if (!ConsumeWork(1, work_budget, result.visited_arcs)) {
+                result.work_limit_exceeded = true;
+                return result;
+            }
             const auto input = frame.node.Input(index);
             const auto next_dfa_state = dfa.Transition(frame.dfa_state, input);
 
@@ -951,12 +1109,14 @@ IntersectLevenshteinDfa(std::span<const std::uint8_t> data,
 
             term.push_back(static_cast<char>(input));
             stack.push_back(Frame{
-                .node = NodeView::Read(data, frame.node.TransitionAddress(index)),
+                .node =
+                    NodeView::Read(data, frame.node.TransitionAddress(index)),
                 .output = frame.output + frame.node.TransitionOutput(index),
                 .dfa_state = next_dfa_state,
             });
         }
     }
+    result.matches = matches.Take();
     return result;
 }
 
@@ -966,7 +1126,8 @@ class StreamBound {
 
     StreamBound() = default;
 
-    [[nodiscard]] bool ExceededBy(std::string_view input) const {
+    [[nodiscard]] bool
+    ExceededBy(std::string_view input) const {
         switch (kind_) {
             case Kind::kIncluded:
                 return input > value_;
@@ -978,11 +1139,13 @@ class StreamBound {
         throw std::logic_error("unreachable BurntSushi stream bound");
     }
 
-    [[nodiscard]] bool IsEmpty() const {
+    [[nodiscard]] bool
+    IsEmpty() const {
         return kind_ == Kind::kUnbounded || value_.empty();
     }
 
-    [[nodiscard]] bool IsInclusive() const {
+    [[nodiscard]] bool
+    IsInclusive() const {
         return kind_ != Kind::kExcluded;
     }
 
@@ -1000,17 +1163,26 @@ class RustGenericAlignedStream {
  public:
     RustGenericAlignedStream(std::span<const std::uint8_t> data,
                              Address root_address,
-                             LevenshteinDfa dfa)
-        : data_(data), root_address_(root_address), dfa_(std::move(dfa)) {
+                             Output root_output,
+                             std::string_view exact_prefix,
+                             const LevenshteinDfa& dfa,
+                             std::size_t work_budget)
+        : data_(data),
+          root_address_(root_address),
+          root_output_(root_output),
+          dfa_(dfa),
+          input_(exact_prefix),
+          work_budget_(work_budget) {
         input_.reserve(16);
         SeekMin();
     }
 
-    [[nodiscard]] std::optional<StreamMatch> Next() {
+    [[nodiscard]] std::optional<StreamMatch>
+    Next() {
         if (empty_output_.has_value()) {
             const auto output = *empty_output_;
             empty_output_.reset();
-            if (end_at_.ExceededBy({})) {
+            if (end_at_.ExceededBy(input_)) {
                 stack_.clear();
                 return std::nullopt;
             }
@@ -1031,6 +1203,10 @@ class RustGenericAlignedStream {
                     input_.pop_back();
                 }
                 continue;
+            }
+
+            if (!ConsumeWork(1)) {
+                return std::nullopt;
             }
 
             // Match upstream fst::raw::StreamWithState ordering: decode the
@@ -1075,6 +1251,42 @@ class RustGenericAlignedStream {
         return std::nullopt;
     }
 
+    [[nodiscard]] std::size_t
+    VisitedArcs() const {
+        return visited_arcs_;
+    }
+
+    [[nodiscard]] bool
+    WorkLimitExceeded() const {
+        return work_limit_exceeded_;
+    }
+
+    [[nodiscard]] bool
+    ConsumeWork(std::size_t amount) {
+        if (visited_arcs_ > work_budget_ ||
+            amount > work_budget_ - visited_arcs_) {
+            visited_arcs_ = work_budget_;
+            work_limit_exceeded_ = true;
+            stack_.clear();
+            return false;
+        }
+        visited_arcs_ += amount;
+        return true;
+    }
+
+    [[nodiscard]] bool
+    ConsumeWorkProduct(std::size_t left, std::size_t right) {
+        if (visited_arcs_ > work_budget_ ||
+            (left != 0 &&
+             right > (work_budget_ - visited_arcs_) / left)) {
+            visited_arcs_ = work_budget_;
+            work_limit_exceeded_ = true;
+            stack_.clear();
+            return false;
+        }
+        return ConsumeWork(left * right);
+    }
+
  private:
     struct StreamState {
         NodeView node;
@@ -1083,55 +1295,89 @@ class RustGenericAlignedStream {
         std::uint32_t dfa_state = 0;
     };
 
-    void SeekMin() {
+    void
+    SeekMin() {
         if (!min_at_.IsEmpty()) {
             throw std::logic_error(
                 "bounded BurntSushi stream initialization is not exposed");
         }
         const auto root = NodeView::Read(data_, root_address_);
         if (min_at_.IsInclusive() && root.is_final) {
-            empty_output_ = root.final_output;
+            empty_output_ = root_output_ + root.final_output;
         }
         stack_.push_back(StreamState{
             .node = root,
+            .output = root_output_,
             .dfa_state = dfa_.InitialState(),
         });
     }
 
     std::span<const std::uint8_t> data_;
     Address root_address_ = kEmptyAddress;
-    LevenshteinDfa dfa_;
+    Output root_output_ = 0;
+    const LevenshteinDfa& dfa_;
     std::string input_;
     std::optional<Output> empty_output_;
     std::vector<StreamState> stack_;
     StreamBound min_at_;
     StreamBound end_at_;
+    std::size_t work_budget_ = 0;
+    std::size_t visited_arcs_ = 0;
+    bool work_limit_exceeded_ = false;
 };
 
 FuzzySearchResult
 IntersectRustGenericAligned(std::span<const std::uint8_t> data,
-                            Address root_address,
-                            LevenshteinDfa dfa,
-                            std::string_view query,
+                            const ExactPrefixState& start,
+                            std::string_view exact_prefix,
+                            const LevenshteinDfa& dfa,
+                            std::string_view query_suffix,
                             std::uint32_t max_edit_distance,
-                            EditDistanceMode edit_distance_mode) {
+                            EditDistanceMode edit_distance_mode,
+                            std::size_t max_expansions,
+                            std::size_t work_budget) {
     FuzzySearchResult result;
-    RustGenericAlignedStream stream(data, root_address, std::move(dfa));
+    BoundedFuzzyMatches matches(max_expansions);
+    if (!ConsumeWork(
+            exact_prefix.size(), work_budget, result.visited_arcs)) {
+        result.work_limit_exceeded = true;
+        return result;
+    }
+    RustGenericAlignedStream stream(data,
+                                    start.node.address,
+                                    start.output,
+                                    exact_prefix,
+                                    dfa,
+                                    work_budget - result.visited_arcs);
     while (const auto match = stream.Next()) {
+        const auto term_suffix = match->term.substr(exact_prefix.size());
+        if (!stream.ConsumeWork(query_suffix.size()) ||
+            !stream.ConsumeWork(term_suffix.size()) ||
+            !stream.ConsumeWorkProduct(query_suffix.size(),
+                                       term_suffix.size()) ||
+            !stream.ConsumeWork(match->term.size())) {
+            break;
+        }
         const auto distance =
             edit_distance_mode == EditDistanceMode::kDamerauLevenshteinOsa
-                ? DamerauLevenshteinOsa(query, match->term)
-                : LevenshteinDistance(query, match->term);
+                ? DamerauLevenshteinOsa(query_suffix, term_suffix)
+                : LevenshteinDistance(query_suffix, term_suffix);
         if (distance > max_edit_distance) {
             throw std::logic_error(
                 "Rust-aligned stream returned an out-of-range fuzzy term");
         }
-        result.matches.push_back(FuzzyMatch{
+        matches.Add(FuzzyMatch{
             std::string(match->term),
             CheckedOutput(match->output),
             distance,
         });
     }
+    result.visited_arcs += stream.VisitedArcs();
+    if (stream.WorkLimitExceeded()) {
+        result.work_limit_exceeded = true;
+        return result;
+    }
+    result.matches = matches.Take();
     return result;
 }
 
@@ -1180,7 +1426,8 @@ TraverseTermsIterative(std::span<const std::uint8_t> data,
                        Address root_address) {
     DictionaryTraversalResult result;
     VisitTermsIterative(
-        data, root_address,
+        data,
+        root_address,
         [&](std::string_view term, std::uint32_t document_frequency) {
             AddTraversalEntry(result, term, document_frequency);
         });
@@ -1200,8 +1447,7 @@ struct BurntSushiFstCppTermDictionary::Impl {
 };
 
 BurntSushiFstCppTermDictionary::BurntSushiFstCppTermDictionary(
-    FuzzyTraversalMode mode,
-    EditDistanceMode edit_distance_mode)
+    FuzzyTraversalMode mode, EditDistanceMode edit_distance_mode)
     : impl_(std::make_unique<Impl>()) {
     impl_->mode = mode;
     impl_->edit_distance_mode = edit_distance_mode;
@@ -1224,8 +1470,7 @@ BurntSushiFstCppTermDictionary::Name() const {
                    ? "burntsushi-fst-cpp-v3-rust-generic-aligned-damerau-osa"
                    : "burntsushi-fst-cpp-v3-rust-generic-aligned-levenshtein";
     }
-    return impl_->edit_distance_mode ==
-                   EditDistanceMode::kDamerauLevenshteinOsa
+    return impl_->edit_distance_mode == EditDistanceMode::kDamerauLevenshteinOsa
                ? "burntsushi-fst-cpp-v3-specialized-damerau-osa"
                : "burntsushi-fst-cpp-v3-specialized-levenshtein";
 }
@@ -1233,7 +1478,8 @@ BurntSushiFstCppTermDictionary::Name() const {
 void
 BurntSushiFstCppTermDictionary::Build(const std::vector<TermEntry>& entries) {
     std::vector<TermEntry> sorted(entries);
-    std::sort(sorted.begin(), sorted.end(),
+    std::sort(sorted.begin(),
+              sorted.end(),
               [](const TermEntry& left, const TermEntry& right) {
                   return left.first < right.first;
               });
@@ -1251,8 +1497,7 @@ BurntSushiFstCppTermDictionary::Build(const std::vector<TermEntry>& entries) {
 }
 
 void
-BurntSushiFstCppTermDictionary::BuildSorted(
-    const SortedTermReader& reader) {
+BurntSushiFstCppTermDictionary::BuildSorted(const SortedTermReader& reader) {
     Builder builder;
     while (const auto entry = reader()) {
         const auto term = entry->term;
@@ -1298,51 +1543,117 @@ BurntSushiFstCppTermDictionary::Lookup(std::string_view term) const {
 }
 
 FuzzySearchResult
-BurntSushiFstCppTermDictionary::FuzzySearch(
-    std::string_view query,
-    std::uint32_t max_edit_distance,
-    std::size_t max_expansions) const {
+BurntSushiFstCppTermDictionary::FuzzySearch(std::string_view query,
+                                            std::uint32_t max_edit_distance,
+                                            std::size_t max_expansions,
+                                            std::uint32_t prefix_length,
+                                            std::size_t work_budget) const {
     if (max_edit_distance > 2) {
-        throw std::invalid_argument("BurntSushi C++ fuzzy distance must be in [0, 2]");
+        throw std::invalid_argument(
+            "BurntSushi C++ fuzzy distance must be in [0, 2]");
     }
     FuzzySearchResult result;
     if (max_expansions == 0 || impl_->data.empty()) {
         return result;
     }
-    if (max_edit_distance == 0) {
-        ValidateUtf8(query);
-        if (const auto output = Lookup(query); output.has_value()) {
-            result.matches.push_back(
-                FuzzyMatch{std::string(query), *output, 0});
+    const bool transposition_cost_one =
+        impl_->edit_distance_mode == EditDistanceMode::kDamerauLevenshteinOsa;
+    auto prepared = PrepareLevenshteinQuery(query,
+                                            max_edit_distance,
+                                            transposition_cost_one,
+                                            prefix_length,
+                                            work_budget);
+    result.visited_arcs = prepared.work_used;
+    if (prepared.work_limit_exceeded) {
+        result.work_limit_exceeded = true;
+        return result;
+    }
+    auto searched = FuzzySearchPrepared(
+        *prepared.query, max_expansions, work_budget - result.visited_arcs);
+    searched.visited_arcs += result.visited_arcs;
+    return searched;
+}
+
+FuzzySearchResult
+BurntSushiFstCppTermDictionary::FuzzySearchPrepared(
+    const PreparedLevenshteinQuery& query,
+    std::size_t max_expansions,
+    std::size_t work_budget) const {
+    FuzzySearchResult result;
+    if (max_expansions == 0 || impl_->data.empty()) {
+        return result;
+    }
+    if (query.max_distance == 0) {
+        const auto exact = FollowExactPrefix(impl_->data,
+                                             impl_->metadata.root_address,
+                                             query.query,
+                                             work_budget);
+        result.visited_arcs += exact.visited_arcs;
+        if (exact.work_limit_exceeded) {
+            result.work_limit_exceeded = true;
+            return result;
+        }
+        if (exact.state.has_value() && exact.state->node.is_final) {
+            if (!ConsumeWork(
+                    query.query.size(), work_budget, result.visited_arcs)) {
+                result.work_limit_exceeded = true;
+                return result;
+            }
+            result.matches.push_back(FuzzyMatch{
+                query.query,
+                CheckedOutput(exact.state->output +
+                              exact.state->node.final_output),
+                0,
+            });
         }
         return result;
     }
 
     const bool transposition_cost_one =
-        impl_->edit_distance_mode ==
-        EditDistanceMode::kDamerauLevenshteinOsa;
-    auto dfa = BuildLevenshteinDfa(
-        query, max_edit_distance, transposition_cost_one);
-    if (impl_->mode == FuzzyTraversalMode::kRustGenericAligned) {
-        result = IntersectRustGenericAligned(impl_->data,
-                                             impl_->metadata.root_address,
-                                             std::move(dfa),
-                                             query,
-                                             max_edit_distance,
-                                             impl_->edit_distance_mode);
-    } else {
-        result = IntersectLevenshteinDfa(
-            impl_->data, impl_->metadata.root_address, dfa);
+        impl_->edit_distance_mode == EditDistanceMode::kDamerauLevenshteinOsa;
+    if (query.transposition_cost_one != transposition_cost_one ||
+        !query.dfa.has_value()) {
+        throw std::invalid_argument(
+            "prepared fuzzy query edit distance mode mismatch");
     }
-    std::sort(result.matches.begin(), result.matches.end(),
-              [](const FuzzyMatch& left, const FuzzyMatch& right) {
-                  if (left.edit_distance != right.edit_distance) {
-                      return left.edit_distance < right.edit_distance;
-                  }
-                  return left.term < right.term;
-              });
-    if (result.matches.size() > max_expansions) {
-        result.matches.resize(max_expansions);
+    const auto query_suffix =
+        std::string_view(query.query).substr(query.exact_prefix.size());
+    const auto prefix = FollowExactPrefix(impl_->data,
+                                          impl_->metadata.root_address,
+                                          query.exact_prefix,
+                                          work_budget);
+    result.visited_arcs += prefix.visited_arcs;
+    if (prefix.work_limit_exceeded) {
+        result.work_limit_exceeded = true;
+        return result;
+    }
+    if (!prefix.state.has_value()) {
+        return result;
+    }
+
+    const auto remaining_work = work_budget - result.visited_arcs;
+    if (impl_->mode == FuzzyTraversalMode::kRustGenericAligned) {
+        auto suffix_result =
+            IntersectRustGenericAligned(impl_->data,
+                                        *prefix.state,
+                                        query.exact_prefix,
+                                        *query.dfa,
+                                        query_suffix,
+                                        query.max_distance,
+                                        impl_->edit_distance_mode,
+                                        max_expansions,
+                                        remaining_work);
+        suffix_result.visited_arcs += result.visited_arcs;
+        result = std::move(suffix_result);
+    } else {
+        auto suffix_result = IntersectLevenshteinDfa(impl_->data,
+                                                     *prefix.state,
+                                                     query.exact_prefix,
+                                                     *query.dfa,
+                                                     max_expansions,
+                                                     remaining_work);
+        suffix_result.visited_arcs += result.visited_arcs;
+        result = std::move(suffix_result);
     }
     return result;
 }
@@ -1350,7 +1661,8 @@ BurntSushiFstCppTermDictionary::FuzzySearch(
 void
 BurntSushiFstCppTermDictionary::Save(const std::string& path_prefix) const {
     if (impl_->data.empty()) {
-        throw std::runtime_error("BurntSushi C++ dictionary has not been built");
+        throw std::runtime_error(
+            "BurntSushi C++ dictionary has not been built");
     }
     const auto path = path_prefix + std::string(kArtifactSuffix);
     std::ofstream stream(path, std::ios::binary | std::ios::trunc);
@@ -1368,7 +1680,7 @@ BurntSushiFstCppTermDictionary::Load(const std::string& path_prefix) {
 
 void
 BurntSushiFstCppTermDictionary::LoadFile(const std::string& path,
-                                        bool memory_mapped) {
+                                         bool memory_mapped) {
     impl_->owned_data.clear();
     impl_->owned_data.shrink_to_fit();
     impl_->mapped_data.Reset();
@@ -1378,14 +1690,13 @@ BurntSushiFstCppTermDictionary::LoadFile(const std::string& path,
     } else {
         std::ifstream stream(path, std::ios::binary | std::ios::ate);
         if (!stream) {
-            throw std::ios_base::failure(
-                "failed to open BurntSushi C++ FST: " + path);
+            throw std::ios_base::failure("failed to open BurntSushi C++ FST: " +
+                                         path);
         }
         const auto end = stream.tellg();
-        if (end < 0 ||
-            static_cast<std::uint64_t>(end) >
-                static_cast<std::uint64_t>(
-                    std::numeric_limits<std::streamsize>::max())) {
+        if (end < 0 || static_cast<std::uint64_t>(end) >
+                           static_cast<std::uint64_t>(
+                               std::numeric_limits<std::streamsize>::max())) {
             throw std::runtime_error("invalid BurntSushi C++ FST size: " +
                                      path);
         }
@@ -1396,13 +1707,14 @@ BurntSushiFstCppTermDictionary::LoadFile(const std::string& path,
                         static_cast<std::streamsize>(impl_->owned_data.size()));
         }
         if (!stream) {
-            throw std::ios_base::failure(
-                "failed to read BurntSushi C++ FST: " + path);
+            throw std::ios_base::failure("failed to read BurntSushi C++ FST: " +
+                                         path);
         }
         impl_->data = impl_->owned_data;
     }
     impl_->metadata = ReadMetadata(impl_->data);
-    static_cast<void>(NodeView::Read(impl_->data, impl_->metadata.root_address));
+    static_cast<void>(
+        NodeView::Read(impl_->data, impl_->metadata.root_address));
     if (!VerifyChecksum()) {
         throw std::runtime_error("BurntSushi C++ FST checksum mismatch: " +
                                  path);
@@ -1410,13 +1722,13 @@ BurntSushiFstCppTermDictionary::LoadFile(const std::string& path,
 }
 
 void
-BurntSushiFstCppTermDictionary::LoadBytes(
-    std::span<const std::uint8_t> bytes) {
+BurntSushiFstCppTermDictionary::LoadBytes(std::span<const std::uint8_t> bytes) {
     impl_->mapped_data.Reset();
     impl_->owned_data.assign(bytes.begin(), bytes.end());
     impl_->data = impl_->owned_data;
     impl_->metadata = ReadMetadata(impl_->data);
-    static_cast<void>(NodeView::Read(impl_->data, impl_->metadata.root_address));
+    static_cast<void>(
+        NodeView::Read(impl_->data, impl_->metadata.root_address));
     if (!VerifyChecksum()) {
         throw std::runtime_error("BurntSushi C++ FST checksum mismatch");
     }

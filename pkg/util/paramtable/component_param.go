@@ -3964,6 +3964,7 @@ type queryNodeConfig struct {
 
 	MaxUnsolvedQueueSize         ParamItem `refreshable:"true"`
 	MaxReadConcurrency           ParamItem `refreshable:"true"`
+	FuzzyExpansionMaxWork        ParamItem `refreshable:"true"`
 	MaxGpuReadConcurrency        ParamItem `refreshable:"false"`
 	MaxGroupNQ                   ParamItem `refreshable:"true"`
 	NQMergeRatio                 ParamItem `refreshable:"true"`
@@ -4931,6 +4932,21 @@ Max read concurrency must greater than or equal to 1, and less than or equal to 
 		Export: true,
 	}
 	p.MaxReadConcurrency.Init(base.mgr)
+
+	p.FuzzyExpansionMaxWork = ParamItem{
+		Key:          "queryNode.fuzzyExpansion.maxWork",
+		Version:      "3.0.0",
+		DefaultValue: "1000000",
+		Formatter: func(v string) string {
+			if getAsInt64(v) < 1 {
+				return "1"
+			}
+			return v
+		},
+		Doc:    "maximum DFA preprocessing, FST/Trie traversal, and candidate materialization work admitted for one fuzzy BM25 expansion attempt",
+		Export: true,
+	}
+	p.FuzzyExpansionMaxWork.Init(base.mgr)
 
 	p.MaxGpuReadConcurrency = ParamItem{
 		Key:          "queryNode.scheduler.maxGpuReadConcurrency",

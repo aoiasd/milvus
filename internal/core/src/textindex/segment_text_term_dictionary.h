@@ -18,6 +18,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <span>
 #include <string>
@@ -28,11 +29,21 @@ namespace fst_test {
 class TermDictionary;
 }
 
+namespace fst_test::burntsushi_fst_cpp_impl {
+struct PreparedLevenshteinQuery;
+}
+
 namespace milvus::textindex {
 
 struct TextTermMatch {
     std::string term;
     std::uint32_t edit_distance = 0;
+};
+
+struct TextTermFuzzySearchResult {
+    std::vector<TextTermMatch> matches;
+    std::size_t work_used = 0;
+    bool work_limit_exceeded = false;
 };
 
 struct TextTermTrieStats {
@@ -66,12 +77,25 @@ class SegmentTextTermDictionary {
         std::int64_t field_id,
         std::span<const fst_test::TermDictionary* const> immutable_fsts);
 
-    [[nodiscard]] std::vector<TextTermMatch>
+    [[nodiscard]] TextTermFuzzySearchResult
     FuzzySearch(std::int64_t field_id,
                 std::span<const fst_test::TermDictionary* const> immutable_fsts,
                 std::string_view query,
                 std::uint32_t max_edit_distance,
-                std::size_t max_expansions) const;
+                std::size_t max_expansions,
+                std::uint32_t prefix_length,
+                std::size_t work_budget =
+                    std::numeric_limits<std::size_t>::max()) const;
+
+    [[nodiscard]] TextTermFuzzySearchResult
+    FuzzySearchPrepared(
+        std::int64_t field_id,
+        std::span<const fst_test::TermDictionary* const> immutable_fsts,
+        const fst_test::burntsushi_fst_cpp_impl::PreparedLevenshteinQuery&
+            query,
+        std::size_t max_expansions,
+        std::size_t work_budget =
+            std::numeric_limits<std::size_t>::max()) const;
 
     [[nodiscard]] TextTermTrieStats
     TrieStats() const;

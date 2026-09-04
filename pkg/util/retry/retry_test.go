@@ -161,6 +161,7 @@ func TestWrap(t *testing.T) {
 	fmt.Println(err2)
 	assert.True(t, errors.Is(err2, merr.ErrSegmentNotFound))
 	assert.False(t, IsRecoverable(err2))
+	assert.Equal(t, merr.Code(err), merr.Code(err2))
 }
 
 func TestRetryErrorParam(t *testing.T) {

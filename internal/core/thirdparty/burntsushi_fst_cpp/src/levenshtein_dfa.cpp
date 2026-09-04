@@ -18,6 +18,43 @@ namespace {
 
 constexpr std::uint32_t kSinkState = 0;
 
+class WorkBudget {
+ public:
+    explicit WorkBudget(std::size_t limit) : limit_(limit) {
+    }
+
+    [[nodiscard]] bool
+    Consume(std::size_t amount = 1) {
+        if (used_ > limit_ || amount > limit_ - used_) {
+            used_ = limit_;
+            return false;
+        }
+        used_ += amount;
+        return true;
+    }
+
+    [[nodiscard]] std::optional<std::size_t>
+    ConsumeProduct(std::size_t left, std::size_t right) {
+        if (used_ > limit_ ||
+            (left != 0 && right > (limit_ - used_) / left)) {
+            used_ = limit_;
+            return std::nullopt;
+        }
+        const auto amount = left * right;
+        used_ += amount;
+        return amount;
+    }
+
+    [[nodiscard]] std::size_t
+    Used() const {
+        return used_;
+    }
+
+ private:
+    std::size_t limit_ = 0;
+    std::size_t used_ = 0;
+};
+
 std::vector<std::uint32_t>
 DecodeUtf8(std::string_view text) {
     std::vector<std::uint32_t> codepoints;
@@ -384,23 +421,18 @@ ParametricForDistance(std::uint32_t max_distance,
 }
 
 struct CharacteristicVector {
-    std::vector<std::uint32_t> words;
+    std::vector<std::size_t> positions;
 
     std::uint32_t ShiftAndMask(std::size_t offset,
                                std::uint32_t mask) const {
-        const auto bucket = offset / 32;
-        const auto alignment = offset % 32;
-        if (bucket >= words.size()) {
-            return 0;
+        std::uint32_t result = 0;
+        auto position =
+            std::lower_bound(positions.begin(), positions.end(), offset);
+        while (position != positions.end() && *position - offset < 32) {
+            result |= std::uint32_t{1} << (*position - offset);
+            ++position;
         }
-        if (alignment == 0) {
-            return words[bucket] & mask;
-        }
-        const auto left = words[bucket] >> alignment;
-        const auto right = bucket + 1 < words.size()
-                               ? words[bucket + 1] << (32 - alignment)
-                               : 0;
-        return (left | right) & mask;
+        return result & mask;
     }
 };
 
@@ -409,35 +441,29 @@ struct AlphabetEntry {
     CharacteristicVector characteristic;
 };
 
-std::vector<AlphabetEntry>
-BuildAlphabet(const std::vector<std::uint32_t>& query) {
-    std::vector<std::uint32_t> alphabet = query;
-    std::sort(alphabet.begin(), alphabet.end());
-    alphabet.erase(std::unique(alphabet.begin(), alphabet.end()), alphabet.end());
-    std::vector<AlphabetEntry> entries;
-    entries.reserve(alphabet.size());
-    for (const auto codepoint : alphabet) {
-        CharacteristicVector characteristic;
-        characteristic.words.resize((query.size() + 31) / 32 + 1);
-        for (std::size_t index = 0; index < query.size(); ++index) {
-            if (query[index] == codepoint) {
-                characteristic.words[index / 32] |=
-                    std::uint32_t{1} << (index % 32);
-            }
+bool
+BuildAlphabet(const std::vector<std::uint32_t>& query,
+              WorkBudget& work,
+              std::vector<AlphabetEntry>& entries) {
+    std::unordered_map<std::uint32_t, std::size_t> entry_ids;
+    for (std::size_t index = 0; index < query.size(); ++index) {
+        if (!work.Consume()) {
+            return false;
         }
-        entries.push_back(AlphabetEntry{
-            .codepoint = codepoint,
-            .characteristic = std::move(characteristic),
-        });
+        const auto [position, inserted] =
+            entry_ids.try_emplace(query[index], entries.size());
+        if (inserted) {
+            entries.push_back(AlphabetEntry{.codepoint = query[index]});
+        }
+        entries[position->second].characteristic.positions.push_back(index);
     }
-    return entries;
+    return true;
 }
 
 class ParametricStateIndex {
  public:
-    ParametricStateIndex(std::size_t query_length, std::size_t shape_count)
-        : offsets_(query_length + 1),
-          index_(offsets_ * shape_count) {
+    ParametricStateIndex(std::size_t offsets, std::size_t index_size)
+        : offsets_(offsets), index_(index_size) {
         states_.reserve(100);
     }
 
@@ -473,42 +499,56 @@ class ParametricStateIndex {
 class Utf8DfaEncoder {
  public:
     Utf8DfaEncoder(std::size_t max_decoded_states,
+                   std::size_t encoded_index_size,
+                   WorkBudget& work,
                    std::vector<std::array<std::uint32_t, 256>>& transitions,
                    std::vector<std::uint8_t>& distances)
-        : index_(max_decoded_states * 4 + 3, kUnallocated),
+        : index_(encoded_index_size, kUnallocated),
           defaults_(max_decoded_states),
           encoded_originals_(max_decoded_states, kUnallocated),
+          work_(work),
           transitions_(transitions),
           distances_(distances) {
-        transitions_.reserve(100);
-        distances_.reserve(100);
     }
 
-    void AddState(std::uint32_t state,
-                  std::uint8_t distance,
-                  std::uint32_t default_successor) {
+    [[nodiscard]] bool
+    AddState(std::uint32_t state,
+             std::uint8_t distance,
+             std::uint32_t default_successor) {
         const auto encoded_state = GetOrAllocate(Original(state));
-        distances_[encoded_state] = distance;
-        const auto default_encoded = GetOrAllocate(Original(default_successor));
-        std::array<std::uint32_t, 4> predecessors{};
-        predecessors.fill(default_encoded);
-        for (std::uint32_t bytes = 1; bytes < 4; ++bytes) {
-            const auto predecessor = GetOrAllocate(Predecessor(default_successor, bytes));
-            predecessors[bytes] = predecessor;
-            transitions_[predecessor].fill(predecessors[bytes - 1]);
+        if (!encoded_state.has_value()) {
+            return false;
         }
-        auto& table = transitions_[encoded_state];
+        distances_[*encoded_state] = distance;
+        const auto default_encoded = GetOrAllocate(Original(default_successor));
+        if (!default_encoded.has_value()) {
+            return false;
+        }
+        std::array<std::uint32_t, 4> predecessors{};
+        predecessors.fill(*default_encoded);
+        for (std::uint32_t bytes = 1; bytes < 4; ++bytes) {
+            const auto predecessor =
+                GetOrAllocate(Predecessor(default_successor, bytes));
+            if (!predecessor.has_value()) {
+                return false;
+            }
+            predecessors[bytes] = *predecessor;
+            transitions_[*predecessor].fill(predecessors[bytes - 1]);
+        }
+        auto& table = transitions_[*encoded_state];
         std::fill(table.begin(), table.begin() + 192, predecessors[0]);
         std::fill(table.begin() + 192, table.begin() + 224, predecessors[1]);
         std::fill(table.begin() + 224, table.begin() + 240, predecessors[2]);
         std::fill(table.begin() + 240, table.end(), predecessors[3]);
         defaults_[state] = predecessors;
-        encoded_originals_[state] = encoded_state;
+        encoded_originals_[state] = *encoded_state;
+        return true;
     }
 
-    void AddTransition(std::uint32_t state,
-                       std::uint32_t codepoint,
-                       std::uint32_t destination) {
+    [[nodiscard]] bool
+    AddTransition(std::uint32_t state,
+                  std::uint32_t codepoint,
+                  std::uint32_t destination) {
         std::size_t length = 0;
         const auto bytes = EncodeUtf8(codepoint, length);
         auto from = encoded_originals_.at(state);
@@ -517,16 +557,27 @@ class Utf8DfaEncoder {
             const auto remaining = length - index - 1;
             auto intermediary = transitions_[from][bytes[index]];
             if (intermediary == defaults[remaining]) {
-                intermediary = Allocate();
-                transitions_[intermediary].fill(defaults[remaining - 1]);
+                const auto allocated = Allocate();
+                if (!allocated.has_value()) {
+                    return false;
+                }
+                intermediary = *allocated;
+                transitions_[intermediary].fill(
+                    defaults[remaining - 1]);
                 transitions_[from][bytes[index]] = intermediary;
             }
             from = intermediary;
         }
-        transitions_[from][bytes[length - 1]] = GetOrAllocate(Original(destination));
+        const auto encoded_destination = GetOrAllocate(Original(destination));
+        if (!encoded_destination.has_value()) {
+            return false;
+        }
+        transitions_[from][bytes[length - 1]] = *encoded_destination;
+        return true;
     }
 
-    std::uint32_t EncodedOriginal(std::uint32_t state) {
+    [[nodiscard]] std::optional<std::uint32_t>
+    EncodedOriginal(std::uint32_t state) {
         return GetOrAllocate(Original(state));
     }
 
@@ -542,19 +593,28 @@ class Utf8DfaEncoder {
         return static_cast<std::size_t>(state) * 4 + steps;
     }
 
-    std::uint32_t Allocate() {
+    [[nodiscard]] std::optional<std::uint32_t>
+    Allocate() {
+        if (!work_.Consume(256)) {
+            return std::nullopt;
+        }
         const auto id = static_cast<std::uint32_t>(transitions_.size());
         transitions_.push_back({});
         distances_.push_back(255);
         return id;
     }
 
-    std::uint32_t GetOrAllocate(std::size_t bucket) {
+    [[nodiscard]] std::optional<std::uint32_t>
+    GetOrAllocate(std::size_t bucket) {
         if (bucket >= index_.size()) {
             throw std::runtime_error("UTF-8 DFA state index overflow");
         }
         if (index_[bucket] == kUnallocated) {
-            index_[bucket] = Allocate();
+            const auto state = Allocate();
+            if (!state.has_value()) {
+                return std::nullopt;
+            }
+            index_[bucket] = *state;
         }
         return index_[bucket];
     }
@@ -562,6 +622,7 @@ class Utf8DfaEncoder {
     std::vector<std::uint32_t> index_;
     std::vector<std::array<std::uint32_t, 4>> defaults_;
     std::vector<std::uint32_t> encoded_originals_;
+    WorkBudget& work_;
     std::vector<std::array<std::uint32_t, 256>>& transitions_;
     std::vector<std::uint8_t>& distances_;
 };
@@ -593,16 +654,42 @@ LevenshteinDfa::Distance(std::uint32_t state) const {
     return distances_[state];
 }
 
-LevenshteinDfa
+LevenshteinDfaBuildResult
 BuildLevenshteinDfa(std::string_view query,
                     std::uint32_t max_distance,
-                    bool transposition_cost_one) {
+                    bool transposition_cost_one,
+                    std::size_t work_budget) {
+    LevenshteinDfaBuildResult result;
+    WorkBudget work(work_budget);
+    const auto exhausted = [&]() {
+        result.work_used = work.Used();
+        result.work_limit_exceeded = true;
+        return result;
+    };
+
     const auto& parametric =
         ParametricForDistance(max_distance, transposition_cost_one);
+    if (!work.Consume(query.size())) {
+        return exhausted();
+    }
     const auto query_codepoints = DecodeUtf8(query);
-    const auto alphabet = BuildAlphabet(query_codepoints);
-    ParametricStateIndex state_index(query_codepoints.size(),
-                                     parametric.ShapeCount());
+    std::vector<AlphabetEntry> alphabet;
+    if (!BuildAlphabet(query_codepoints, work, alphabet)) {
+        return exhausted();
+    }
+    if (query_codepoints.size() == std::numeric_limits<std::size_t>::max()) {
+        return exhausted();
+    }
+    const auto offsets = query_codepoints.size() + 1;
+    const auto state_index_size =
+        work.ConsumeProduct(offsets, parametric.ShapeCount());
+    if (!state_index_size.has_value()) {
+        return exhausted();
+    }
+    ParametricStateIndex state_index(offsets, *state_index_size);
+    if (!work.Consume(2)) {
+        return exhausted();
+    }
     const auto dead = state_index.GetOrAllocate(ParametricState{});
     if (dead != kSinkState) {
         throw std::logic_error("Levenshtein sink state must be zero");
@@ -613,32 +700,119 @@ BuildLevenshteinDfa(std::string_view query,
     });
     LevenshteinDfa dfa;
     dfa.max_distance_ = static_cast<std::uint8_t>(max_distance);
-    Utf8DfaEncoder encoder(
-        state_index.MaxSize(), dfa.transitions_, dfa.distances_);
+    const auto max_decoded_states = state_index.MaxSize();
+    const auto encoded_index_core = work.ConsumeProduct(max_decoded_states, 4);
+    if (!encoded_index_core.has_value() || !work.Consume(3) ||
+        !work.ConsumeProduct(max_decoded_states, 4).has_value() ||
+        !work.Consume(max_decoded_states)) {
+        return exhausted();
+    }
+    Utf8DfaEncoder encoder(max_decoded_states,
+                           *encoded_index_core + 3,
+                           work,
+                           dfa.transitions_,
+                           dfa.distances_);
     const auto mask = static_cast<std::uint32_t>(
         (std::uint64_t{1} << parametric.Diameter()) - 1);
     for (std::uint32_t state_id = 0; state_id < state_index.Size(); ++state_id) {
+        if (!work.Consume()) {
+            return exhausted();
+        }
         const auto state = state_index.Get(state_id);
         const auto distance =
             parametric.Distance(state, query_codepoints.size());
         const auto default_successor =
             state_index.GetOrAllocate(parametric.Apply(state, 0));
-        encoder.AddState(state_id, distance, default_successor);
+        if (!encoder.AddState(state_id, distance, default_successor)) {
+            return exhausted();
+        }
         for (const auto& entry : alphabet) {
+            if (!work.Consume()) {
+                return exhausted();
+            }
             const auto characteristic =
                 entry.characteristic.ShiftAndMask(state.offset, mask);
             const auto destination = state_index.GetOrAllocate(
                 parametric.Apply(state, characteristic));
-            encoder.AddTransition(state_id, entry.codepoint, destination);
+            if (!encoder.AddTransition(
+                    state_id, entry.codepoint, destination)) {
+                return exhausted();
+            }
         }
     }
-    dfa.initial_state_ = encoder.EncodedOriginal(initial);
-    return dfa;
+    const auto encoded_initial = encoder.EncodedOriginal(initial);
+    if (!encoded_initial.has_value()) {
+        return exhausted();
+    }
+    dfa.initial_state_ = *encoded_initial;
+    result.dfa = std::move(dfa);
+    result.work_used = work.Used();
+    return result;
+}
+
+
+PreparedLevenshteinQueryBuildResult
+PrepareLevenshteinQuery(std::string_view query,
+                        std::uint32_t max_distance,
+                        bool transposition_cost_one,
+                        std::uint32_t prefix_length,
+                        std::size_t work_budget) {
+    if (max_distance > 2) {
+        throw std::invalid_argument(
+            "BurntSushi C++ fuzzy distance must be in [0, 2]");
+    }
+    PreparedLevenshteinQueryBuildResult result;
+    if (query.size() > work_budget) {
+        result.work_used = work_budget;
+        result.work_limit_exceeded = true;
+        return result;
+    }
+    result.work_used = query.size();
+    const auto prefix_bytes = Utf8PrefixByteLength(query, prefix_length);
+    PreparedLevenshteinQuery prepared{
+        .query = std::string(query),
+        .exact_prefix = std::string(query.substr(0, prefix_bytes)),
+        .max_distance = max_distance,
+        .transposition_cost_one = transposition_cost_one,
+    };
+    if (max_distance > 0) {
+        auto dfa = BuildLevenshteinDfa(query.substr(prefix_bytes),
+                                       max_distance,
+                                       transposition_cost_one,
+                                       work_budget - result.work_used);
+        result.work_used += dfa.work_used;
+        if (dfa.work_limit_exceeded) {
+            result.work_limit_exceeded = true;
+            return result;
+        }
+        prepared.dfa = std::move(*dfa.dfa);
+    }
+    result.query = std::move(prepared);
+    return result;
 }
 
 void
 ValidateUtf8(std::string_view text) {
     static_cast<void>(DecodeUtf8(text));
+}
+
+std::size_t
+Utf8PrefixByteLength(std::string_view text, std::size_t char_count) {
+    const auto codepoints = DecodeUtf8(text);
+    if (char_count >= codepoints.size()) {
+        return text.size();
+    }
+
+    std::size_t byte_offset = 0;
+    for (std::size_t index = 0; index < char_count; ++index) {
+        ++byte_offset;
+        while (byte_offset < text.size() &&
+               (static_cast<std::uint8_t>(text[byte_offset]) & 0xC0U) ==
+                   0x80U) {
+            ++byte_offset;
+        }
+    }
+    return byte_offset;
 }
 
 std::uint32_t

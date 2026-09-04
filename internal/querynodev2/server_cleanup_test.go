@@ -17,6 +17,7 @@
 package querynodev2
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -40,10 +41,10 @@ func TestCleanupOrphanedTextTermFiles(t *testing.T) {
 	require.NoError(t, os.MkdirAll(cacheDir, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(cacheDir, "orphan.fst"), []byte("orphan"), 0o600))
 
-	cleanupOrphanedTextTermFiles(nodeID)
+	cleanupOrphanedTextTermFiles(context.Background(), nodeID)
 	_, err := os.Stat(cacheDir)
 	assert.ErrorIs(t, err, os.ErrNotExist)
 
 	// An already-clean node directory is a no-op.
-	cleanupOrphanedTextTermFiles(nodeID)
+	cleanupOrphanedTextTermFiles(context.Background(), nodeID)
 }

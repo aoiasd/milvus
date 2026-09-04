@@ -49,6 +49,7 @@ import (
 	"github.com/milvus-io/milvus/internal/util/function/highlight"
 	"github.com/milvus-io/milvus/internal/util/reduce"
 	"github.com/milvus-io/milvus/internal/util/segcore"
+	"github.com/milvus-io/milvus/internal/util/textindex"
 	"github.com/milvus-io/milvus/pkg/v3/common"
 	"github.com/milvus-io/milvus/pkg/v3/proto/internalpb"
 	"github.com/milvus-io/milvus/pkg/v3/proto/planpb"
@@ -57,6 +58,7 @@ import (
 	"github.com/milvus-io/milvus/pkg/v3/util/merr"
 	"github.com/milvus-io/milvus/pkg/v3/util/metric"
 	"github.com/milvus-io/milvus/pkg/v3/util/paramtable"
+	"github.com/milvus-io/milvus/pkg/v3/util/retry"
 	"github.com/milvus-io/milvus/pkg/v3/util/testutils"
 	"github.com/milvus-io/milvus/pkg/v3/util/timerecord"
 	"github.com/milvus-io/milvus/pkg/v3/util/tsoutil"
@@ -80,6 +82,51 @@ func TestSearchTaskFillResultSkipsTopksInsufficientForSearchAggregation(t *testi
 	task.fillResult()
 
 	require.False(t, task.resultSizeInsufficient)
+}
+
+func TestSearchShardPreservesFuzzyWorkLimit(t *testing.T) {
+	status := merr.Status(merr.ErrServiceResourceInsufficient)
+	status.Retriable = false
+	status.ExtraInfo = map[string]string{textindex.FuzzySearchWorkLimitExceededFlagKey: "true"}
+	qn := mocks.NewMockQueryNodeClient(t)
+	qn.EXPECT().Search(mock.Anything, mock.Anything).Return(&internalpb.SearchResults{Status: status}, nil).Once()
+
+	err := (&searchTask{SearchRequest: &internalpb.SearchRequest{}}).
+		searchShard(context.Background(), 1, qn, "channel")
+	require.ErrorIs(t, err, merr.ErrServiceResourceInsufficient)
+	require.ErrorIs(t, err, textindex.ErrFuzzySearchWorkLimitExceeded)
+	assert.False(t, retry.IsRecoverable(err))
+}
+
+func TestValidateFuzzyBM25OptionsRejectsIterator(t *testing.T) {
+	task := &searchTask{schema: mustNewSchemaInfo(&schemapb.CollectionSchema{
+		Fields: []*schemapb.FieldSchema{
+			{FieldID: 100, Name: "text", DataType: schemapb.DataType_VarChar},
+			{FieldID: 101, Name: "sparse", DataType: schemapb.DataType_SparseFloatVector},
+		},
+		Functions: []*schemapb.FunctionSchema{{
+			Name:           "bm25",
+			Type:           schemapb.FunctionType_BM25,
+			InputFieldIds:  []int64{100},
+			OutputFieldIds: []int64{101},
+			Params:         []*commonpb.KeyValuePair{{Key: common.EnableFuzzyKey, Value: "true"}},
+		}},
+	})}
+
+	options, err := task.validateFuzzyBM25Options(
+		[]*commonpb.KeyValuePair{{Key: FuzzyBM25FuzzinessKey, Value: "1"}}, 101, false)
+	require.NoError(t, err)
+	require.NotNil(t, options)
+
+	_, err = task.validateFuzzyBM25Options(
+		[]*commonpb.KeyValuePair{{Key: FuzzyBM25FuzzinessKey, Value: "1"}}, 101, true)
+	require.ErrorIs(t, err, merr.ErrParameterInvalid)
+	assert.Contains(t, err.Error(), "not supported with search iterator")
+
+	options, err = task.validateFuzzyBM25Options(
+		[]*commonpb.KeyValuePair{{Key: FuzzyBM25FuzzinessKey, Value: "0"}}, 101, true)
+	require.NoError(t, err)
+	assert.Nil(t, options)
 }
 
 func TestSearchTaskPreExecuteTextRequiresStorageV3(t *testing.T) {

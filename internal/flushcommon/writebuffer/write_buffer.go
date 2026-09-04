@@ -992,6 +992,8 @@ func (wb *writeBufferBase) submitSyncTasks(ctx context.Context, syncTasks []sync
 								pkStats:       growingSourceTask.CommittedPKStats(),
 								textTerms:     growingSourceTask.UncommittedTextTerms(),
 							}
+						} else {
+							wb.restoreTextTerms(growingSourceTask.SegmentID(), growingSourceTask.UncommittedTextTerms())
 						}
 						progress.failSync(err)
 						wb.rollbackGrowingSourceSyncTaskLocked(growingSourceTask)
@@ -1250,6 +1252,21 @@ func (wb *writeBufferBase) yieldTextTerms(segmentID int64) *syncmgr.TextTermData
 	}
 	delete(wb.textTermBuffers, segmentID)
 	return buffer.Yield()
+}
+
+// restoreTextTerms returns an uncommitted frozen generation after a failed
+// growing-source sync. The caller holds wb.mut, so it can safely merge with
+// terms received while that generation was in flight.
+func (wb *writeBufferBase) restoreTextTerms(segmentID int64, data *syncmgr.TextTermData) {
+	if data == nil {
+		return
+	}
+	buffer := wb.textTermBuffers[segmentID]
+	if buffer == nil {
+		buffer = newSegmentTextTermBuffer()
+		wb.textTermBuffers[segmentID] = buffer
+	}
+	buffer.restore(data)
 }
 
 func (wb *writeBufferBase) yieldBuffer(segmentID int64) ([]*storage.InsertData, map[int64]*storage.BM25Stats, *storage.DeleteData, *schemapb.CollectionSchema, *TimeRange, *msgpb.MsgPosition) {

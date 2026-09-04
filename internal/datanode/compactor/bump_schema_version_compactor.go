@@ -115,6 +115,7 @@ func (t *bumpSchemaVersionCompactionTask) Compact() (*datapb.CompactionPlanResul
 	)
 
 	var result *datapb.CompactionPlanResult
+	rebuildTextTerms := len(diff.droppedFieldIDs) > 0
 	// Dropped physical fields always require a replacement rewrite. Zero-row
 	// segments still route to additive reconciliation, which rejects them as a
 	// data-integrity error rather than writing an empty materialized record.
@@ -130,13 +131,18 @@ func (t *bumpSchemaVersionCompactionTask) Compact() (*datapb.CompactionPlanResul
 		return nil, err
 	}
 
-	segment := t.plan.GetSegmentBinlogs()[0]
-	binlogIO := flushio.NewBinlogIO(t.chunkManager)
-	for _, resultSegment := range result.GetSegments() {
-		_, err := writeCompactionTextTerms(ctx, t.plan.GetSchema(), resultSegment,
-			segment.GetCollectionID(), segment.GetPartitionID(), binlogIO, t.logIDAlloc, t.compactionParams)
-		if err != nil {
-			return nil, err
+	// Bump-only and additive paths retain the same rows and source manifest
+	// entries, so their existing Segment FST remains valid. A full rewrite may
+	// filter rows and emits a new segment, so only that path rebuilds it.
+	if rebuildTextTerms {
+		segment := t.plan.GetSegmentBinlogs()[0]
+		binlogIO := flushio.NewBinlogIO(t.chunkManager)
+		for _, resultSegment := range result.GetSegments() {
+			_, err := writeCompactionTextTerms(ctx, t.plan.GetSchema(), resultSegment,
+				segment.GetCollectionID(), segment.GetPartitionID(), binlogIO, t.logIDAlloc, t.compactionParams)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 

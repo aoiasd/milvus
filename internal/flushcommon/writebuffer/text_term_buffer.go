@@ -59,6 +59,30 @@ func (b *segmentTextTermBuffer) Buffer(batches []*msgpb.TextTermBatch, coverageT
 	}
 }
 
+func (b *segmentTextTermBuffer) restore(data *syncmgr.TextTermData) {
+	if data == nil {
+		return
+	}
+	for fieldID, encoded := range data.Fields {
+		terms := b.fields[fieldID]
+		if terms == nil {
+			terms = make(map[string]struct{})
+			b.fields[fieldID] = terms
+		}
+		for _, term := range encoded {
+			value := string(term)
+			if _, exists := terms[value]; exists {
+				continue
+			}
+			terms[value] = struct{}{}
+			b.memorySize += int64(len(value))
+		}
+	}
+	if data.CoverageTimestamp > b.coverageTimestamp {
+		b.coverageTimestamp = data.CoverageTimestamp
+	}
+}
+
 // MemorySize returns the retained key payload in bytes. As with the existing
 // insert-buffer accounting, Go map/object overhead is intentionally excluded.
 func (b *segmentTextTermBuffer) MemorySize() int64 {
