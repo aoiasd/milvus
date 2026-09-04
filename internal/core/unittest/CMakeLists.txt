@@ -145,6 +145,10 @@ add_executable(all_tests
         ${MILVUS_TEST_FILES}
         )
 
+target_include_directories(all_tests PRIVATE
+        ${CMAKE_HOME_DIRECTORY}/thirdparty/burntsushi_fst_cpp/include
+        )
+
 target_link_libraries(all_tests
         GTest::gtest
         GTest::gmock

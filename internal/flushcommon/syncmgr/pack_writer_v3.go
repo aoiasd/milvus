@@ -30,6 +30,7 @@ import (
 	storage "github.com/milvus-io/milvus/internal/storage"
 	"github.com/milvus-io/milvus/internal/storagecommon"
 	"github.com/milvus-io/milvus/internal/storagev2/packed"
+	"github.com/milvus-io/milvus/internal/util/textindex"
 	"github.com/milvus-io/milvus/pkg/v3/mlog"
 	"github.com/milvus-io/milvus/pkg/v3/proto/datapb"
 	"github.com/milvus-io/milvus/pkg/v3/proto/indexpb"
@@ -168,6 +169,7 @@ func (bw *BulkPackWriterV3) Write(ctx context.Context, pack *SyncPack) (
 	deltas *datapb.FieldBinlog,
 	stats map[int64]*datapb.FieldBinlog,
 	bm25Stats map[int64]*datapb.FieldBinlog,
+	textTerms map[int64]*datapb.FieldBinlog,
 	manifest string,
 	size int64,
 	segmentStats *datapb.Statistics,
@@ -189,6 +191,7 @@ func (bw *BulkPackWriterV3) Write(ctx context.Context, pack *SyncPack) (
 		statEntries  []packed.StatEntry
 		deltaEntries []packed.DeltaLogEntry
 		bm25Entries  []packed.StatEntry
+		textEntries  []packed.StatEntry
 	)
 	defer func() {
 		if insertFiles != nil {
@@ -212,11 +215,16 @@ func (bw *BulkPackWriterV3) Write(ctx context.Context, pack *SyncPack) (
 		mlog.Warn(ctx, "failed to process bm25 stats blob", mlog.Err(err))
 		return
 	}
+	if textEntries, err = bw.writeTextTerms(pack); err != nil {
+		mlog.Warn(ctx, "failed to process text term FST", mlog.Err(err))
+		return
+	}
+	textTerms = make(map[int64]*datapb.FieldBinlog)
 
 	updates := &packed.ManifestUpdates{
 		NewFiles:  insertFiles,
 		DeltaLogs: deltaEntries,
-		Stats:     append(statEntries, bm25Entries...),
+		Stats:     append(append(statEntries, bm25Entries...), textEntries...),
 	}
 
 	// Phase 2: commit the assembled updates. CommitManifestUpdates short-
@@ -245,6 +253,106 @@ func (bw *BulkPackWriterV3) Write(ctx context.Context, pack *SyncPack) (
 	// returns no stats array); finalizeStats produces the cumulative Statistics.
 	segmentStats, err = bw.finalizeStats(pack, digested, inserts, deltas, bw.statsBlobSize)
 	return
+}
+
+func (bw *BulkPackWriterV3) writeTextTerms(pack *SyncPack) ([]packed.StatEntry, error) {
+	if pack.textTerms == nil {
+		return nil, nil
+	}
+	entries, size, err := buildTextTermManifestEntries(
+		bw.initialManifestPath,
+		bw.storageConfig,
+		bw.allocator,
+		pack.textTerms,
+	)
+	if err != nil {
+		return nil, err
+	}
+	bw.sizeWritten += size
+	return entries, nil
+}
+
+func buildTextTermManifestEntries(
+	initialManifestPath string,
+	storageConfig *indexpb.StorageConfig,
+	allocator allocator.Interface,
+	textTerms *TextTermData,
+) ([]packed.StatEntry, int64, error) {
+	if textTerms == nil {
+		return nil, 0, nil
+	}
+	basePath, version, err := packed.UnmarshalManifestPath(initialManifestPath)
+	if err != nil {
+		return nil, 0, err
+	}
+	type fieldStats struct {
+		files      []string
+		logSize    int64
+		memorySize int64
+	}
+	existing := make(map[int64]*fieldStats)
+	if version != packed.ManifestEarliest {
+		existingStats, err := packed.GetManifestStats(initialManifestPath, storageConfig)
+		if err != nil {
+			return nil, 0, merr.Wrap(err, "failed to read prior text term FST stats")
+		}
+		for key, stat := range existingStats {
+			prefix, fieldID, ok := packed.ParseStatKey(key)
+			if !ok || prefix != "text_log_v2" {
+				continue
+			}
+			fs := &fieldStats{files: stat.Paths}
+			if value, ok := stat.Metadata["log_size"]; ok {
+				fs.logSize, _ = strconv.ParseInt(value, 10, 64)
+			}
+			if value, ok := stat.Metadata["memory_size"]; ok {
+				fs.memorySize, _ = strconv.ParseInt(value, 10, 64)
+			}
+			if fs.logSize == 0 {
+				fs.logSize = fs.memorySize
+			}
+			existing[fieldID] = fs
+		}
+	}
+
+	entries := make([]packed.StatEntry, 0, len(textTerms.Fields))
+	var sizeWritten int64
+	for fieldID, terms := range textTerms.Fields {
+		artifact, err := textindex.BuildTextFst(terms)
+		if err != nil {
+			return nil, 0, merr.Wrapf(err, "build text term FST for field %d", fieldID)
+		}
+		id, err := allocator.AllocOne()
+		if err != nil {
+			return nil, 0, err
+		}
+		relativePath := fmt.Sprintf("_stats/text_log_v2.%d/%d.fst", fieldID, id)
+		fullPath := path.Join(basePath, relativePath)
+		if err := packed.WriteFile(storageConfig, fullPath, artifact.Data); err != nil {
+			return nil, 0, err
+		}
+		sizeWritten += int64(len(artifact.Data))
+
+		fs := existing[fieldID]
+		if fs == nil {
+			fs = &fieldStats{}
+		}
+		fs.files = append(fs.files, fullPath)
+		fs.logSize += int64(len(artifact.Data))
+		fs.memorySize += int64(len(artifact.Data))
+		entries = append(entries, packed.StatEntry{
+			Key:   fmt.Sprintf("text_log_v2.%d", fieldID),
+			Files: fs.files,
+			Metadata: map[string]string{
+				"format":              textTermFstFormat,
+				"log_size":            strconv.FormatInt(fs.logSize, 10),
+				"memory_size":         strconv.FormatInt(fs.memorySize, 10),
+				"coverage_timestamp":  strconv.FormatUint(textTerms.CoverageTimestamp, 10),
+				"fragment_term_count": strconv.FormatInt(artifact.TermCount, 10),
+			},
+		})
+	}
+	return entries, sizeWritten, nil
 }
 
 // classifyLoonErr maps loon FFI failures to retryable errors and everything

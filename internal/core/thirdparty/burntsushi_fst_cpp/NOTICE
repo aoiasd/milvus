@@ -1,0 +1,13 @@
+This package is a clean C++20 source port of the algorithms and serialized
+format in BurntSushi/fst 0.4.7, licensed under Unlicense/MIT.
+
+Upstream project: https://github.com/BurntSushi/fst
+Upstream version: 0.4.7
+License text: LICENSE-BURNTSUSHI-FST-MIT
+
+The generated Levenshtein DFA implementation is a C++ port of the algorithmic
+structure in tantivy-search/levenshtein-automata 0.2.1, licensed under MIT.
+License text: LICENSE-LEVENSHTEIN-AUTOMATA-MIT
+
+The C++ port was first developed and validated in the Milvus FST comparison
+prototype at implementations/burntsushi_fst_cpp, then vendored here for Milvus.

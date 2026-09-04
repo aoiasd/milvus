@@ -3848,6 +3848,11 @@ func TestAlterSegmentsWithRecovery(t *testing.T) {
 		Statslogs:     []*datapb.FieldBinlog{getFieldBinlogIDs(1, 334)},
 		Deltalogs:     []*datapb.FieldBinlog{getFieldBinlogIDs(1, 100)},
 		Bm25Statslogs: []*datapb.FieldBinlog{getFieldBinlogIDs(1, 20)},
+		TextLogV2: []*datapb.FieldBinlog{{
+			FieldID: 1,
+			Format:  "burntsushi_fst_v3_field_terms_v1",
+			Binlogs: []*datapb.Binlog{{LogID: 30}},
+		}},
 	})
 	err := meta.AddSegment(context.TODO(), segment1)
 	require.NoError(t, err)
@@ -3857,8 +3862,9 @@ func TestAlterSegmentsWithRecovery(t *testing.T) {
 	statslogsPath := fmt.Sprintf("%s/%s/%d/%d/%d/%d", rootPath, datacoord.SegmentStatslogPathPrefix, collectionID, partitionID, segmentID, fieldID)
 	deltalogsPath := fmt.Sprintf("%s/%s/%d/%d/%d/%d", rootPath, datacoord.SegmentDeltalogPathPrefix, collectionID, partitionID, segmentID, fieldID)
 	bm25StatslogsPath := fmt.Sprintf("%s/%s/%d/%d/%d/%d", rootPath, datacoord.SegmentBM25logPathPrefix, collectionID, partitionID, segmentID, fieldID)
+	textLogV2Path := fmt.Sprintf("%s/%s/%d/%d/%d/%d", rootPath, datacoord.SegmentTextLogV2PathPrefix, collectionID, partitionID, segmentID, fieldID)
 
-	checkVersion := func(sVersion int64, bVersion int64, stVersion int64, dVersion int64, bm25Version int64) {
+	checkVersion := func(sVersion int64, bVersion int64, stVersion int64, dVersion int64, bm25Version int64, textLogV2Version int64) {
 		kv, err := etcdCli.Get(context.TODO(), segmentPath)
 		require.NoError(t, err)
 		require.Equal(t, kv.Kvs[0].Version, sVersion)
@@ -3874,8 +3880,11 @@ func TestAlterSegmentsWithRecovery(t *testing.T) {
 		kv, err = etcdCli.Get(context.TODO(), bm25StatslogsPath)
 		require.NoError(t, err)
 		require.Equal(t, kv.Kvs[0].Version, bm25Version)
+		kv, err = etcdCli.Get(context.TODO(), textLogV2Path)
+		require.NoError(t, err)
+		require.Equal(t, kv.Kvs[0].Version, textLogV2Version)
 	}
-	checkVersion(1, 1, 1, 1, 1)
+	checkVersion(1, 1, 1, 1, 1, 1)
 
 	err = meta.UpdateSegmentsInfo(context.TODO(), AddBinlogsOperator(1,
 		[]*datapb.FieldBinlog{getFieldBinlogIDs(1, 10, 333)},
@@ -3884,7 +3893,7 @@ func TestAlterSegmentsWithRecovery(t *testing.T) {
 		nil,
 	))
 	require.NoError(t, err)
-	checkVersion(2, 2, 1, 1, 1)
+	checkVersion(2, 2, 1, 1, 1, 1)
 
 	err = meta.UpdateSegmentsInfo(context.TODO(), AddBinlogsOperator(1,
 		nil,
@@ -3893,7 +3902,7 @@ func TestAlterSegmentsWithRecovery(t *testing.T) {
 		nil,
 	))
 	require.NoError(t, err)
-	checkVersion(3, 2, 2, 1, 1)
+	checkVersion(3, 2, 2, 1, 1, 1)
 
 	err = meta.UpdateSegmentsInfo(context.TODO(), AddBinlogsOperator(1,
 		nil,
@@ -3902,7 +3911,7 @@ func TestAlterSegmentsWithRecovery(t *testing.T) {
 		nil,
 	))
 	require.NoError(t, err)
-	checkVersion(4, 2, 2, 2, 1)
+	checkVersion(4, 2, 2, 2, 1, 1)
 
 	err = meta.UpdateSegmentsInfo(context.TODO(), AddBinlogsOperator(1,
 		nil,
@@ -3911,16 +3920,27 @@ func TestAlterSegmentsWithRecovery(t *testing.T) {
 		[]*datapb.FieldBinlog{getFieldBinlogIDs(1, 10, 333)},
 	))
 	require.NoError(t, err)
-	checkVersion(5, 2, 2, 2, 2)
+	checkVersion(5, 2, 2, 2, 2, 1)
+
+	err = meta.UpdateSegmentsInfo(context.TODO(), AddBinlogsOperator(1,
+		nil,
+		nil,
+		nil,
+		nil,
+		[]*datapb.FieldBinlog{{FieldID: 1, Format: "burntsushi_fst_v3_field_terms_v1", Binlogs: []*datapb.Binlog{{LogID: 333}}}},
+	))
+	require.NoError(t, err)
+	checkVersion(6, 2, 2, 2, 2, 2)
 
 	err = meta.UpdateSegmentsInfo(context.TODO(), AddBinlogsOperator(1,
 		[]*datapb.FieldBinlog{getFieldBinlogIDs(1, 10, 333)},
 		[]*datapb.FieldBinlog{getFieldBinlogIDs(1, 10, 333)},
 		[]*datapb.FieldBinlog{getFieldBinlogIDs(1, 10, 333)},
 		[]*datapb.FieldBinlog{getFieldBinlogIDs(1, 10, 333)},
+		[]*datapb.FieldBinlog{{FieldID: 1, Format: "burntsushi_fst_v3_field_terms_v1", Binlogs: []*datapb.Binlog{{LogID: 334}}}},
 	))
 	require.NoError(t, err)
-	checkVersion(6, 3, 3, 3, 3)
+	checkVersion(7, 3, 3, 3, 3, 3)
 }
 
 func TestAddL0DeltalogsAndUpdateManifestOperator(t *testing.T) {
@@ -4405,6 +4425,7 @@ func TestUpdateSegmentsInfo(t *testing.T) {
 				[]*datapb.FieldBinlog{getFieldBinlogIDs(1, 334)},
 				[]*datapb.FieldBinlog{{Binlogs: []*datapb.Binlog{{EntriesNum: 1, TimestampFrom: 100, TimestampTo: 200, LogSize: 1000, LogID: 335}}}},
 				[]*datapb.FieldBinlog{{Binlogs: []*datapb.Binlog{{EntriesNum: 1, TimestampFrom: 100, TimestampTo: 200, LogSize: 1000, LogID: 335}}}},
+				[]*datapb.FieldBinlog{{FieldID: 101, Format: "burntsushi_fst_v3_field_terms_v1", Binlogs: []*datapb.Binlog{{EntriesNum: 3, TimestampTo: 200, LogID: 336}}}},
 			),
 			UpdateStartPosition([]*datapb.SegmentStartPosition{{SegmentID: 1, StartPosition: &msgpb.MsgPosition{MsgID: []byte{1, 2, 3}}}}),
 			UpdateCheckPointOperator(1, []*datapb.CheckPoint{{SegmentID: 1, NumOfRows: 10, Position: &msgpb.MsgPosition{MsgID: []byte{1, 2, 3}, Timestamp: 100}}}, true),
@@ -4421,6 +4442,8 @@ func TestUpdateSegmentsInfo(t *testing.T) {
 		assert.Equal(t, len(updated.Statslogs[0].Binlogs), 1)
 		assert.Equal(t, len(updated.Deltalogs[0].Binlogs), 1)
 		assert.Equal(t, len(updated.Bm25Statslogs[0].Binlogs), 1)
+		assert.Equal(t, len(updated.TextLogV2[0].Binlogs), 1)
+		assert.Equal(t, "burntsushi_fst_v3_field_terms_v1", updated.TextLogV2[0].GetFormat())
 		assert.Equal(t, updated.State, commonpb.SegmentState_Growing)
 		assert.Equal(t, updated.NumOfRows, int64(10))
 		assert.Equal(t, updated.ManifestPath, "files/binlogs/1/2/1000/manifest_0")
