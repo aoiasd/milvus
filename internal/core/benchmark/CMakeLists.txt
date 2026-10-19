@@ -25,7 +25,11 @@ add_executable(sorted_int64_lookup_benchmark SortedInt64LookupBenchmark.cpp)
 target_include_directories(sorted_int64_lookup_benchmark PRIVATE ${CMAKE_HOME_DIRECTORY}/src)
 install(TARGETS sorted_int64_lookup_benchmark DESTINATION benchmark)
 
-add_executable(raw_column_access_benchmark RawColumnAccessBenchmark.cpp)
+# Isolate masked kernels so they do not change baseline-loop inlining.
+add_executable(raw_column_access_benchmark
+        RawColumnAccessBenchmark.cpp
+        RawJsonMaskedTakeBenchmark.cpp
+        RawOffsetLookupBenchmark.cpp)
 target_include_directories(raw_column_access_benchmark PRIVATE
         ${CMAKE_HOME_DIRECTORY}/src
         ${CMAKE_HOME_DIRECTORY}/unittest
