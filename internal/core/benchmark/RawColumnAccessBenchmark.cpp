@@ -37,6 +37,7 @@
 
 #include <folly/init/Init.h>
 
+#include "RawJsonTakeBenchmark.h"
 #include "cachinglayer/Manager.h"
 #include "common/Array.h"
 #include "common/EasyAssert.h"
@@ -1183,6 +1184,16 @@ InitializeMilvusBenchmarkEnvironment() {
 }
 
 }  // namespace
+
+RawJsonTakeBenchmarkInput
+GetRawJsonTakeBenchmarkInput(bool shuffled) {
+    auto& fixture = GetFixture();
+    return {fixture.segment()->GetChunkedColumn(fixture.field_id(9)),
+            fixture.offsets(shuffled ? TakePattern::SparseShuffled25
+                                     : TakePattern::DenseOrdered),
+            kWindowRows};
+}
+
 }  // namespace milvus::benchmark_test
 
 int

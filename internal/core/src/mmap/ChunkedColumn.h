@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -399,7 +400,10 @@ class ChunkedColumnBase : public ChunkedColumnInterface {
             static_cast<segcore::storagev1translator::CTMeta*>(slot_->meta());
         return std::make_unique<ColumnPlanner>(
             meta->num_rows_until_chunk_,
-            OffsetLookupOptions{OffsetLookupStrategy::Bucket,
+            // Test-branch-only same-binary policy comparison.
+            OffsetLookupOptions{std::getenv("MILVUS_BENCH_PER_OFFSET_LOOKUP")
+                                    ? OffsetLookupStrategy::PerOffset
+                                    : OffsetLookupStrategy::Bucket,
                                 num_chunks_ > 1 ? meta->virt_chunk_order_ : 0,
                                 &meta->vcid_to_cid_arr_});
     }
