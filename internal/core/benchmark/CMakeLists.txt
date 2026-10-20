@@ -29,6 +29,7 @@ install(TARGETS sorted_int64_lookup_benchmark DESTINATION benchmark)
 add_executable(raw_column_access_benchmark
         RawColumnAccessBenchmark.cpp
         RawJsonMaskedTakeBenchmark.cpp
+        RawJsonReadStagesBenchmark.cpp
         RawOffsetLookupBenchmark.cpp)
 target_include_directories(raw_column_access_benchmark PRIVATE
         ${CMAKE_HOME_DIRECTORY}/src
