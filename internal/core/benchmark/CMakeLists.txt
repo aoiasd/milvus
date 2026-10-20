@@ -31,10 +31,11 @@ add_executable(raw_column_access_benchmark
         RawJsonMaskedTakeBenchmark.cpp
         RawJsonReadStagesBenchmark.cpp
         RawOffsetLookupBenchmark.cpp)
-target_include_directories(raw_column_access_benchmark PRIVATE
+# Tantivy also exports output/include, which can contain stale dependency headers.
+target_include_directories(raw_column_access_benchmark BEFORE PRIVATE
+        ${milvus-common_INCLUDE_DIRS}
         ${CMAKE_HOME_DIRECTORY}/src
         ${CMAKE_HOME_DIRECTORY}/unittest
-        ${CMAKE_HOME_DIRECTORY}/output/include
         ${CMAKE_HOME_DIRECTORY}/thirdparty/tantivy
         ${CMAKE_HOME_DIRECTORY}/thirdparty/tantivy/tantivy-binding/include
         ${MILVUS_STORAGE_INCLUDE_DIR}
