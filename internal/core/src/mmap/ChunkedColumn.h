@@ -45,6 +45,10 @@
 
 namespace milvus {
 
+namespace benchmark_test {
+struct RawJsonBenchmarkAccess;
+}
+
 using namespace milvus::cachinglayer;
 
 std::pair<size_t, size_t> inline GetChunkIDByOffset(
@@ -86,6 +90,9 @@ std::pair<std::vector<milvus::cachinglayer::cid_t>,
 }
 
 class ChunkedColumnBase : public ChunkedColumnInterface {
+    // Diagnostic access lives only on vortex-test, not in the product PR.
+    friend struct benchmark_test::RawJsonBenchmarkAccess;
+
  public:
     explicit ChunkedColumnBase(std::shared_ptr<CacheSlot<Chunk>> slot,
                                const FieldMeta& field_meta)
