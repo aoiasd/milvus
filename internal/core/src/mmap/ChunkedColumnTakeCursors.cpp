@@ -93,6 +93,12 @@ ValidateTakeTargetType(DataType data_type,
 
 template <bool HasCandidateMask, TakePinPolicy PinPolicy>
 class RawTakeResult final : public ChunkedColumnInterface::TakeResult {
+    // Benchmark the real resolver without per-row clocks or a public getter.
+    friend uint64_t
+    BenchmarkRawTakeCells(const ChunkedColumnInterface::TakeResult&,
+                          uint64_t,
+                          int64_t);
+
  public:
     using CellAccess = std::conditional_t<PinPolicy == TakePinPolicy::Batch,
                                           RawTakeCellRead,
@@ -766,5 +772,25 @@ ChunkedColumnInterface::Take(milvus::OpContext* op_ctx,
                ? with_policy.template operator()<TakePinPolicy::Batch>()
                : with_policy.template operator()<TakePinPolicy::CurrentCell>();
 }
+
+namespace detail {
+
+uint64_t
+BenchmarkRawTakeCells(const ChunkedColumnInterface::TakeResult& result,
+                      uint64_t digest,
+                      int64_t row_start) {
+    // The benchmark creates this exact unmasked Raw Batch specialization.
+    const auto& raw =
+        static_cast<const RawTakeResult<false, TakePinPolicy::Batch>&>(result);
+    const auto size = raw.Size();
+    for (int64_t i = 0; i < size; ++i) {
+        const auto [chunk, offset] = raw.ResolveBorrowed(i);
+        digest = (digest * 131) ^ (reinterpret_cast<uintptr_t>(chunk) >> 3) ^
+                 (offset * 131 + row_start + i);
+    }
+    return digest;
+}
+
+}  // namespace detail
 
 }  // namespace milvus
