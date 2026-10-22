@@ -33,6 +33,10 @@
 
 namespace milvus {
 
+namespace benchmark_test {
+struct RawTakeItemBenchmarkAccess;
+}
+
 namespace detail {
 class ColumnFilter;
 using ColumnFilterPtr = std::shared_ptr<const ColumnFilter>;
@@ -338,6 +342,8 @@ struct TakeItemState {
 // destruction on every backend. Reconcile CurrentCell invalidation before
 // promising that lifetime; escaping values require GetOwn and its retained owner.
 class TakeResult {
+    friend struct benchmark_test::RawTakeItemBenchmarkAccess;
+
  public:
     virtual ~TakeResult() = default;
 
