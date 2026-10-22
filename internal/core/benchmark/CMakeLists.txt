@@ -30,6 +30,7 @@ add_executable(raw_column_access_benchmark
         RawColumnAccessBenchmark.cpp
         RawJsonMaskedTakeBenchmark.cpp
         RawJsonReadStagesBenchmark.cpp
+        RawTakeItemBenchmark.cpp
         RawJsonBenchmarkAccess.cpp
         RawOffsetLookupBenchmark.cpp)
 # Tantivy also exports output/include, which can contain stale dependency headers.
