@@ -186,8 +186,8 @@ RunCopyPair(benchmark::State& state,
         offsets.size());
 }
 
-// Both arms use exactly the same Take/Batch path. Only the output string
-// assignment is changed back to the pre-migration expression.
+// Compare output expressions on the same Take/Batch path; production uses
+// the legacy temporary-string construction.
 template <bool LegacyTemporary>
 uint64_t
 TakeOutput(const RawJsonTakeBenchmarkInput& input,
@@ -325,7 +325,7 @@ ReadTakeWindow(PipelineWindow& window, uint64_t digest, int64_t start) {
         const auto item = items[i];
         if (item.is_valid) {
             if constexpr (Copy) {
-                values->at(i).assign(item.value->data());
+                values->at(i) = std::string(item.value->data());
             } else {
                 digest = Consume(digest, item.value->data(), start + i);
             }
