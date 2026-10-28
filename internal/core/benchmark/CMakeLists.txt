@@ -29,6 +29,7 @@ install(TARGETS sorted_int64_lookup_benchmark DESTINATION benchmark)
 add_executable(raw_column_access_benchmark
         RawColumnAccessBenchmark.cpp
         RawJsonMaskedTakeBenchmark.cpp
+        VortexMaskedTakeBenchmark.cpp
         RawJsonReadStagesBenchmark.cpp
         RawTakeItemBenchmark.cpp
         RawJsonBenchmarkAccess.cpp
