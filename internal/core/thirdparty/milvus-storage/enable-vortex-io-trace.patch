@@ -1,15 +1,13 @@
 diff --git a/cpp/CMakeLists.txt b/cpp/CMakeLists.txt
 --- a/cpp/CMakeLists.txt
 +++ b/cpp/CMakeLists.txt
-@@ -12,4 +12,5 @@ option(WITH_JNI "Build with JNI library." OFF)
+@@ -12,3 +12,4 @@ option(WITH_JNI "Build with JNI library." OFF)
  option(WITH_PYTHON_BINDING "Build for Python bindings with hidden symbols." OFF)
  option(WITH_FIU "Build with fault injection support (libfiu)." OFF)
- option(WITH_CRT "Build with AWS S3 CRT support." OFF)
 +option(WITH_VORTEX_IO_TRACE "Build Vortex source IO trace diagnostics." OFF)
  option(ARROW_WITH_JEMALLOC "Build with jemalloc." OFF)
-@@ -62,3 +63,6 @@ if (WITH_CRT)
-   list(APPEND CORROSION_FEATURES s3-crt-async)
- endif()
+@@ -62,2 +63,5 @@ set(RUST_BRIDGE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/src/format/bridge/rust)
+ set(CORROSION_FEATURES talon)
 +if (WITH_VORTEX_IO_TRACE)
 +  list(APPEND CORROSION_FEATURES io-trace)
 +endif()
