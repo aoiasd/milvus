@@ -75,7 +75,7 @@ GetVortexJsonColumn() {
             std::make_shared<arrow::fs::LocalFileSystem>(),
             schema,
             path,
-            *properties);
+            properties);
         AssertInfo(writer_result.ok(),
                    "benchmark Vortex open: {}",
                    writer_result.status().ToString());
