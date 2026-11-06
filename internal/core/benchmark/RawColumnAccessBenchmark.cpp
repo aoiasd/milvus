@@ -46,6 +46,7 @@
 #include "common/common_type_c.h"
 #include "mmap/ChunkedColumnInterface.h"
 #include "segcore/SegmentSealed.h"
+#include "segcore/SegmentChunkReader.h"
 #include "segcore/arrow_fs_c.h"
 #include "storage/LocalChunkManagerSingleton.h"
 #include "storage/MmapManager.h"
@@ -1045,8 +1046,169 @@ RunPairedCompareTakeBenchmark(benchmark::State& state,
     state.SetItemsProcessed(iterations * item_count * 2);
 }
 
+// Compare the real SegmentChunkReader callers, including their variant and
+// std::function cost. Keep the legacy getter here only, never in the product.
+template <typename T>
+void
+RunPairedReaderBenchmark(benchmark::State& state,
+                         size_t field_index,
+                         bool take,
+                         bool continuous,
+                         TakePattern pattern) {
+    auto& fixture = GetFixture();
+    auto* segment = fixture.segment();
+    const auto field = fixture.field_id(field_index);
+    const auto type = kFieldCases[field_index].data_type;
+    const auto& offsets = fixture.offsets(pattern);
+    const auto run = [&](bool legacy) {
+        segcore::SegmentChunkReader reader(nullptr, segment, kRowCount);
+        segcore::ColumnScanState scan_state(continuous
+                                                ? ScanPinPolicy::CursorOwned
+                                                : ScanPinPolicy::ResultOwned);
+        int64_t chunk_id = 0, chunk_pos = 0;
+        uint64_t digest = 0;
+        segcore::MultipleChunkDataAccessor sequential;
+        const auto rows =
+            take ? static_cast<int64_t>(offsets.size()) : kRowCount;
+        for (int64_t start = 0; start < rows; start += kWindowRows) {
+            const auto count = std::min(kWindowRows, rows - start);
+            segcore::ChunkDataAccessor by_offsets;
+            if (take && !legacy) {
+                by_offsets = reader.GetDataAccessorByOffsets(
+                    type,
+                    field,
+                    OffsetView::From(offsets.data() + start, count));
+            } else if (!take && (!continuous || !sequential)) {
+                if (legacy) {
+                    const auto chunks = reader.NumChunkData(field);
+                    AssertInfo(chunk_id < chunks,
+                               "legacy reader chunk overflow");
+                    auto pin = reader.ChunkData<T>(field, chunk_id);
+                    auto span = pin.get();
+                    auto* data = span.data();
+                    auto valid = span.validity();
+                    auto size = reader.ChunkSize(field, chunk_id);
+                    sequential =
+                        [&,
+                         pin = std::move(pin),
+                         data,
+                         valid,
+                         size,
+                         chunks]() mutable -> segcore::data_access_type {
+                        if (chunk_pos >= size) {
+                            ++chunk_id;
+                            chunk_pos = 0;
+                            AssertInfo(chunk_id < chunks,
+                                       "legacy reader chunk overflow");
+                            pin = reader.ChunkData<T>(field, chunk_id);
+                            data = pin.get().data();
+                            valid = pin.get().validity();
+                            size = reader.ChunkSize(field, chunk_id);
+                        }
+                        const auto pos = chunk_pos++;
+                        return valid && !valid[pos]
+                                   ? segcore::data_access_type(std::nullopt)
+                                   : segcore::data_access_type(data[pos]);
+                    };
+                } else {
+                    sequential = reader.GetMultipleChunkDataAccessor(
+                        type, field, chunk_id, chunk_pos, count, &scan_state);
+                }
+            }
+            int64_t cached_chunk = -1;
+            segcore::ChunkDataAccessor chunk_accessor;
+            for (int64_t i = 0; i < count; ++i) {
+                segcore::data_access_type value;
+                if (!take) {
+                    value = sequential();
+                } else if (!legacy) {
+                    value = by_offsets(i);
+                } else {
+                    const auto [chunk, pos] =
+                        reader.GetChunkByOffset(field, offsets[start + i]);
+                    if (chunk != cached_chunk) {
+                        chunk_accessor =
+                            reader.GetChunkDataAccessor(type, field, chunk);
+                        cached_chunk = chunk;
+                    }
+                    value = chunk_accessor(pos);
+                }
+                digest = MixDigest(
+                    digest,
+                    value ? ValueDigest(segcore::get_from_variant<T>(value))
+                          : 0,
+                    start + i);
+            }
+            if (!continuous) {
+                sequential = {};
+            }
+        }
+        return digest;
+    };
+    const auto expected = run(true);
+    AssertInfo(run(false) == expected, "scalar getter checksum differs");
+    int64_t old_ns = 0, new_ns = 0, pair = 0;
+    const auto measure = [&](bool legacy, int64_t& elapsed) {
+        const auto start = ThreadCpuTimeNanos();
+        const auto digest = run(legacy);
+        elapsed += ThreadCpuTimeNanos() - start;
+        benchmark::DoNotOptimize(digest);
+        return digest == expected;
+    };
+    for (auto _ : state) {
+        const auto valid =
+            (pair++ & 1) ? measure(false, new_ns) && measure(true, old_ns)
+                         : measure(true, old_ns) && measure(false, new_ns);
+        if (!valid) {
+            state.SkipWithError("scalar getter checksum changed");
+            break;
+        }
+    }
+    if (state.iterations() && old_ns > 0) {
+        state.counters["legacy_cpu_us"] = benchmark::Counter(
+            old_ns / 1000.0, benchmark::Counter::kAvgIterations);
+        state.counters["interface_cpu_us"] = benchmark::Counter(
+            new_ns / 1000.0, benchmark::Counter::kAvgIterations);
+        state.counters["interface_over_legacy"] =
+            static_cast<double>(new_ns) / old_ns;
+    }
+}
+
 bool
 RegisterBenchmarks() {
+    const auto register_reader = []<typename T>(size_t index) {
+        for (const bool take : {false, true}) {
+            for (const bool continuous : {false, true}) {
+                if (take && continuous) {
+                    continue;
+                }
+                for (const auto pattern : kTakePatterns) {
+                    if (!take && pattern != TakePattern::DenseOrdered) {
+                        continue;
+                    }
+                    const auto name = std::string("RawScalarReader/") +
+                                      (take         ? "Take/"
+                                       : continuous ? "Continuous/"
+                                                    : "Window/") +
+                                      TakePatternName(pattern) + "/" +
+                                      kFieldCases[index].name;
+                    benchmark::RegisterBenchmark(
+                        name.c_str(), [=](benchmark::State& state) {
+                            RunPairedReaderBenchmark<T>(
+                                state, index, take, continuous, pattern);
+                        });
+                }
+            }
+        }
+    };
+    register_reader.template operator()<bool>(0);
+    register_reader.template operator()<int8_t>(1);
+    register_reader.template operator()<int16_t>(2);
+    register_reader.template operator()<int32_t>(3);
+    register_reader.template operator()<int64_t>(4);
+    register_reader.template operator()<float>(5);
+    register_reader.template operator()<double>(6);
+    register_reader.template operator()<int64_t>(7);
     for (const auto pattern : kTakePatterns) {
         for (const bool project : {false, true}) {
             const auto name = std::string("RawJsonOutput/") +
