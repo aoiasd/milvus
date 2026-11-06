@@ -86,9 +86,9 @@ SegmentChunkReader::GetMultipleChunkScanDataAccessor(
     }
 
     struct BatchState {
+        ScanBatch batch;
         const T* values = nullptr;
         int64_t batch_pos = 0;
-        ScanBatch batch;
     };
     auto state = std::make_shared<BatchState>();
     const auto num_chunks = NumChunkData(field_id);
