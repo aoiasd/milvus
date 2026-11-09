@@ -44,6 +44,7 @@
 #include "common/Json.h"
 #include "common/Schema.h"
 #include "common/common_type_c.h"
+#include "exec/expression/ColumnExpr.h"
 #include "mmap/ChunkedColumnInterface.h"
 #include "segcore/SegmentSealed.h"
 #include "segcore/SegmentChunkReader.h"
@@ -1060,39 +1061,75 @@ RunPairedReaderBenchmark(benchmark::State& state,
     const auto field = fixture.field_id(field_index);
     const auto type = kFieldCases[field_index].data_type;
     const auto& offsets = fixture.offsets(pattern);
+    const auto saved_policy =
+        segcore::SegcoreConfig::default_config().get_scan_cursor_owns_pin();
+    struct RestorePolicy {
+        bool saved;
+        ~RestorePolicy() {
+            segcore::SegcoreConfig::default_config().set_scan_cursor_owns_pin(
+                saved);
+        }
+    } restore{saved_policy};
+    segcore::SegcoreConfig::default_config().set_scan_cursor_owns_pin(
+        continuous);
+    auto logical =
+        std::make_shared<expr::ColumnExpr>(expr::ColumnInfo(field, type));
+    std::vector<exec::OffsetVector> windows;
+    if (take) {
+        for (int64_t start = 0; start < offsets.size(); start += kWindowRows) {
+            auto& input = windows.emplace_back();
+            for (int64_t i = start;
+                 i < std::min<int64_t>(start + kWindowRows, offsets.size());
+                 ++i) {
+                input.push_back(offsets[i]);
+            }
+        }
+    }
     const auto run = [&](bool legacy) {
         segcore::SegmentChunkReader reader(nullptr, segment, kRowCount);
-        segcore::ColumnScanState scan_state(continuous
-                                                ? ScanPinPolicy::CursorOwned
-                                                : ScanPinPolicy::ResultOwned);
+        std::unique_ptr<exec::PhyColumnExpr> expression;
+        if (!legacy) {
+            expression = std::make_unique<exec::PhyColumnExpr>(
+                std::vector<std::shared_ptr<exec::Expr>>{},
+                logical,
+                "direct scalar benchmark",
+                nullptr,
+                segment,
+                kRowCount,
+                kWindowRows);
+        }
         int64_t chunk_id = 0, chunk_pos = 0;
         uint64_t digest = 0;
         segcore::MultipleChunkDataAccessor sequential;
         const auto rows =
             take ? static_cast<int64_t>(offsets.size()) : kRowCount;
+        exec::EvalCtx context(nullptr);
         for (int64_t start = 0; start < rows; start += kWindowRows) {
             const auto count = std::min(kWindowRows, rows - start);
-            segcore::ChunkDataAccessor by_offsets;
-            if (take && !legacy) {
-                by_offsets = reader.GetDataAccessorByOffsets(
-                    type,
-                    field,
-                    OffsetView::From(offsets.data() + start, count));
-            } else if (!take && (!continuous || !sequential)) {
-                if (legacy) {
+            std::shared_ptr<ColumnVector> output;
+            if (!legacy) {
+                context.set_offset_input(take ? &windows[start / kWindowRows]
+                                              : nullptr);
+                VectorPtr result;
+                expression->Eval(context, result);
+                output = std::static_pointer_cast<ColumnVector>(result);
+            } else {
+                output = std::make_shared<ColumnVector>(type, count);
+                TargetBitmapView valid(output->GetValidRawData(), count);
+                valid.set();
+                auto* values = output->RawAsValues<T>();
+                if (!take && (!continuous || !sequential)) {
                     const auto chunks = reader.NumChunkData(field);
-                    AssertInfo(chunk_id < chunks,
-                               "legacy reader chunk overflow");
                     auto pin = reader.ChunkData<T>(field, chunk_id);
                     auto span = pin.get();
                     auto* data = span.data();
-                    auto valid = span.validity();
+                    auto validity = span.validity();
                     auto size = reader.ChunkSize(field, chunk_id);
                     sequential =
                         [&,
                          pin = std::move(pin),
                          data,
-                         valid,
+                         validity,
                          size,
                          chunks]() mutable -> segcore::data_access_type {
                         if (chunk_pos >= size) {
@@ -1102,42 +1139,44 @@ RunPairedReaderBenchmark(benchmark::State& state,
                                        "legacy reader chunk overflow");
                             pin = reader.ChunkData<T>(field, chunk_id);
                             data = pin.get().data();
-                            valid = pin.get().validity();
+                            validity = pin.get().validity();
                             size = reader.ChunkSize(field, chunk_id);
                         }
                         const auto pos = chunk_pos++;
-                        return valid && !valid[pos]
+                        return validity && !validity[pos]
                                    ? segcore::data_access_type(std::nullopt)
                                    : segcore::data_access_type(data[pos]);
                     };
-                } else {
-                    sequential = reader.GetMultipleChunkDataAccessor(
-                        type, field, chunk_id, chunk_pos, count, &scan_state);
+                }
+                int64_t cached_chunk = -1;
+                segcore::ChunkDataAccessor accessor;
+                for (int64_t i = 0; i < count; ++i) {
+                    segcore::data_access_type value;
+                    if (!take) {
+                        value = sequential();
+                    } else {
+                        const auto [chunk, pos] =
+                            reader.GetChunkByOffset(field, offsets[start + i]);
+                        if (chunk != cached_chunk) {
+                            accessor =
+                                reader.GetChunkDataAccessor(type, field, chunk);
+                            cached_chunk = chunk;
+                        }
+                        value = accessor(pos);
+                    }
+                    if (value) {
+                        values[i] = segcore::get_from_variant<T>(value);
+                    } else {
+                        valid[i] = false;
+                    }
                 }
             }
-            int64_t cached_chunk = -1;
-            segcore::ChunkDataAccessor chunk_accessor;
+            const auto* values = output->RawAsValues<T>();
             for (int64_t i = 0; i < count; ++i) {
-                segcore::data_access_type value;
-                if (!take) {
-                    value = sequential();
-                } else if (!legacy) {
-                    value = by_offsets(i);
-                } else {
-                    const auto [chunk, pos] =
-                        reader.GetChunkByOffset(field, offsets[start + i]);
-                    if (chunk != cached_chunk) {
-                        chunk_accessor =
-                            reader.GetChunkDataAccessor(type, field, chunk);
-                        cached_chunk = chunk;
-                    }
-                    value = chunk_accessor(pos);
-                }
-                digest = MixDigest(
-                    digest,
-                    value ? ValueDigest(segcore::get_from_variant<T>(value))
-                          : 0,
-                    start + i);
+                digest =
+                    MixDigest(digest,
+                              output->ValidAt(i) ? ValueDigest(values[i]) : 0,
+                              start + i);
             }
             if (!continuous) {
                 sequential = {};
