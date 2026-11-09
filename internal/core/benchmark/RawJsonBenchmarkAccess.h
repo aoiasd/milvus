@@ -27,6 +27,8 @@ namespace milvus {
 class ChunkedColumnBase;
 
 namespace detail {
+class RawColumnPlanner;
+
 // All other stages can run against the pristine core without this probe.
 uint64_t
 BenchmarkRawTakeCells(const ChunkedColumnInterface::TakeResult& result,
@@ -42,7 +44,7 @@ using RawJsonLocations = std::pair<std::vector<int64_t>, std::vector<int64_t>>;
 struct RawJsonBenchmarkSource {
     const ChunkedColumnBase* raw;
     std::shared_ptr<cachinglayer::CacheSlot<Chunk>> slot;
-    std::shared_ptr<const ColumnPlanner> planner;
+    std::shared_ptr<const detail::RawColumnPlanner> planner;
 };
 
 RawJsonBenchmarkSource

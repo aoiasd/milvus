@@ -31,7 +31,8 @@ struct RawJsonBenchmarkAccess {
         const auto* raw = dynamic_cast<const ChunkedColumnBase*>(&column);
         AssertInfo(raw != nullptr && !raw->IsNullable(),
                    "pipeline benchmark requires non-nullable Raw V1");
-        return {raw, raw->slot_, raw->PlannerHandle()};
+        raw->Planner();
+        return {raw, raw->slot_, raw->planner_};
     }
 
     static RawJsonLocations

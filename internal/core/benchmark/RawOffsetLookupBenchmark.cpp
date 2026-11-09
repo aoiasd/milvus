@@ -43,7 +43,7 @@ enum class Lookup {
 
 Locations
 LocateOffsets(Lookup strategy,
-              const ColumnPlanner& planner,
+              const detail::RawColumnPlanner& planner,
               const std::vector<int64_t>& boundaries,
               int64_t bucket_order,
               const std::vector<int64_t>& buckets,
@@ -105,13 +105,13 @@ RunLookupBenchmark(benchmark::State& state,
     std::vector<int64_t> buckets;
     segcore::storagev1translator::virtual_chunk_config(
         boundaries.back(), cell_rows.size(), boundaries, bucket_order, buckets);
-    OffsetLookupOptions lookup_options;
+    detail::OffsetLookupOptions lookup_options;
     if (strategy == Lookup::ConfiguredBucket) {
-        lookup_options = {OffsetLookupStrategy::Bucket, bucket_order, &buckets};
+        lookup_options = {detail::OffsetLookupStrategy::Bucket, bucket_order, &buckets};
     } else if (strategy == Lookup::ConfiguredBatchBinary) {
-        lookup_options.strategy = OffsetLookupStrategy::BatchBinary;
+        lookup_options.strategy = detail::OffsetLookupStrategy::BatchBinary;
     }
-    const ColumnPlanner planner(boundaries, lookup_options);
+    const detail::RawColumnPlanner planner(boundaries, lookup_options);
 
     std::vector<int64_t> offsets;
     if (pattern == 3) {

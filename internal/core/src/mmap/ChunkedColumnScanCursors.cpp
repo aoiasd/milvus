@@ -21,7 +21,7 @@
 #include <utility>
 
 #include "mmap/ChunkedColumnFilter.h"
-#include "mmap/ChunkedColumnInterface.h"
+#include "mmap/ChunkedColumn.h"
 
 namespace milvus {
 namespace detail {
@@ -106,7 +106,7 @@ struct VectorArrayOwner {
 class RawScanCursor final : public ChunkedColumnInterface::ScanCursor {
  public:
     RawScanCursor(const ChunkedColumnInterface* column,
-                  const ColumnPlanner* planner,
+                  const RawColumnPlanner* planner,
                   milvus::OpContext* op_ctx,
                   int64_t start_offset,
                   ChunkedColumnInterface::TargetType target_type,
@@ -504,7 +504,7 @@ class RawScanCursor final : public ChunkedColumnInterface::ScanCursor {
     }
 
     const ChunkedColumnInterface* column_;
-    const ColumnPlanner* planner_{nullptr};
+    const RawColumnPlanner* planner_{nullptr};
     milvus::OpContext* op_ctx_;
     ChunkedColumnInterface::TargetType target_type_;
     ChunkedColumnInterface::ScanPinPolicy pin_policy_;
@@ -522,9 +522,9 @@ class RawScanCursor final : public ChunkedColumnInterface::ScanCursor {
 
 }  // namespace detail
 
-ChunkedColumnInterface::ScanResult
-ChunkedColumnInterface::Scan(milvus::OpContext* op_ctx,
-                             const ScanOptions& options) const {
+RawColumnBase::ScanResult
+RawColumnBase::Scan(milvus::OpContext* op_ctx,
+                    const ScanOptions& options) const {
     ValidateArrayViewTarget(options.target_type);
     if (options.output != ScanOutput::Data ||
         options.predicate != ScanPredicate::None) {
@@ -534,13 +534,14 @@ ChunkedColumnInterface::Scan(milvus::OpContext* op_ctx,
     if (!data_type.has_value()) {
         return nullptr;
     }
+    const auto* planner = &Planner();
     AssertInfo(options.target_type == TargetType::None ||
                    CanReadAsTargetType(*data_type, options.target_type),
                "data scan target {} does not match column type {}",
                static_cast<int>(options.target_type),
                *data_type);
     return std::make_unique<detail::RawScanCursor>(this,
-                                                   &Planner(),
+                                                   planner,
                                                    op_ctx,
                                                    options.start_offset,
                                                    options.target_type,
