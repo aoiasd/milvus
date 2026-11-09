@@ -230,8 +230,7 @@ PhyCompareFilterExpr::ExecCompareExprDispatcher(OpType op, EvalCtx& context) {
         // Consecutive offsets frequently fall in the same left/right chunk;
         // keep each column's data accessor (which pins its chunk) across
         // iterations and rebuild it only when that column's chunk id changes.
-        // Safe on both sealed and growing (data and the chunked validity
-        // storage have stable per-chunk buffers).
+        // Growing data and validity have stable per-chunk buffers.
         int64_t cached_left_chunk_id = -1;
         int64_t cached_right_chunk_id = -1;
         segcore::ChunkDataAccessor left;
@@ -263,15 +262,14 @@ PhyCompareFilterExpr::ExecCompareExprDispatcher(OpType op, EvalCtx& context) {
                                   cached_right_chunk_id,
                                   right);
             if (!left_opt.has_value() || !right_opt.has_value()) {
-                res[processed_rows] = false;
-                valid_res[processed_rows] = false;
+                res[i] = false;
+                valid_res[i] = false;
             } else {
-                res[processed_rows] = boost::apply_visitor(
+                res[i] = boost::apply_visitor(
                     milvus::query::Relational<decltype(op)>{},
                     left_opt.value(),
                     right_opt.value());
             }
-            processed_rows++;
         }
         return res_vec;
     }
