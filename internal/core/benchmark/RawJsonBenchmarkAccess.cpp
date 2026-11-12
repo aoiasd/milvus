@@ -29,8 +29,7 @@ struct RawJsonBenchmarkAccess {
     static RawJsonBenchmarkSource
     Source(const ChunkedColumnInterface& column) {
         const auto* raw = dynamic_cast<const ChunkedColumnBase*>(&column);
-        AssertInfo(raw != nullptr && !raw->IsNullable(),
-                   "pipeline benchmark requires non-nullable Raw V1");
+        AssertInfo(raw != nullptr, "pipeline benchmark requires Raw V1");
         raw->Planner();
         return {raw, raw->slot_, raw->planner_};
     }
@@ -65,6 +64,21 @@ VisitLegacyRawJson(const ChunkedColumnBase& column,
             Json(value),
             i,
             RawJsonBenchmarkAccess::Valid(column, chunk, locations.second[i]));
+    }
+}
+
+void
+VisitLegacyRawStrings(
+    const RawJsonBenchmarkSource& source,
+    const std::function<void(std::string_view, size_t, bool)>& consume) {
+    auto pinned = SemiInlineGet(source.slot->PinAllCells(nullptr));
+    const auto rows = source.raw->NumRows();
+    const bool nullable = source.raw->IsNullable();
+    for (int64_t i = 0; i < rows; ++i) {
+        const auto [cell, offset] = source.raw->GetChunkIDByOffset(i);
+        auto* chunk = pinned->get_cell_of(cell);
+        const auto valid = !nullable || chunk->isValid(offset);
+        consume(static_cast<StringChunk*>(chunk)->operator[](offset), i, valid);
     }
 }
 

@@ -61,5 +61,11 @@ VisitLegacyRawJson(const ChunkedColumnBase& column,
                    const RawJsonLocations& locations,
                    const std::function<void(Json, size_t, bool)>& consume);
 
+// The removed V1 full-column callback, including its original bulk pin scope.
+void
+VisitLegacyRawStrings(
+    const RawJsonBenchmarkSource& source,
+    const std::function<void(std::string_view, size_t, bool)>& consume);
+
 }  // namespace benchmark_test
 }  // namespace milvus

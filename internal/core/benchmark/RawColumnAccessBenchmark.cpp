@@ -38,13 +38,17 @@
 #include <folly/init/Init.h>
 
 #include "RawJsonTakeBenchmark.h"
+#include "RawJsonBenchmarkAccess.h"
 #include "cachinglayer/Manager.h"
 #include "common/Array.h"
 #include "common/EasyAssert.h"
 #include "common/Json.h"
+#include "common/GeometryCache.h"
 #include "common/Schema.h"
 #include "common/common_type_c.h"
 #include "exec/expression/ColumnExpr.h"
+#include "index/scalar/text/TextIndexBuilder.h"
+#include "index/scalar/text/TextIndexReader.h"
 #include "mmap/ChunkedColumnInterface.h"
 #include "segcore/SegmentSealed.h"
 #include "segcore/SegmentChunkReader.h"
@@ -285,6 +289,13 @@ class RawColumnBenchmarkFixture {
             schema_->AddDebugField(
                 "benchmark_compare_nullable_INT64", DataType::INT64, true));
 
+        text_long_ =
+            schema_->AddDebugField("benchmark_text_long", DataType::VARCHAR);
+        text_nullable_ = schema_->AddDebugField(
+            "benchmark_text_nullable", DataType::VARCHAR, true);
+        geometry_nullable_ = schema_->AddDebugField(
+            "benchmark_geometry_nullable", DataType::GEOMETRY, true);
+
         std::unordered_map<int64_t, std::vector<FieldDataPtr>> field_chunks;
         int64_t row_start = 0;
         for (int64_t chunk_id = 0; chunk_id < kChunkCount; ++chunk_id) {
@@ -299,6 +310,20 @@ class RawColumnBenchmarkFixture {
                                             false,
                                             false);
             SetInt64Field(&dataset, pk_id, row_start);
+            for (auto& field : *dataset.raw_->mutable_fields_data()) {
+                if (field.field_id() == text_long_.get() ||
+                    field.field_id() == text_nullable_.get()) {
+                    auto* values = field.mutable_scalars()
+                                       ->mutable_string_data()
+                                       ->mutable_data();
+                    for (auto& value : *values) {
+                        value =
+                            "milvus vector search database local format "
+                            "benchmark document with several tokens " +
+                            value;
+                    }
+                }
+            }
             for (int64_t i = 0; i < chunk_rows; ++i) {
                 dataset.row_ids_[i] = row_start + i;
                 dataset.timestamps_[i] = row_start + i;
@@ -406,6 +431,16 @@ class RawColumnBenchmarkFixture {
         return field_ids_.at(index);
     }
 
+    FieldId
+    full_column_field(bool geometry, bool nullable, bool long_text) const {
+        if (geometry) {
+            return nullable ? geometry_nullable_ : field_ids_[10];
+        }
+        return nullable    ? text_nullable_
+               : long_text ? text_long_
+                           : field_ids_[8];
+    }
+
     const std::vector<int64_t>&
     offsets(TakePattern pattern) const {
         return offsets_.at(pattern);
@@ -458,6 +493,9 @@ class RawColumnBenchmarkFixture {
     }
 
     SchemaPtr schema_;
+    FieldId text_long_{0};
+    FieldId text_nullable_{0};
+    FieldId geometry_nullable_{0};
     std::unique_ptr<segcore::SegmentSealed> segment_;
     std::vector<FieldId> field_ids_;
     std::vector<std::pair<FieldId, FieldId>> compare_field_ids_;
@@ -1213,8 +1251,182 @@ RunPairedReaderBenchmark(benchmark::State& state,
     }
 }
 
+// Reproduce the two #55211 consumers on the same hot Raw source. The read-only
+// variants isolate access overhead; Build includes the actual downstream work.
+void
+RunFullColumnBenchmark(benchmark::State& state,
+                       bool geometry,
+                       bool nullable,
+                       bool long_text,
+                       bool build) {
+    using Column = ChunkedColumnInterface;
+    const auto column = GetFixture().segment()->GetChunkedColumn(
+        GetFixture().full_column_field(geometry, nullable, long_text));
+    const auto source = GetRawJsonBenchmarkSource(*column);
+    const auto run = [&](bool legacy) {
+        std::unique_ptr<index::TextIndexBuilder> builder;
+        std::unique_ptr<exec::SimpleGeometryCache> cache;
+        if (build) {
+            if (geometry) {
+                cache = std::make_unique<exec::SimpleGeometryCache>();
+            } else {
+                builder = std::make_unique<index::TextIndexBuilder>(
+                    index::TextIndexBuildParams{.field_name = "benchmark_text",
+                                                .unique_id = "benchmark_text"});
+            }
+        }
+        uint64_t digest = 0;
+        int64_t rows = 0;
+        size_t valid_rows = 0;
+        const auto consume = [&](std::string_view value,
+                                 size_t offset,
+                                 bool valid) {
+            AssertInfo(offset == rows, "full-column output is not contiguous");
+            digest = MixDigest(digest, valid ? StringDigest(value) : 0, rows++);
+            valid_rows += valid;
+            if (cache) {
+                cache->AppendDataAt(offset,
+                                    valid ? value.data() : nullptr,
+                                    valid ? value.size() : 0);
+            }
+        };
+        {
+            if (legacy && !geometry) {
+                // Old BuildSource also invoked AddBatch once per VARCHAR row.
+                VisitLegacyRawStrings(
+                    source, [&](auto value, size_t offset, bool valid) {
+                        consume(value, offset, valid);
+                        if (builder) {
+                            const std::array<std::string_view, 1> values{value};
+                            const std::array<bool, 1> validity{valid};
+                            builder->AddBatch({values,
+                                               nullable
+                                                   ? ValidityView::FromExpanded(
+                                                         validity.data())
+                                                   : ValidityView{}});
+                        }
+                    });
+            } else if (legacy) {
+                for (int64_t cell = 0; cell < column->num_chunks(); ++cell) {
+                    auto pin = column->StringViews(nullptr, cell);
+                    const auto& [values, validity] = pin.get();
+                    for (size_t i = 0; i < values.size(); ++i) {
+                        consume(values[i], rows, !validity || validity[i]);
+                    }
+                }
+            } else {
+                auto cursor = column->Scan(
+                    nullptr,
+                    Column::ScanOptions::ForData(
+                        0,
+                        Column::TargetType::StringView,
+                        geometry ? Column::ScanPinPolicy::CursorOwned
+                                 : Column::ScanPinPolicy::AllCells));
+                AssertInfo(cursor != nullptr, "full-column Scan unavailable");
+                Column::ScanBatch batch;
+                while (cursor->Next(geometry ? kRowCount - rows : kWindowRows,
+                                    Column::ScanReadMode::DataAndValidity,
+                                    &batch)) {
+                    AssertInfo(batch.row_id_start == rows && batch.size > 0 &&
+                                   batch.size <= kRowCount - rows,
+                               "invalid full-column Scan batch");
+                    const auto* values =
+                        batch.values.data_as<std::string_view>();
+                    for (int64_t i = 0; i < batch.size; ++i) {
+                        consume(values[i],
+                                rows,
+                                !batch.validity || batch.validity[i]);
+                    }
+                    if (builder) {
+                        builder->AddBatch(
+                            {{values, static_cast<size_t>(batch.size)},
+                             nullable ? batch.validity : ValidityView{}});
+                    }
+                }
+            }
+        }
+        AssertInfo(rows == kRowCount, "full-column benchmark lost rows");
+        if (builder) {
+            auto artifact = std::move(*builder).Finish(rows);
+            auto storage = std::move(*artifact).IntoStorage();
+            AssertInfo(storage->count_ == rows &&
+                           storage->validity_.ToBitmap().count() == valid_rows,
+                       "text index row domain differs");
+        }
+        if (cache) {
+            AssertInfo(cache->Size() == rows, "geometry cache lost rows");
+            size_t cached = 0;
+            for (int64_t i = 0; i < rows; ++i) {
+                cached += cache->GetByOffset(i) != nullptr;
+            }
+            AssertInfo(cached == valid_rows, "geometry cache validity differs");
+        }
+        return digest;
+    };
+    const auto expected = run(true);
+    AssertInfo(run(false) == expected, "full-column result differs");
+    int64_t old_cpu = 0, new_cpu = 0, old_wall = 0, new_wall = 0, pair = 0;
+    const auto measure = [&](bool legacy, int64_t& cpu, int64_t& wall) {
+        const auto wall_start = std::chrono::steady_clock::now();
+        const auto cpu_start = ThreadCpuTimeNanos();
+        const auto digest = run(legacy);
+        cpu += ThreadCpuTimeNanos() - cpu_start;
+        wall += std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - wall_start)
+                    .count();
+        benchmark::DoNotOptimize(digest);
+        return digest == expected;
+    };
+    for (auto _ : state) {
+        const bool valid = (pair++ & 1) ? measure(false, new_cpu, new_wall) &&
+                                              measure(true, old_cpu, old_wall)
+                                        : measure(true, old_cpu, old_wall) &&
+                                              measure(false, new_cpu, new_wall);
+        if (!valid) {
+            state.SkipWithError("full-column result changed");
+            break;
+        }
+    }
+    if (state.iterations() && old_cpu && old_wall) {
+        state.counters["legacy_cpu_us"] = benchmark::Counter(
+            old_cpu / 1000.0, benchmark::Counter::kAvgIterations);
+        state.counters["interface_cpu_us"] = benchmark::Counter(
+            new_cpu / 1000.0, benchmark::Counter::kAvgIterations);
+        state.counters["legacy_wall_us"] = benchmark::Counter(
+            old_wall / 1000.0, benchmark::Counter::kAvgIterations);
+        state.counters["interface_wall_us"] = benchmark::Counter(
+            new_wall / 1000.0, benchmark::Counter::kAvgIterations);
+        state.counters["interface_over_legacy"] =
+            static_cast<double>(new_cpu) / old_cpu;
+        state.counters["wall_over_legacy"] =
+            static_cast<double>(new_wall) / old_wall;
+    }
+}
+
 bool
 RegisterBenchmarks() {
+    for (const bool geometry : {false, true}) {
+        for (const bool nullable : {false, true}) {
+            for (const bool long_text : {false, true}) {
+                if (long_text && (geometry || nullable)) {
+                    continue;
+                }
+                for (const bool build : {false, true}) {
+                    const auto name = std::string("RawFullColumn/") +
+                                      (geometry ? "Geometry/" : "Text/") +
+                                      (nullable    ? "Nullable/"
+                                       : long_text ? "Long/"
+                                                   : "Short/") +
+                                      (build ? "Build" : "Read");
+                    benchmark::RegisterBenchmark(
+                        name.c_str(), [=](benchmark::State& state) {
+                            RunFullColumnBenchmark(
+                                state, geometry, nullable, long_text, build);
+                        });
+                }
+            }
+        }
+    }
     const auto register_reader = []<typename T>(size_t index) {
         for (const bool take : {false, true}) {
             for (const bool continuous : {false, true}) {
