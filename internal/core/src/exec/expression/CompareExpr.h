@@ -895,15 +895,16 @@ class PhyCompareFilterExpr : public Expr {
     VectorPtr
     ExecCompareExprDispatcher(OpType op, EvalCtx& context);
 
-    template <typename OpType>
+    template <typename T, typename U, typename OpType>
     VectorPtr
     ExecCompareWithValueLookup(OpType op, EvalCtx& context);
 
-    ColumnVectorPtr
+    bool
     GatherValues(const ValueLookupSource& source,
                  DataType data_type,
                  const int64_t* offsets,
-                 int64_t count) const;
+                 int64_t count,
+                 std::vector<segcore::data_access_type>& values) const;
 
     VectorPtr
     ExecCompareExprDispatcherForHybridSegment(EvalCtx& context);
