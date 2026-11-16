@@ -23,9 +23,6 @@ set_source_files_properties(
 add_library(milvus_exec OBJECT ${SOURCE_FILES})
 target_link_libraries(milvus_exec PUBLIC milvus_conan_deps)
 
-# Test-branch-only compiler accounting for the mixed comparison A/B experiment.
-set_property(SOURCE expression/CompareExpr.cpp APPEND PROPERTY COMPILE_OPTIONS -ftime-report)
-
 # ── Per-arch SIMD compile flags for runtime dispatch ──
 # Each SimdFilter*.cpp is compiled with arch-specific flags so xsimd
 # generates the correct instructions. The dispatcher (SimdFilter.cpp)
