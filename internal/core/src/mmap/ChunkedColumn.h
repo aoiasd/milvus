@@ -154,7 +154,6 @@ std::pair<std::vector<milvus::cachinglayer::cid_t>,
 class RawColumnBase : public ChunkedColumnInterface {
     // Test-only access; no diagnostic API enters the product PR.
     friend struct benchmark_test::RawJsonBenchmarkAccess;
-
  public:
     ScanResult
     Scan(milvus::OpContext* op_ctx, const ScanOptions& options) const override;

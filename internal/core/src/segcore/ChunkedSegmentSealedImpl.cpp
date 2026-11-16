@@ -12,6 +12,7 @@
 #include <numeric>
 #include "index/scalar/sort/SortedMembership.h"
 #include "ChunkedSegmentSealedImpl.h"
+#include "exec/expression/ExprCache.h"
 #include "segcore/default_fs.h"
 
 #include <cxxabi.h>
@@ -137,6 +138,7 @@
 #include "segcore/CacheMetricAttribution.h"
 #include "segcore/ConcurrentVector.h"
 #include "segcore/DeletedRecord.h"
+#include "segcore/OutputFields.h"
 #include "segcore/SegmentSealed.h"
 #include "segcore/TimestampIndex.h"
 #include "segcore/storagev1translator/ChunkTranslator.h"
@@ -728,6 +730,9 @@ make_persisted_index_entry(LoadIndexInfo& info) {
 // this translator cannot recreate the generation.
 class CompletedTextStorageTranslator final
     : public cachinglayer::Translator<index::TextIndexStorage> {
+    using CellResults = std::vector<
+        std::pair<cachinglayer::cid_t, std::unique_ptr<value_type>>>;
+
  public:
     CompletedTextStorageTranslator(
         std::unique_ptr<index::TextIndexStorage> storage,
@@ -782,10 +787,15 @@ class CompletedTextStorageTranslator final
         return key_;
     }
 
-    std::vector<std::pair<cachinglayer::cid_t,
-                          std::unique_ptr<index::TextIndexStorage>>>
+    CellResults
     get_cells(milvus::OpContext* ctx,
-              const std::vector<cachinglayer::cid_t>&) override {
+              const std::vector<cachinglayer::cid_t>& cids) override {
+        return folly::coro::blockingWait(get_cells_async(ctx, cids));
+    }
+
+    folly::coro::Task<CellResults>
+    get_cells_async(milvus::OpContext* ctx,
+                    const std::vector<cachinglayer::cid_t>&) override {
         CheckCancellation(ctx, segment_id_, "CompletedTextStorageTranslator");
         AssertInfo(storage_ != nullptr,
                    "completed text storage was already transferred");
@@ -793,7 +803,7 @@ class CompletedTextStorageTranslator final
                               std::unique_ptr<index::TextIndexStorage>>>
             result;
         result.emplace_back(0, std::move(storage_));
-        return result;
+        co_return result;
     }
 
     cachinglayer::Meta*
@@ -1553,6 +1563,11 @@ ChunkedSegmentSealedImpl::PrepareStructElementOffsets(
 class ChunkedSegmentSealedImpl::SealedReadSnapshot
     : public SegmentReadSnapshot {
  public:
+    exec::ExprCacheGenerationPtr
+    GetExprCacheGeneration() const override {
+        return state_->expr_cache_generation;
+    }
+
     explicit SealedReadSnapshot(
         std::shared_ptr<const PublishedSegmentState> state)
         : state_(std::move(state)) {
@@ -2451,11 +2466,21 @@ ChunkedSegmentSealedImpl::PublishStateOnline(
     if (!state) {
         return;
     }
-    auto publish_lease =
-        publish_mode == PublishMode::FailFast
-            ? operation_gate_.AcquirePublishFailFast(op_ctx, id_)
-            : operation_gate_.AcquirePublish(op_ctx, id_);
-    PublishState(publish_lease, state);
+    // Keep the old state alive outside the lease as well as its cache entries.
+    // Only logical retirement belongs in the publication critical section:
+    // backend detachment can wait for unrelated cache I/O on the global lock.
+    std::shared_ptr<const PublishedSegmentState> current;
+    {
+        auto publish_lease =
+            publish_mode == PublishMode::FailFast
+                ? operation_gate_.AcquirePublishFailFast(op_ctx, id_)
+                : operation_gate_.AcquirePublish(op_ctx, id_);
+        current = CapturePublishedState();
+        current->expr_cache_generation->Retire();
+        PublishState(publish_lease, state);
+    }
+    auto retired = exec::ExprResCacheManager::Instance().RetireGeneration(
+        id_, current->expr_cache_generation);
 }
 
 void
@@ -2659,16 +2684,18 @@ ChunkedSegmentSealedImpl::LoadColumnGroups(
     const auto load_cg_start = std::chrono::high_resolution_clock::now();
     CheckCancellation(
         op_ctx, id_, "ChunkedSegmentSealedImpl::LoadColumnGroups()");
-    auto properties = std::make_shared<milvus_storage::api::Properties>(
-        *milvus::storage::LoonFFIPropertiesSingleton::GetInstance()
-             .GetProperties());
+    auto properties = milvus::storage::LoonFFIPropertiesSingleton::GetInstance()
+                          .GetProperties();
     const auto column_groups = segment_load_info.GetColumnGroups();
 
     if (schema_snapshot->is_external_collection()) {
-        InjectExternalSpecProperties(*properties,
+        auto external_properties =
+            std::make_shared<milvus_storage::api::Properties>(*properties);
+        InjectExternalSpecProperties(*external_properties,
                                      segment_load_info.GetCollectionID(),
                                      schema_snapshot->get_external_source(),
                                      schema_snapshot->get_external_spec());
+        properties = std::move(external_properties);
     }
 
     const auto needed_columns = schema_snapshot->GetExternalColumnNames();
@@ -5419,10 +5446,11 @@ ChunkedSegmentSealedImpl::ChunkedSegmentSealedImpl(
 
 std::unique_ptr<ChunkedSegmentSealedImpl>
 ChunkedSegmentSealedImpl::PinReadState() const {
-    // Sharing PublishedSegmentState shares its column, index and reader handles;
-    // it neither duplicates segment data nor blocks future Reopen publication.
+    // Share column, index and reader handles, but give this independently
+    // published/destructed instance its own expression-cache generation.
     return std::unique_ptr<ChunkedSegmentSealedImpl>(
-        new ChunkedSegmentSealedImpl(*this, CapturePublishedState()));
+        new ChunkedSegmentSealedImpl(
+            *this, ClonePublishedState(CapturePublishedState())));
 }
 
 void
@@ -5430,10 +5458,16 @@ ChunkedSegmentSealedImpl::AdoptReadState(const ChunkedSegmentSealedImpl& read) {
     std::lock_guard<std::mutex> reopen_guard(reopen_mutex_);
     AssertInfo(id_ == read.id_ && read.read_state_fork_,
                "adopting a read state requires a fork of the same segment");
-    PublishStateOnline(read.CapturePublishedState());
+    PublishStateOnline(ClonePublishedState(read.CapturePublishedState()));
 }
 
 ChunkedSegmentSealedImpl::~ChunkedSegmentSealedImpl() {
+    // The token scopes cleanup to this incarnation even if another segment
+    // with the same ID has already been loaded in this process.
+    exec::RunExprCacheBestEffort([&] {
+        auto retired = exec::ExprResCacheManager::Instance().RetireGeneration(
+            id_, CapturePublishedState()->expr_cache_generation);
+    });
     if (mmap_descriptor_ != nullptr) {
         auto mm = storage::MmapManager::GetInstance().GetMmapChunkManager();
         mm->UnRegister(mmap_descriptor_);
@@ -5728,7 +5762,7 @@ ReadTextLobBatch(
     auto fs = milvus::segcore::GetDefaultArrowFileSystem();
 
     auto& cache = GetGlobalTextColumnCache();
-    return cache.ReadBatch(lob_base_path, fs, *properties, encoded_refs);
+    return cache.ReadBatch(lob_base_path, fs, properties, encoded_refs);
 }
 
 void
@@ -9411,7 +9445,7 @@ ChunkedSegmentSealedImpl::InitTextLobPaths(
 void
 ChunkedSegmentSealedImpl::LoadColumnGroups(
     const std::shared_ptr<milvus_storage::api::ColumnGroups>& column_groups,
-    const std::shared_ptr<milvus_storage::api::Properties>& properties,
+    const std::shared_ptr<const milvus_storage::api::Properties>& properties,
     const std::vector<std::pair<int, std::vector<FieldId>>>& eager_cg_field_ids,
     const std::vector<std::pair<int, std::vector<FieldId>>>& lazy_cg_field_ids,
     const std::vector<VortexColumnGroupLocalFormat>& local_formats,
@@ -9545,7 +9579,7 @@ ChunkedSegmentSealedImpl::ResolveVortexColumnGroupLocalFormats(
 void
 ChunkedSegmentSealedImpl::LoadVortexColumnGroup(
     const std::shared_ptr<milvus_storage::api::ColumnGroup>& column_group,
-    const std::shared_ptr<milvus_storage::api::Properties>& properties,
+    const std::shared_ptr<const milvus_storage::api::Properties>& properties,
     int64_t index,
     const std::vector<FieldId>& milvus_field_ids,
     const std::unordered_map<FieldId, FieldMeta>& field_metas,
@@ -9681,7 +9715,7 @@ ChunkedSegmentSealedImpl::LoadVortexColumnGroup(
 void
 ChunkedSegmentSealedImpl::LoadColumnGroup(
     const std::shared_ptr<milvus_storage::api::ColumnGroups>& column_groups,
-    const std::shared_ptr<milvus_storage::api::Properties>& properties,
+    const std::shared_ptr<const milvus_storage::api::Properties>& properties,
     int64_t index,
     const std::vector<FieldId>& milvus_field_ids,
     const SegmentLoadInfo& segment_load_info,
@@ -10256,52 +10290,46 @@ ChunkedSegmentSealedImpl::FillTargetEntry(const query::Plan* plan,
     bool used_take = TryTakeForSearch(
         plan, results.seg_offsets_.data(), size, results, snapshot, op_ctx);
 
-    std::unique_ptr<DataArray> field_data;
-    // Per-call OpContext keeps storage_usage scoped to this segment;
-    // sharing op_ctx across segments would double-count bytes. See
-    // SegmentInternalInterface::FillPrimaryKeys for the same pattern.
-    milvus::OpContext local_ctx;
-    local_ctx.runtime_load_priority = milvus::proto::common::LoadPriority::HIGH;
-    if (op_ctx != nullptr) {
-        local_ctx.cancellation_token = op_ctx->cancellation_token;
-        local_ctx.runtime_load_priority =
-            op_ctx->runtime_load_priority.value_or(
-                milvus::proto::common::LoadPriority::HIGH);
-    }
+    std::vector<FieldId> fields_to_fetch;
+    fields_to_fetch.reserve(plan->target_entries_.size());
     for (auto field_id : plan->target_entries_) {
-        // Skip fields already filled by take
         if (used_take && results.output_fields_data_.count(field_id) > 0) {
             continue;
         }
-        segcore::CheckCancellation(
-            op_ctx, get_segment_id(), field_id.get(), "FillTargetEntry");
+        fields_to_fetch.push_back(field_id);
+    }
+
+    auto fetch_one = [this, plan, snapshot, &results, size](
+                         FieldId field_id, milvus::OpContext* field_ctx) {
         auto& field_meta = plan->schema_->operator[](field_id);
         if (plan->schema_->get_dynamic_field_id().has_value() &&
             plan->schema_->get_dynamic_field_id().value() == field_id &&
             !plan->target_dynamic_fields_.empty()) {
             auto& target_dynamic_fields = plan->target_dynamic_fields_;
-            field_data = bulk_subscript_from_state(snapshot,
-                                                   &local_ctx,
-                                                   field_id,
-                                                   results.seg_offsets_.data(),
-                                                   size,
-                                                   target_dynamic_fields);
-        } else if (!snapshot->fields->has_field(field_id)) {
-            field_data = bulk_subscript_not_exist_field(
-                field_meta, results.seg_offsets_.data(), size);
-        } else {
-            field_data = bulk_subscript_from_state(snapshot,
-                                                   &local_ctx,
-                                                   field_id,
-                                                   results.seg_offsets_.data(),
-                                                   size);
+            return bulk_subscript_from_state(snapshot,
+                                             field_ctx,
+                                             field_id,
+                                             results.seg_offsets_.data(),
+                                             size,
+                                             target_dynamic_fields);
         }
-        results.output_fields_data_[field_id] = std::move(field_data);
+        if (!snapshot->fields->has_field(field_id)) {
+            return bulk_subscript_not_exist_field(
+                field_meta, results.seg_offsets_.data(), size);
+        }
+        return bulk_subscript_from_state(
+            snapshot, field_ctx, field_id, results.seg_offsets_.data(), size);
+    };
+    auto fetched_fields =
+        FetchOutputFields(fields_to_fetch, get_segment_id(), op_ctx, fetch_one);
+    for (auto& fetched : fetched_fields) {
+        results.output_fields_data_[fetched.field_id] =
+            std::move(fetched.field_data);
+        results.search_storage_cost_.scanned_remote_bytes +=
+            fetched.scanned_remote_bytes;
+        results.search_storage_cost_.scanned_total_bytes +=
+            fetched.scanned_total_bytes;
     }
-    results.search_storage_cost_.scanned_remote_bytes +=
-        local_ctx.storage_usage.scanned_cold_bytes.load();
-    results.search_storage_cost_.scanned_total_bytes +=
-        local_ctx.storage_usage.scanned_total_bytes.load();
 }
 
 // ---- Shared helpers for TryTakeForRetrieve / TryTakeForSearch ----

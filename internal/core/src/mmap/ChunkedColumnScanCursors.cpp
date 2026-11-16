@@ -534,14 +534,13 @@ RawColumnBase::Scan(milvus::OpContext* op_ctx,
     if (!data_type.has_value()) {
         return nullptr;
     }
-    const auto* planner = &Planner();
     AssertInfo(options.target_type == TargetType::None ||
                    CanReadAsTargetType(*data_type, options.target_type),
                "data scan target {} does not match column type {}",
                static_cast<int>(options.target_type),
                *data_type);
     return std::make_unique<detail::RawScanCursor>(this,
-                                                   planner,
+                                                   &Planner(),
                                                    op_ctx,
                                                    options.start_offset,
                                                    options.target_type,

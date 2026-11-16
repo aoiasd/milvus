@@ -38,7 +38,10 @@ import "C"
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
+	"maps"
 	"path"
 	"sort"
 	"strconv"
@@ -84,14 +87,121 @@ type manifestColumnGroup struct {
 	Format    string
 }
 
-// FragmentIdentity identifies a fragment by its file and row range.
-// External-table refresh assumes existing file ranges are immutable; overwrite
-// is unsupported. Properties are preserved for reads, but are deliberately not
-// hashed into fragment identity. A milvus-table fragment's file is a source
-// segment manifest path, which is identified by its revision rather than its
-// spelling (see ManifestPathKey).
+// paimonFileMetadataProperty carries the opaque per-file descriptor attached
+// by the milvus-storage explore pass; its JSON shape is owned by
+// milvus-storage and only the routing fields below are interpreted here.
+const (
+	paimonFileMetadataProperty = "metadata"
+	paimonMetadataVersion      = 1
+)
+
+type paimonRoutingMetadata struct {
+	Version  int    `json:"version"`
+	ReadPath string `json:"read_path"`
+	Bucket   *int32 `json:"bucket"`
+}
+
+func parsePaimonRoutingMetadata(properties map[string]string) (string, paimonRoutingMetadata, error) {
+	raw, found := properties[paimonFileMetadataProperty]
+	if !found {
+		return "", paimonRoutingMetadata{}, merr.WrapErrServiceInternalMsg("Paimon fragment has no metadata descriptor")
+	}
+	var metadata paimonRoutingMetadata
+	if err := json.Unmarshal([]byte(raw), &metadata); err != nil {
+		return "", paimonRoutingMetadata{}, merr.WrapErrServiceInternalMsg("invalid Paimon metadata descriptor: %v", err)
+	}
+	if metadata.Version != paimonMetadataVersion {
+		return "", paimonRoutingMetadata{}, merr.WrapErrServiceInternalMsg(
+			"unsupported Paimon metadata version %d, expected %d", metadata.Version, paimonMetadataVersion)
+	}
+	if metadata.ReadPath != "direct-file" && metadata.ReadPath != PaimonDataSplitReadPath {
+		return "", paimonRoutingMetadata{}, merr.WrapErrServiceInternalMsg("invalid Paimon read_path %q", metadata.ReadPath)
+	}
+	return raw, metadata, nil
+}
+
+// PaimonRoutingMeta extracts the fields used for fragment splitting and
+// segment packing. Paimon fragments must carry valid storage-owned metadata;
+// silently treating a malformed DataSplit as a regular file would make it
+// splittable and violate its snapshot boundary.
+func PaimonRoutingMeta(properties map[string]string) (readPath string, bucket int32, err error) {
+	_, metadata, err := parsePaimonRoutingMetadata(properties)
+	if err != nil {
+		return "", 0, err
+	}
+	if metadata.ReadPath == PaimonDataSplitReadPath && metadata.Bucket == nil {
+		return "", 0, merr.WrapErrServiceInternalMsg("Paimon metadata descriptor has no bucket")
+	}
+	if metadata.Bucket == nil {
+		return metadata.ReadPath, 0, nil
+	}
+	return metadata.ReadPath, *metadata.Bucket, nil
+}
+
+// paimonDirectFileIdentity excludes snapshot_id so an unchanged append-only
+// file can retain its segment across refreshes. Every other current or future
+// descriptor field remains part of the canonical property hash. DataSplits use
+// the unmodified property hash because their descriptors pin a snapshot.
+func paimonDirectFileIdentity(f Fragment, base, raw string, metadata paimonRoutingMetadata) (string, bool) {
+	if metadata.ReadPath != "direct-file" {
+		return "", false
+	}
+
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.UseNumber()
+	var descriptor map[string]any
+	if err := decoder.Decode(&descriptor); err != nil {
+		return "", false
+	}
+	delete(descriptor, "snapshot_id")
+	canonicalMetadata, err := json.Marshal(descriptor)
+	if err != nil {
+		return "", false
+	}
+
+	properties := maps.Clone(f.Properties)
+	properties[paimonFileMetadataProperty] = string(canonicalMetadata)
+	return "paimon-direct|" + fragmentIdentityWithProperties(base, properties), true
+}
+
+func fragmentIdentityWithProperties(base string, properties map[string]string) string {
+	if len(properties) == 0 {
+		return base
+	}
+	keys := make([]string, 0, len(properties))
+	for key := range properties {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var canonical strings.Builder
+	for _, key := range keys {
+		value := properties[key]
+		canonical.WriteString(strconv.Itoa(len(key)))
+		canonical.WriteString(":")
+		canonical.WriteString(key)
+		canonical.WriteString(strconv.Itoa(len(value)))
+		canonical.WriteString(":")
+		canonical.WriteString(value)
+	}
+	digest := sha256.Sum256([]byte(canonical.String()))
+	return fmt.Sprintf("%s:%x", base, digest)
+}
+
+// FragmentIdentity uses immutable file ranges for ordinary external files.
+// Source manifests are matched by revision rather than JSON spelling.
+// Paimon also includes the descriptor because a new deletion vector can change
+// the rows in an unchanged physical file. Deltalogs remain outside this identity:
+// milvus-table refreshes them in-place.
 func FragmentIdentity(f Fragment) string {
-	return fmt.Sprintf("%s:%d:%d", ManifestPathKey(f.FilePath), f.StartRow, f.EndRow)
+	base := fmt.Sprintf("%s:%d:%d", ManifestPathKey(f.FilePath), f.StartRow, f.EndRow)
+	raw, metadata, err := parsePaimonRoutingMetadata(f.Properties)
+	if err != nil {
+		return base
+	}
+	if identity, ok := paimonDirectFileIdentity(f, base, raw, metadata); ok {
+		return identity
+	}
+	return fragmentIdentityWithProperties(base, f.Properties)
 }
 
 func sameFragmentSet(a, b []Fragment) bool {
@@ -332,9 +442,12 @@ func createMilvusTableManifest(
 	// updates append, even with OVERWRITE; opening the old version would retain
 	// its stale deletes. Version allocation still advances past existing files.
 	var handle C.LoonTransactionHandle
-	if err := HandleLoonFFIResult(C.loon_transaction_open(cBasePath, cProperties,
+	acquireManifestFFI(context.Background())
+	err = HandleLoonFFIResult(C.loon_transaction_open(cBasePath, cProperties,
 		C.int64_t(ManifestEarliest), C.int64_t(-1), C.LOON_TRANSACTION_RESOLVE_OVERWRITE,
-		getRetryLimit(), &handle)); err != nil {
+		getRetryLimit(), &handle))
+	releaseManifestFFI()
+	if err != nil {
 		return "", merr.WrapErrStorage(err, "begin milvus-table manifest")
 	}
 	defer C.loon_transaction_destroy(handle)
@@ -347,6 +460,11 @@ func createMilvusTableManifest(
 	if extfs.MilvusTablePKMode.usesExternalPrimaryKey() {
 		hasExternalPrimaryKey = C.int(1)
 	}
+	// The call reads the source segment manifests and writes the new target
+	// manifest, blocking this goroutine's OS thread; bound it process-wide.
+	// Release before commitTransaction, which acquires its own slot: holding
+	// this one through it would nest and deadlock a budget of one.
+	acquireManifestFFI(context.Background())
 	result := C.loon_milvus_table_append_source_manifests(
 		handle,
 		cPathsPtr,
@@ -358,6 +476,7 @@ func createMilvusTableManifest(
 		cProperties,
 		hasExternalPrimaryKey,
 	)
+	releaseManifestFFI()
 	if err := HandleLoonFFIResult(result); err != nil {
 		return "", err
 	}

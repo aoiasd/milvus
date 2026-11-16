@@ -13,6 +13,7 @@ package packed
 import "C"
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -25,6 +26,7 @@ import (
 	_ "github.com/milvus-io/milvus/internal/util/cgo"
 	"github.com/milvus-io/milvus/pkg/v3/proto/indexcgopb"
 	"github.com/milvus-io/milvus/pkg/v3/proto/indexpb"
+	"github.com/milvus-io/milvus/pkg/v3/util/externalspec/specutil"
 	"github.com/milvus-io/milvus/pkg/v3/util/merr"
 	"github.com/milvus-io/milvus/pkg/v3/util/paramtable"
 )
@@ -400,6 +402,10 @@ func injectExternalSpecProperties(properties *C.LoonProperties, collectionID int
 	if externalSource == "" {
 		return nil
 	}
+	normalizedSpec, err := specutil.NormalizeExternalSpec(externalSpec)
+	if err != nil {
+		return err
+	}
 	params := paramtable.Get()
 	if err := initCredentialBrokerPolicy(params); err != nil {
 		return err
@@ -408,7 +414,7 @@ func injectExternalSpecProperties(properties *C.LoonProperties, collectionID int
 	defer C.free(unsafe.Pointer(cSource))
 	var cSpec *C.char
 	if externalSpec != "" {
-		cSpec = C.CString(externalSpec)
+		cSpec = C.CString(normalizedSpec)
 		defer C.free(unsafe.Pointer(cSpec))
 	}
 	result := C.loon_properties_inject_external_spec(
@@ -503,6 +509,11 @@ func openTransaction(manifest ManifestJSON, cProperties *C.LoonProperties, resol
 	cBasePath := C.CString(manifest.BasePath)
 	defer C.free(unsafe.Pointer(cBasePath))
 	var handle C.LoonTransactionHandle
+	// The open reads the manifest revision from storage and blocks the calling
+	// goroutine's OS thread; bound it process-wide like every other blocking
+	// manifest FFI call so concurrent commits cannot explode thread count.
+	acquireManifestFFI(context.Background())
+	defer releaseManifestFFI()
 	result := C.loon_transaction_open(cBasePath, cProperties, C.int64_t(manifest.ManifestVersion),
 		C.int64_t(manifest.Size), resolveID, retryLimit, &handle)
 	return handle, HandleLoonFFIResult(result)
@@ -526,6 +537,10 @@ func openManifest(manifest ManifestJSON, cProperties *C.LoonProperties) (*C.Loon
 // revision it wrote on basePath, recording the size of the manifest object.
 func commitTransaction(handle C.LoonTransactionHandle, basePath string, storageConfig *indexpb.StorageConfig) (string, error) {
 	var version, size C.int64_t
+	// The commit writes the manifest revision and blocks the calling
+	// goroutine's OS thread; bound it process-wide like openTransaction.
+	acquireManifestFFI(context.Background())
+	defer releaseManifestFFI()
 	if err := HandleLoonFFIResult(C.loon_transaction_commit(handle, &version, &size)); err != nil {
 		return "", err
 	}

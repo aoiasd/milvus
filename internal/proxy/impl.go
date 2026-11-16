@@ -834,26 +834,47 @@ func (node *Proxy) DescribeCollection(ctx context.Context, request *milvuspb.Des
 
 func (node *Proxy) BatchDescribeCollection(ctx context.Context, request *milvuspb.BatchDescribeCollectionRequest) (*milvuspb.BatchDescribeCollectionResponse, error) {
 	collectionNames := request.GetCollectionName()
-	if len(collectionNames) == 0 {
+	collectionIDs := request.GetCollectionID()
+	if len(collectionNames) == 0 && len(collectionIDs) == 0 {
 		return &milvuspb.BatchDescribeCollectionResponse{
-			Status: merr.Status(merr.WrapErrParameterMissingMsg("collection names cannot be empty")),
+			Status: merr.Status(merr.WrapErrParameterMissingMsg("collection names or collection IDs cannot be empty")),
 		}, nil
 	}
 
-	responses := make([]*milvuspb.DescribeCollectionResponse, 0, len(collectionNames))
-
-	for _, collectionName := range collectionNames {
-		describeCollectionRequest := &milvuspb.DescribeCollectionRequest{
-			DbName:         request.GetDbName(),
-			CollectionName: collectionName,
-		}
-
-		describeCollectionResponse, err := node.DescribeCollection(ctx, describeCollectionRequest)
-		// If there's an error, create a response with error status
-		if err != nil {
-			describeCollectionResponse = &milvuspb.DescribeCollectionResponse{
-				Status:         merr.Status(err),
+	// Each collection is described on its own, exactly as a single
+	// DescribeCollection request would. Names take precedence: collection IDs
+	// are used only when no name is given.
+	describeRequests := make([]*milvuspb.DescribeCollectionRequest, 0, len(collectionNames)+len(collectionIDs))
+	if len(collectionNames) > 0 {
+		for _, collectionName := range collectionNames {
+			describeRequests = append(describeRequests, &milvuspb.DescribeCollectionRequest{
+				DbName:         request.GetDbName(),
 				CollectionName: collectionName,
+			})
+		}
+	} else {
+		for _, collectionID := range collectionIDs {
+			describeRequests = append(describeRequests, &milvuspb.DescribeCollectionRequest{
+				DbName:       request.GetDbName(),
+				CollectionID: collectionID,
+			})
+		}
+	}
+
+	responses := make([]*milvuspb.DescribeCollectionResponse, 0, len(describeRequests))
+	for _, describeCollectionRequest := range describeRequests {
+		describeCollectionResponse, err := node.DescribeCollection(ctx, describeCollectionRequest)
+		if err != nil {
+			describeCollectionResponse = &milvuspb.DescribeCollectionResponse{Status: merr.Status(err)}
+		}
+		// A failed entry carries the name or ID it was requested by, so the
+		// caller can tell which collection it is about.
+		if !merr.Ok(describeCollectionResponse.GetStatus()) {
+			if describeCollectionResponse.GetCollectionName() == "" {
+				describeCollectionResponse.CollectionName = describeCollectionRequest.GetCollectionName()
+			}
+			if describeCollectionResponse.GetCollectionID() == 0 {
+				describeCollectionResponse.CollectionID = describeCollectionRequest.GetCollectionID()
 			}
 		}
 		responses = append(responses, describeCollectionResponse)
@@ -2552,17 +2573,20 @@ func (node *Proxy) Upsert(ctx context.Context, request *milvuspb.UpsertRequest) 
 	}
 
 	// UpsertCnt always equals to the number of entities in the request
-	it.Result().UpsertCnt = int64(request.NumRows)
+	if request.GetWriteCondition() == nil {
+		it.Result().UpsertCnt = int64(request.NumRows)
+	}
 
 	username := GetCurUserFromContextOrDefault(ctx)
 	nodeID := paramtable.GetStringNodeID()
 	dbName := request.DbName
 	collectionName := request.CollectionName
+	requestSize, mutationSize := it.AccountingSizes()
 	v := hookutil.GetExtension().Report(map[string]any{
 		hookutil.OpTypeKey:          hookutil.OpTypeUpsert,
 		hookutil.DatabaseKey:        request.DbName,
 		hookutil.UsernameKey:        username,
-		hookutil.RequestDataSizeKey: proto.Size(it.Request()),
+		hookutil.RequestDataSizeKey: requestSize,
 		hookutil.SuccessCntKey:      it.Result().UpsertCnt,
 		hookutil.FailCntKey:         len(it.Result().ErrIndex),
 	})
@@ -2576,7 +2600,7 @@ func (node *Proxy) Upsert(ctx context.Context, request *milvuspb.UpsertRequest) 
 		metrics.ProxyReportValue.WithLabelValues(nodeID, hookutil.OpTypeUpsert, dbName, username).Add(float64(v))
 	}
 
-	rateCol.Add(internalpb.RateType_DMLInsert.String(), float64(it.UpsertMsg().InsertMsg.Size()+it.UpsertMsg().DeleteMsg.Size()))
+	rateCol.Add(internalpb.RateType_DMLInsert.String(), float64(mutationSize))
 	successCnt := it.Result().UpsertCnt - int64(len(it.Result().ErrIndex))
 	metrics.ProxyUpsertVectors.
 		WithLabelValues(nodeID, dbName, collectionName).
@@ -2603,6 +2627,11 @@ func GetCollectionRateSubLabel(req any) string {
 
 // Search searches the most similar records of requests.
 func (node *Proxy) Search(ctx context.Context, request *milvuspb.SearchRequest) (*milvuspb.SearchResults, error) {
+	// Register the request before anything else so that it is listable and
+	// cancellable for its whole lifetime, including the retries below.
+	ctx, entry := node.registerRequest(ctx, searchRequestInfo(request))
+	defer node.unregisterRequest(entry)
+
 	var err error
 	rsp := &milvuspb.SearchResults{
 		Status: merr.Success(),
@@ -2658,6 +2687,9 @@ func (node *Proxy) Search(ctx context.Context, request *milvuspb.SearchRequest) 
 	})
 	if err2 != nil {
 		rsp.Status = merr.Status(err2)
+	}
+	if rsp != nil {
+		rsp.Status = statusIfCanceled(ctx, rsp.Status)
 	}
 	return rsp, nil
 }
@@ -2862,6 +2894,9 @@ func (node *Proxy) search(ctx context.Context, request *milvuspb.SearchRequest, 
 }
 
 func (node *Proxy) HybridSearch(ctx context.Context, request *milvuspb.HybridSearchRequest) (*milvuspb.SearchResults, error) {
+	ctx, entry := node.registerRequest(ctx, hybridSearchRequestInfo(request))
+	defer node.unregisterRequest(entry)
+
 	var err error
 	rsp := &milvuspb.SearchResults{
 		Status: merr.Success(),
@@ -2898,6 +2933,9 @@ func (node *Proxy) HybridSearch(ctx context.Context, request *milvuspb.HybridSea
 	})
 	if err2 != nil {
 		rsp.Status = merr.Status(err2)
+	}
+	if rsp != nil {
+		rsp.Status = statusIfCanceled(ctx, rsp.Status)
 	}
 	return rsp, nil
 }
@@ -3634,6 +3672,11 @@ func (node *Proxy) query(ctx context.Context, qt *queryTask, sp trace.Span) (*mi
 
 // Query get the records by primary keys.
 func (node *Proxy) Query(ctx context.Context, request *milvuspb.QueryRequest) (*milvuspb.QueryResults, error) {
+	// Register before the retry loop so that the request is listable and
+	// cancelable while it waits for an automatic load or a view refresh.
+	ctx, entry := node.registerRequest(ctx, queryRequestInfo(request))
+	defer node.unregisterRequest(entry)
+
 	subLabel := GetCollectionRateSubLabel(request)
 	metrics.GetStats(ctx).
 		SetNodeID(paramtable.GetNodeID()).
@@ -3656,7 +3699,7 @@ func (node *Proxy) Query(ctx context.Context, request *milvuspb.QueryRequest) (*
 		return false, merr.CheckRPCCall(result, err)
 	})
 	if err != nil {
-		return &milvuspb.QueryResults{Status: merr.Status(err)}, nil
+		return &milvuspb.QueryResults{Status: statusIfCanceled(ctx, merr.Status(err))}, nil
 	}
 	return result, nil
 }

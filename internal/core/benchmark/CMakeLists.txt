@@ -64,3 +64,18 @@ set_target_properties(raw_column_access_benchmark PROPERTIES
         BUILD_RPATH "${CMAKE_HOME_DIRECTORY}/output/lib"
 )
 install(TARGETS raw_column_access_benchmark DESTINATION benchmark)
+
+# Bitmap range filters over heap Roaring postings; links the core library.
+add_executable(bitmap_range_benchmark BitmapRangeBenchmark.cpp)
+target_include_directories(bitmap_range_benchmark PRIVATE
+    ${CMAKE_HOME_DIRECTORY}/src
+    ${CMAKE_HOME_DIRECTORY}/src/thirdparty
+    ${KNOWHERE_INCLUDE_DIR}
+    ${MILVUS_STORAGE_INCLUDE_DIR}
+    ${milvus-common_INCLUDE_DIRS})
+target_link_libraries(bitmap_range_benchmark PRIVATE milvus_core milvus_conan_deps benchmark::benchmark)
+if (LINUX)
+    # Same XXH symbol collision as the unit-test binaries, see unittest/CMakeLists.txt.
+    target_link_options(bitmap_range_benchmark PRIVATE "LINKER:--allow-multiple-definition")
+endif ()
+install(TARGETS bitmap_range_benchmark DESTINATION benchmark)
