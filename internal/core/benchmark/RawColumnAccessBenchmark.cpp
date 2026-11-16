@@ -47,6 +47,8 @@
 #include "common/Schema.h"
 #include "common/common_type_c.h"
 #include "exec/expression/ColumnExpr.h"
+#include "exec/expression/ExprBatchTestUtils.h"
+#include "exec/expression/ExprIndexIntegrationTestUtils.h"
 #include "index/scalar/text/TextIndexBuilder.h"
 #include "index/scalar/text/TextIndexReader.h"
 #include "mmap/ChunkedColumnInterface.h"
@@ -1403,8 +1405,221 @@ RunFullColumnBenchmark(benchmark::State& state,
     }
 }
 
+// Test-branch-only A/B probe: both binaries enter the real mixed comparison
+// node; setup and expression construction are excluded from the measured Eval.
+template <typename T, typename U>
+void
+RunMixedCompareBenchmark(benchmark::State& state,
+                         DataType left_type,
+                         DataType right_type,
+                         size_t string_length,
+                         bool nullable,
+                         bool index_left,
+                         int pattern) {
+    constexpr int64_t rows = 32768;
+    constexpr int64_t window = 1024;
+    std::vector<T> left(rows);
+    std::vector<U> right(rows);
+    std::vector<uint8_t> left_validity(rows / 8, 0);
+    std::vector<uint8_t> right_validity(rows / 8, 0);
+    for (int64_t i = 0; i < rows; ++i) {
+        const auto l = (i * 17) % 4096;
+        const auto r = (i * 11) % 4096;
+        if constexpr (std::is_same_v<T, std::string>) {
+            left[i] = std::to_string(l);
+            right[i] = std::to_string(r);
+            left[i].resize(string_length, 'x');
+            right[i].resize(string_length, 'x');
+        } else {
+            left[i] = static_cast<T>(l);
+            right[i] = static_cast<U>(r);
+        }
+        if (!nullable || i % 7 != 0) {
+            left_validity[i / 8] |= uint8_t{1} << (i % 8);
+        }
+        if (!nullable || i % 11 != 0) {
+            right_validity[i / 8] |= uint8_t{1} << (i % 8);
+        }
+    }
+
+    auto schema = std::make_shared<Schema>();
+    const auto pk = schema->AddDebugField("pk", DataType::INT64);
+    const auto left_id = schema->AddDebugField("left", left_type, nullable);
+    const auto right_id = schema->AddDebugField("right", right_type, nullable);
+    schema->set_primary_field_id(pk);
+    test::expr_index::RawFieldFiles files;
+    auto segment = segcore::CreateSealedSegment(schema);
+    std::vector<int64_t> ids(rows);
+    std::iota(ids.begin(), ids.end(), int64_t{0});
+    auto pk_data = std::make_shared<FieldData<int64_t>>(DataType::INT64, false);
+    pk_data->FillFieldData(ids.data(), ids.size());
+    segment->LoadFieldData(files.Prepare(pk, {pk_data}));
+    const auto install = [&]<typename V>(FieldId field,
+                                         DataType type,
+                                         const std::vector<V>& values,
+                                         const std::vector<uint8_t>& validity,
+                                         bool indexed) {
+        auto data = std::make_shared<FieldData<V>>(type, nullable);
+        FieldDataBase& output = *data;
+        if (nullable) {
+            output.FillFieldData(values.data(), validity.data(), rows, 0);
+        } else {
+            output.FillFieldData(values.data(), rows);
+        }
+        if (indexed) {
+            test::expr_index::InstallIndex(
+                *segment,
+                field,
+                type,
+                test::expr_index::BuildIndex(field,
+                                             type,
+                                             type == DataType::VARCHAR
+                                                 ? index::MARISA_TRIE
+                                                 : index::ASCENDING_SORT,
+                                             {data}));
+        } else {
+            segment->LoadFieldData(files.Prepare(field, {data}));
+        }
+    };
+    install(left_id, left_type, left, left_validity, index_left);
+    install(right_id, right_type, right, right_validity, !index_left);
+    if (segment->num_chunk_data(index_left ? left_id : right_id) != 0 ||
+        segment->num_chunk_data(index_left ? right_id : left_id) != 1) {
+        state.SkipWithError(
+            "benchmark did not select index-only plus Raw data");
+        return;
+    }
+
+    std::vector<int32_t> selected;
+    for (int32_t i = 0; i < rows; i += pattern == 0 ? 1 : 4) {
+        selected.push_back(i);
+    }
+    if (pattern == 2) {
+        std::mt19937 random(20261116);
+        std::shuffle(selected.begin(), selected.end(), random);
+    }
+    std::vector<exec::OffsetVector> windows;
+    for (size_t begin = 0; begin < selected.size(); begin += window) {
+        auto& offsets = windows.emplace_back();
+        const auto end = std::min(selected.size(), begin + window);
+        for (size_t i = begin; i < end; ++i) {
+            offsets.emplace_back(selected[i]);
+        }
+    }
+    test::ExprBatchSizeGuard batch_guard(window);
+    const auto logical =
+        std::make_shared<expr::CompareExpr>(left_id,
+                                            right_id,
+                                            left_type,
+                                            right_type,
+                                            proto::plan::OpType::LessThan);
+    auto query = std::make_shared<exec::QueryContext>(
+        DEAFULT_QUERY_ID, segment.get(), rows, MAX_TIMESTAMP);
+    query->set_read_snapshot(segment->CaptureReadSnapshot());
+    exec::ExecContext exec_context(query.get());
+    const auto evaluate = [&](const auto& physical, bool verify) {
+        exec::EvalCtx context(&exec_context);
+        size_t position = 0;
+        for (auto& offsets : windows) {
+            context.set_offset_input(pattern == 0 ? nullptr : &offsets);
+            VectorPtr result;
+            physical[0]->Eval(context, result);
+            if (verify) {
+                const auto column =
+                    std::dynamic_pointer_cast<ColumnVector>(result);
+                if (!column || column->size() != offsets.size()) {
+                    return false;
+                }
+                TargetBitmapView bits(column->GetRawData(), column->size());
+                TargetBitmapView valid(column->GetValidRawData(),
+                                       column->size());
+                for (size_t i = 0; i < offsets.size(); ++i) {
+                    const auto row = selected[position + i];
+                    const bool expected_valid =
+                        (left_validity[row / 8] & (uint8_t{1} << (row % 8))) &&
+                        (right_validity[row / 8] & (uint8_t{1} << (row % 8)));
+                    if (valid[i] != expected_valid ||
+                        bits[i] != (expected_valid && left[row] < right[row])) {
+                        return false;
+                    }
+                }
+            }
+            benchmark::DoNotOptimize(result.get());
+            position += offsets.size();
+        }
+        return true;
+    };
+    {
+        const auto physical =
+            exec::CompileExpressions({logical}, &exec_context, {}, false);
+        if (!evaluate(physical, true)) {
+            state.SkipWithError("mixed comparison result or validity mismatch");
+            return;
+        }
+    }
+    int64_t cpu_nanos = 0;
+    for (auto _ : state) {
+        const auto physical =
+            exec::CompileExpressions({logical}, &exec_context, {}, false);
+        timespec cpu_start{}, cpu_end{};
+        clock_gettime(CLOCK_THREAD_CPUTIME_ID, &cpu_start);
+        const auto start = std::chrono::steady_clock::now();
+        benchmark::DoNotOptimize(evaluate(physical, false));
+        const auto elapsed = std::chrono::steady_clock::now() - start;
+        clock_gettime(CLOCK_THREAD_CPUTIME_ID, &cpu_end);
+        state.SetIterationTime(std::chrono::duration<double>(elapsed).count());
+        cpu_nanos += (cpu_end.tv_sec - cpu_start.tv_sec) * 1000000000LL +
+                     cpu_end.tv_nsec - cpu_start.tv_nsec;
+    }
+    state.counters["eval_cpu_ns_per_row"] =
+        benchmark::Counter(static_cast<double>(cpu_nanos) / selected.size(),
+                           benchmark::Counter::kAvgIterations);
+    state.counters["rows_per_iteration"] = selected.size();
+    state.SetItemsProcessed(state.iterations() * selected.size());
+}
+
 bool
 RegisterBenchmarks() {
+    const auto register_mixed = []<typename T, typename U>(
+                                    const char* types,
+                                    DataType left_type,
+                                    DataType right_type,
+                                    size_t string_length = 0) {
+        for (const bool nullable : {false, true}) {
+            for (const bool index_left : {false, true}) {
+                for (int pattern = 0; pattern < 3; ++pattern) {
+                    const auto name =
+                        std::string("MixedCompare/") + types + "/" +
+                        (nullable ? "Nullable/" : "NonNullable/") +
+                        (index_left ? "IndexLeft/" : "IndexRight/") +
+                        (pattern == 0   ? "Sequential"
+                         : pattern == 1 ? "Ordered25"
+                                        : "Shuffled25");
+                    benchmark::RegisterBenchmark(
+                        name.c_str(),
+                        [=](benchmark::State& state) {
+                            RunMixedCompareBenchmark<T, U>(state,
+                                                           left_type,
+                                                           right_type,
+                                                           string_length,
+                                                           nullable,
+                                                           index_left,
+                                                           pattern);
+                        })
+                        ->UseManualTime()
+                        ->Unit(benchmark::kMicrosecond);
+                }
+            }
+        }
+    };
+    register_mixed.template operator()<int64_t, int64_t>(
+        "INT64_INT64", DataType::INT64, DataType::INT64);
+    register_mixed.template operator()<int32_t, double>(
+        "INT32_DOUBLE", DataType::INT32, DataType::DOUBLE);
+    register_mixed.template operator()<std::string, std::string>(
+        "VARCHAR8", DataType::VARCHAR, DataType::VARCHAR, 8);
+    register_mixed.template operator()<std::string, std::string>(
+        "VARCHAR64", DataType::VARCHAR, DataType::VARCHAR, 64);
     for (const bool geometry : {false, true}) {
         for (const bool nullable : {false, true}) {
             for (const bool long_text : {false, true}) {
