@@ -1415,7 +1415,8 @@ RunMixedCompareBenchmark(benchmark::State& state,
                          size_t string_length,
                          bool nullable,
                          bool index_left,
-                         int pattern) {
+                         int pattern,
+                         bool common_prefix) {
     constexpr int64_t rows = 32768;
     constexpr int64_t window = 1024;
     std::vector<T> left(rows);
@@ -1428,8 +1429,14 @@ RunMixedCompareBenchmark(benchmark::State& state,
         if constexpr (std::is_same_v<T, std::string>) {
             left[i] = std::to_string(l);
             right[i] = std::to_string(r);
-            left[i].resize(string_length, 'x');
-            right[i].resize(string_length, 'x');
+            if (common_prefix) {
+                // Force comparison to inspect the payload, not just its prefix.
+                left[i].insert(0, string_length - left[i].size(), 'x');
+                right[i].insert(0, string_length - right[i].size(), 'x');
+            } else {
+                left[i].resize(string_length, 'x');
+                right[i].resize(string_length, 'x');
+            }
         } else {
             left[i] = static_cast<T>(l);
             right[i] = static_cast<U>(r);
@@ -1584,7 +1591,8 @@ RegisterBenchmarks() {
                                     const char* types,
                                     DataType left_type,
                                     DataType right_type,
-                                    size_t string_length = 0) {
+                                    size_t string_length = 0,
+                                    bool common_prefix = false) {
         for (const bool nullable : {false, true}) {
             for (const bool index_left : {false, true}) {
                 for (int pattern = 0; pattern < 3; ++pattern) {
@@ -1604,7 +1612,8 @@ RegisterBenchmarks() {
                                                            string_length,
                                                            nullable,
                                                            index_left,
-                                                           pattern);
+                                                           pattern,
+                                                           common_prefix);
                         })
                         ->UseManualTime()
                         ->Unit(benchmark::kMicrosecond);
@@ -1620,6 +1629,20 @@ RegisterBenchmarks() {
         "VARCHAR8", DataType::VARCHAR, DataType::VARCHAR, 8);
     register_mixed.template operator()<std::string, std::string>(
         "VARCHAR64", DataType::VARCHAR, DataType::VARCHAR, 64);
+    for (const size_t length : {15, 16, 29, 30, 31, 256, 1024, 4096}) {
+        const auto name = "VARCHAR" + std::to_string(length);
+        register_mixed.template operator()<std::string, std::string>(
+            name.c_str(), DataType::VARCHAR, DataType::VARCHAR, length);
+        if (length >= 256) {
+            const auto prefix_name = name + "_CommonPrefix";
+            register_mixed.template operator()<std::string, std::string>(
+                prefix_name.c_str(),
+                DataType::VARCHAR,
+                DataType::VARCHAR,
+                length,
+                true);
+        }
+    }
     for (const bool geometry : {false, true}) {
         for (const bool nullable : {false, true}) {
             for (const bool long_text : {false, true}) {
