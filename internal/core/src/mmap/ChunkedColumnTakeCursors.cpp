@@ -113,7 +113,7 @@ class RawTakeResult final : public ChunkedColumnInterface::TakeResult {
                   DataType data_type,
                   ChunkedColumnInterface::TargetType target_type,
                   bool nullable,
-                  const TargetBitmap* candidate_mask)
+                  const TargetBitmapView* candidate_mask)
         : planner_(std::move(planner)),
           data_type_(data_type),
           target_type_(target_type),
@@ -708,7 +708,7 @@ class RawTakeResult final : public ChunkedColumnInterface::TakeResult {
     mutable std::shared_ptr<OwnedTakeStorage> owned_;
     mutable ChunkedColumnInterface::OwnedTakeData owned_data_;
     mutable void* current_data_{nullptr};
-    const TargetBitmap* candidate_mask_;
+    const TargetBitmapView* candidate_mask_;
 };
 
 }  // namespace detail

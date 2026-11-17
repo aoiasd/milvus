@@ -446,6 +446,7 @@ type commonConfig struct {
 	StorageIopsInitialRate              ParamItem `refreshable:"false"`
 	StorageIopsMaxRate                  ParamItem `refreshable:"false"`
 	StorageTalonMode                    ParamItem `refreshable:"false"`
+	StorageTalonEnabledStages           ParamItem `refreshable:"false"`
 	StorageTalonEnableForExternalTable  ParamItem `refreshable:"false"`
 	StorageTalonSmallReadThreshold      ParamItem `refreshable:"false"`
 	StorageTalonCoordinator             ParamItem `refreshable:"false"`
@@ -1633,7 +1634,7 @@ Rows whose child elements are all null are always promoted to row-level null for
 		Key:          "common.storage.talon.mode",
 		Version:      "3.0.1",
 		DefaultValue: "0",
-		Doc:          "Remote milvus-storage read routing: 0 disables Talon, 1 routes all reads through Talon, and 2 routes only small reads. Requires a restart.",
+		Doc:          "Remote milvus-storage read routing within enabledStages: 0 disables Talon, 1 routes all reads through Talon, and 2 routes only small reads. Requires a restart.",
 		Formatter: func(value string) string {
 			parsed, err := strconv.ParseUint(value, 10, 32)
 			if err != nil || parsed > 2 {
@@ -1644,6 +1645,22 @@ Rows whose child elements are all null are always promoted to row-level null for
 		Export: true,
 	}
 	p.StorageTalonMode.Init(base.mgr)
+
+	p.StorageTalonEnabledStages = ParamItem{
+		Key:          "common.storage.talon.enabledStages",
+		Version:      "3.0.1",
+		DefaultValue: "all",
+		Doc:          "Comma-separated Talon read stages: all preserves unrestricted routing; load_open enables QueryNode milvus-storage reader-open metadata, including footers; manifest enables QueryNode segment-manifest reads during load. Combine load_open,manifest to enable both. Other reads use origin storage when stages are restricted. Cannot combine all with other stages. Requires a restart.",
+		Formatter: func(value string) string {
+			mask, ok := common.ParseTalonEnabledStages(value)
+			if !ok {
+				panic(fmt.Sprintf("invalid common.storage.talon.enabledStages: %q", value))
+			}
+			return strconv.FormatUint(uint64(mask), 10)
+		},
+		Export: true,
+	}
+	p.StorageTalonEnabledStages.Init(base.mgr)
 
 	p.StorageTalonEnableForExternalTable = ParamItem{
 		Key:          "common.storage.talon.enableForExternalTable",
@@ -6758,6 +6775,7 @@ type dataCoordConfig struct {
 	BrokerTimeout                  ParamItem `refreshable:"false"`
 
 	// segment change staging
+	SegmentChangeEnabled         ParamItem `refreshable:"true"`
 	SegmentChangeStagingTimeout  ParamItem `refreshable:"true"`
 	SegmentChangeGroupMaxMembers ParamItem `refreshable:"true"`
 
@@ -8027,11 +8045,20 @@ Only in-memory manifest-resident records are migrated. Untracked manifest entrie
 	}
 	p.MinSegmentNumRowsToEnableIndex.Init(base.mgr)
 
+	p.SegmentChangeEnabled = ParamItem{
+		Key:          "dataCoord.segmentChange.enabled",
+		Version:      "3.0.4",
+		DefaultValue: "false",
+		Doc:          "Experimental opt-in for staged segment membership publication. Do not enable in production until L0 and clustering fairness is implemented: continuous Flush-to-Sort groups can starve L0 delete and clustering compaction. Existing groups finish after disabling this switch. Flush keeps its synchronous version handshake; content-only updates retain their existing protocol.",
+		Export:       true,
+	}
+	p.SegmentChangeEnabled.Init(base.mgr)
+
 	p.SegmentChangeStagingTimeout = ParamItem{
 		Key:          "dataCoord.segmentChange.stagingTimeout",
 		Version:      "3.0.4",
 		DefaultValue: "3600",
-		Doc:          "The maximum duration in seconds a segment change group may stay staged before the batch is aborted (STAGED -> ABORTED), bounding unconvergeable or externally-dropped batches.",
+		Doc:          "The maximum duration in seconds that eligible compaction segment change groups may wait for readiness before aborting. Import, clustering, copy and external refresh use their producer lifecycle instead.",
 		Export:       true,
 	}
 	p.SegmentChangeStagingTimeout.Init(base.mgr)

@@ -40,6 +40,7 @@
 #include "mmap/ChunkedColumnFilter.h"
 #include "mmap/SparseVortexFileSystem.h"
 #include "milvus-storage/column_groups.h"
+#include "milvus-storage/filesystem/fs.h"
 #include "milvus-storage/format/vortex/vortex_types.h"
 #include "milvus-storage/format/vortex/vortex_writer.h"
 #include "milvus-storage/properties.h"
@@ -1270,6 +1271,7 @@ CheckCandidateTake(VortexColumn& column,
             offsets[i] = -1;
         }
     }
+    auto mask_view = mask.view();
     for (bool skip : {false, true}) {
         auto filter =
             skip ? std::make_shared<const detail::ColumnFilter>(
@@ -1282,7 +1284,7 @@ CheckCandidateTake(VortexColumn& column,
                          TargetTypeOf<T>(),
                          std::move(filter),
                          policy,
-                         &mask});
+                         &mask_view});
         ASSERT_NE(take, nullptr);
         EXPECT_FALSE(take->IsOwned());
         EXPECT_EQ(take->Size(), offsets.size());
@@ -1341,12 +1343,13 @@ CheckCandidateTake(VortexColumn& column,
     }
 
     mask = TargetBitmap(offsets.size(), false);
+    mask_view = mask.view();
     auto empty = column.Take(nullptr,
                              {OffsetView::From(offsets.data(), offsets.size()),
                               TargetTypeOf<T>(),
                               nullptr,
                               policy,
-                              &mask});
+                              &mask_view});
     ASSERT_NE(empty, nullptr);
     EXPECT_FALSE(empty->IsOwned());
     const auto owned = empty->GetOwn();
@@ -1981,13 +1984,14 @@ TEST(VortexColumnTest, TakePinPoliciesControlSourceLifetime) {
         const int64_t masked_offsets[]{2, -1, 3, 2};
         TargetBitmap mask(std::size(masked_offsets), true);
         mask.set(1, false);
+        auto mask_view = mask.view();
         auto selected = column.Take(
             nullptr,
             {OffsetView::From(masked_offsets, std::size(masked_offsets)),
              TargetType::StringView,
              nullptr,
              policy,
-             &mask});
+             &mask_view});
         ASSERT_NE(selected, nullptr);
         EXPECT_FALSE(column.CellsLoaded(first, 1));
         EXPECT_TRUE(column.CellsLoaded(second, 1));

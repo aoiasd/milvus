@@ -149,7 +149,9 @@ class TrackingVirtualPKChunkedColumn : public VirtualPKChunkedColumn {
 TEST_F(VirtualPKChunkedColumnTest, TakeCandidateMaskSkipsUnrequestedOffsets) {
     TrackingVirtualPKChunkedColumn column(12345, 10);
     const int32_t offsets[]{3, -1, 3, 100};
-    TargetBitmap candidates(4, false);
+    TargetBitmap backing(4 + 13, false);
+    auto candidates = backing.view(7, 4);
+    const auto candidate_view = candidates.view();
     candidates.set(0);
     candidates.set(2);
     for (const auto policy :
@@ -158,7 +160,7 @@ TEST_F(VirtualPKChunkedColumnTest, TakeCandidateMaskSkipsUnrequestedOffsets) {
                                    TargetType::Int64,
                                    nullptr,
                                    policy,
-                                   &candidates};
+                                   &candidate_view};
         auto take = column.Take(nullptr, options);
         ASSERT_NE(take, nullptr);
         EXPECT_EQ(*take->Get<int64_t>(0).value, GetVirtualPK(12345, 3));
@@ -167,7 +169,8 @@ TEST_F(VirtualPKChunkedColumnTest, TakeCandidateMaskSkipsUnrequestedOffsets) {
         EXPECT_EQ(take->GetOwn().size, 4);
         EXPECT_EQ(column.get_chunk_calls, 0);
         TargetBitmap wrong_size(1, true);
-        options.candidate_mask = &wrong_size;
+        const auto wrong_size_view = wrong_size.view();
+        options.candidate_mask = &wrong_size_view;
         EXPECT_THROW(column.Take(nullptr, options), SegcoreError);
     }
 }

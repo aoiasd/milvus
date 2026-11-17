@@ -146,6 +146,7 @@ MaskedTake(benchmark::State& state,
     for (int64_t i = 0; i < rows; i += stride) {
         mask.set(i);
     }
+    const auto mask_view = mask.view();
     const auto read = [&](bool internal_mask) {
         FixedVector<int32_t> selected;
         auto input = OffsetView::From(offsets.data(), offsets.size());
@@ -164,7 +165,7 @@ MaskedTake(benchmark::State& state,
                                   TargetType::Json,
                                   nullptr,
                                   TakePinPolicy::CurrentCell,
-                                  internal_mask ? &mask : nullptr});
+                                  internal_mask ? &mask_view : nullptr});
         AssertInfo(take != nullptr, "benchmark masked Take unsupported");
         const auto items = take->Access<Json>();
         uint64_t digest = 0;

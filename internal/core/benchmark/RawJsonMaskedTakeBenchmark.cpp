@@ -91,6 +91,7 @@ RunMaskedJsonTakeBenchmark(benchmark::State& state,
         for (size_t window = 0; window < candidates.size(); ++window) {
             const auto start = window * kWindowRows;
             const auto& mask = candidates[window];
+            const auto mask_view = mask.view();
             FixedVector<int32_t> selected;
             OffsetView input =
                 OffsetView::From(offsets.data() + start, mask.size());
@@ -117,7 +118,7 @@ RunMaskedJsonTakeBenchmark(benchmark::State& state,
                                       TargetType::Json,
                                       nullptr,
                                       TakePinPolicy::CurrentCell,
-                                      internal_selection ? &mask : nullptr});
+                                      internal_selection ? &mask_view : nullptr});
             AssertInfo(take != nullptr, "masked JSON Take is unsupported");
             const auto items = take->Access<Json>();
             int64_t take_pos = 0;
